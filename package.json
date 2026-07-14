@@ -1,0 +1,43 @@
+{
+  "name": "brownie-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "run-once": "tsx src/run-once.ts",
+    "canix:opportunities": "tsx src/cli/opportunities.ts",
+    "canix:personalized": "tsx src/cli/personalized-opportunities.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" package.json \"tsconfig*.json\" eslint.config.js vitest.config.ts README.md",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" package.json \"tsconfig*.json\" eslint.config.js vitest.config.ts README.md",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:smoke": "vitest run tests/live-canix402.smoke.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "algosdk": "^3.6.0",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.10.0",
+    "node-cron": "^4.6.0",
+    "openai": "^6.46.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.1",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.5",
+    "tsx": "^4.23.1",
+    "typescript": "<6.1.0",
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10"
+  }
+}
