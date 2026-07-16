@@ -51,6 +51,15 @@ const configSchema = z.object({
   MIN_PROJECTED_NET_IMPROVEMENT_USD: z.coerce.number().nonnegative().default(1),
   TELEGRAM_BOT_TOKEN: z.string().min(1),
   TELEGRAM_CHAT_ID: z.string().min(1),
+
+  ACCOUNTING_CRON_SCHEDULE: z.string().min(1).default("0 8 * * *"),
+  ACCOUNTING_CRON_TIMEZONE: z.string().min(1).default("UTC"),
+  DO_SPACES_ENDPOINT: z.url(),
+  DO_SPACES_REGION: z.string().min(1).default("nyc3"),
+  DO_SPACES_BUCKET: z.string().min(1),
+  DO_SPACES_KEY: z.string().min(1),
+  DO_SPACES_SECRET: z.string().min(1),
+  DO_SPACES_PREFIX: z.string().min(1).default("brownie-bot"),
 });
 
 export type AppConfig = ReturnType<typeof loadConfig>;

@@ -35,9 +35,25 @@ liveIt(
         "canix_get_quote",
         "canix_optin",
         "canix_swap",
+        "canix_get_token_prices",
       ]) {
         expect(toolNames).toContain(required);
       }
+      const prices = await client.getTokenPrices([0, 31_566_704]);
+      expect(prices).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            assetId: 0,
+            priceUsd: expect.any(String) as string,
+            source: "compx",
+          }),
+          expect.objectContaining({
+            assetId: 31_566_704,
+            priceUsd: "1",
+            source: "compx",
+          }),
+        ]),
+      );
     } finally {
       await client.close();
     }

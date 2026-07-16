@@ -120,11 +120,47 @@ one-shot process:
 npm run run-once
 ```
 
-Every run reconstructs its state from current on-chain liquid balances and the
-Canix402 positions endpoint. There is no database or journal involved in
-planning. The in-process latest-run response is operational convenience only
-and is lost on restart. The scheduler and overlap lock assume a single service
-replica.
+Every review reconstructs its planning state from current on-chain liquid
+balances and the Canix402 positions endpoint. Accounting history is always
+stored in DigitalOcean Spaces. The in-process latest-run response is operational
+convenience only and is lost on restart. The scheduler and overlap lock assume a
+single service replica.
+
+## Accounting snapshots
+
+Accounting is always enabled. Configure DigitalOcean Spaces and the daily
+schedule:
+
+```dotenv
+ACCOUNTING_CRON_SCHEDULE="0 8 * * *"
+ACCOUNTING_CRON_TIMEZONE="UTC"
+DO_SPACES_ENDPOINT="https://nyc3.digitaloceanspaces.com"
+DO_SPACES_REGION="nyc3"
+DO_SPACES_BUCKET="your-bucket"
+DO_SPACES_KEY=
+DO_SPACES_SECRET=
+DO_SPACES_PREFIX="brownie-bot"
+```
+
+Accounting uses free MCP tool `canix_get_token_prices` (`POST /pricing`) for
+wallet token USD prices (including ALGO) and Canix position valuations for DeFi
+holdings.
+It never signs portfolio transactions. The currently paid `canix_get_positions`
+call remains a budgeted dependency for portfolio reads. The accounting cron
+starts with the HTTP process; the AI review cron remains behind `RUN_CRON`.
+
+One-shot accounting for platform schedulers:
+
+```bash
+npm run accounting-once
+```
+
+Each run stores a snapshot, compares totals to the previous summary when one
+exists, and reports DeFi value by protocol, wallet token total (including ALGO
+USD), ALGO balance in token units, and account minimum balance. Missing prices,
+empty DeFi books, and a missing prior baseline are reported as notes — they do
+not fail the run. Optional external cashflows can still be recorded through
+`POST /accounting/cashflows`.
 
 ## HTTP API
 
@@ -134,6 +170,9 @@ replica.
 - `POST /runs` — manually run a review; disabled unless
   `MANUAL_TRIGGER_TOKEN` is set and requires
   `Authorization: Bearer <token>`
+- `GET /accounting/latest` — latest accounting run
+- `POST /accounting/run` — manually run accounting; same bearer token model
+- `POST /accounting/cashflows` — record an immutable external cashflow event
 
 ## Canix402 payment flow
 
@@ -150,6 +189,9 @@ The integration uses Streamable HTTP MCP at
    fee cap, mainnet genesis hash, validity window, atomic group, signer metadata,
    and no rekey/close/clawback rules.
 8. Sign locally and submit only when the signing gate is enabled.
+
+Free tools such as `canix_health` and `canix_get_token_prices` skip the payment
+retry path entirely.
 
 There is deliberately no direct-HTTP fallback. MCP errors fail the review and
 are reported to Telegram. During initial scaffolding on July 13, 2026, the
@@ -173,9 +215,12 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 ```
 
-Reports include the portfolio plan, expected net benefit, policy blocks,
+Review reports include the portfolio plan, expected net benefit, policy blocks,
 signing mode, action outcomes, transaction IDs, x402 totals, and failures.
-Telegram delivery errors are stored without replacing the underlying result.
+Accounting reports include DeFi value by protocol, wallet token total (including
+ALGO USD), ALGO and minimum balance in token units, P&L versus the previous
+snapshot when available, unpriced assets, and the Spaces snapshot key. Telegram
+delivery errors are stored without replacing the underlying result.
 
 ## Verification
 

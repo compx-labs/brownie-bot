@@ -1,6 +1,8 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import { z } from "zod";
 
 import type { AppConfig } from "./config.js";
+import { accountingCashflowSchema } from "./domain.js";
 import {
   Canix402Client,
   McpSdkToolCaller,
@@ -9,6 +11,13 @@ import { AlgorandPaymentBuilder } from "./integrations/canix402/payment.js";
 import { walletFromMnemonic } from "./integrations/canix402/wallet.js";
 import { AlgorandPortfolioReader } from "./integrations/algorand/portfolio.js";
 import { AlgorandExecutionService } from "./integrations/algorand/execution.js";
+import { SpacesAccountingStore } from "./integrations/storage/accounting-store.js";
+import {
+  AccountingRunInProgressError,
+  AccountingService,
+  type AccountingState,
+} from "./services/accounting.js";
+import { RunCoordinator } from "./services/run-coordinator.js";
 import {
   RunInProgressError,
   TreasuryReviewService,
@@ -21,9 +30,22 @@ import { TelegramNotifier } from "./services/telegram.js";
 export interface AppContext {
   app: FastifyInstance;
   reviewService: TreasuryReviewService;
+  accountingService: AccountingService;
   canix: Canix402Client;
   state: ReviewState;
+  accountingState: AccountingState;
+  coordinator: RunCoordinator;
 }
+
+const cashflowBodySchema = z.object({
+  eventId: z.string().min(1),
+  type: accountingCashflowSchema.shape.type,
+  amountUsd: accountingCashflowSchema.shape.amountUsd,
+  occurredAt: z.iso.datetime(),
+  transactionId: z.string().min(1).optional(),
+  reference: z.string().min(1).optional(),
+  notes: z.string().optional(),
+});
 
 export function createApp(config: AppConfig): AppContext {
   const app = Fastify({
@@ -34,6 +56,8 @@ export function createApp(config: AppConfig): AppContext {
           "req.headers.authorization",
           "WALLET_MNEMONIC",
           "paymentSignature",
+          "DO_SPACES_SECRET",
+          "DO_SPACES_KEY",
         ],
         censor: "[REDACTED]",
       },
@@ -98,7 +122,9 @@ export function createApp(config: AppConfig): AppContext {
     config.TELEGRAM_BOT_TOKEN,
     config.TELEGRAM_CHAT_ID,
   );
+  const coordinator = new RunCoordinator();
   const state: ReviewState = {};
+  const accountingState: AccountingState = {};
   const reviewService = new TreasuryReviewService(
     agent,
     policy,
@@ -108,6 +134,27 @@ export function createApp(config: AppConfig): AppContext {
     config.BOT_WALLET,
     config.ENABLE_TRANSACTION_SIGNING,
     portfolioReader,
+    coordinator,
+  );
+  const store = new SpacesAccountingStore({
+    endpoint: config.DO_SPACES_ENDPOINT,
+    region: config.DO_SPACES_REGION,
+    bucket: config.DO_SPACES_BUCKET,
+    accessKeyId: config.DO_SPACES_KEY,
+    secretAccessKey: config.DO_SPACES_SECRET,
+    prefix: config.DO_SPACES_PREFIX,
+  });
+  const accountingService = new AccountingService(
+    portfolioReader,
+    canix,
+    store,
+    notifier,
+    coordinator,
+    accountingState,
+    {
+      walletAddress: config.BOT_WALLET,
+      maxSourceAgeHours: config.MAX_SOURCE_AGE_HOURS,
+    },
   );
 
   app.get("/health", () => ({
@@ -116,6 +163,7 @@ export function createApp(config: AppConfig): AppContext {
     signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
     walletConfigured: true,
     telegramConfigured: true,
+    accountingEnabled: true,
   }));
 
   app.get("/runs/latest", async (_request, reply) => {
@@ -144,7 +192,7 @@ export function createApp(config: AppConfig): AppContext {
       });
     }
     try {
-      return await reviewService.run();
+      return await reviewService.run("fail");
     } catch (error) {
       if (error instanceof RunInProgressError) {
         return reply.code(409).send({
@@ -156,9 +204,81 @@ export function createApp(config: AppConfig): AppContext {
     }
   });
 
+  app.get("/accounting/latest", async (_request, reply) => {
+    if (!accountingState.latest?.summary) {
+      return reply.code(404).send({
+        error: "NO_ACCOUNTING",
+        message: "No accounting snapshot has completed yet",
+      });
+    }
+    return accountingState.latest;
+  });
+
+  app.post("/accounting/run", async (request, reply) => {
+    if (!config.MANUAL_TRIGGER_TOKEN) {
+      return reply.code(404).send({
+        error: "NOT_FOUND",
+        message: "Manual accounting triggering is disabled",
+      });
+    }
+    if (
+      request.headers.authorization !== `Bearer ${config.MANUAL_TRIGGER_TOKEN}`
+    ) {
+      return reply.code(401).send({
+        error: "UNAUTHORIZED",
+        message: "A valid bearer token is required",
+      });
+    }
+    try {
+      return await accountingService.run("fail");
+    } catch (error) {
+      if (error instanceof AccountingRunInProgressError) {
+        return reply.code(409).send({
+          error: "RUN_IN_PROGRESS",
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/accounting/cashflows", async (request, reply) => {
+    if (!config.MANUAL_TRIGGER_TOKEN) {
+      return reply.code(404).send({
+        error: "NOT_FOUND",
+        message: "Manual cashflow recording is disabled",
+      });
+    }
+    if (
+      request.headers.authorization !== `Bearer ${config.MANUAL_TRIGGER_TOKEN}`
+    ) {
+      return reply.code(401).send({
+        error: "UNAUTHORIZED",
+        message: "A valid bearer token is required",
+      });
+    }
+    const body = cashflowBodySchema.parse(request.body);
+    try {
+      return await accountingService.recordCashflow(body);
+    } catch (error) {
+      return reply.code(409).send({
+        error: "CASHFLOW_CONFLICT",
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  });
+
   app.addHook("onClose", async () => {
     await canix.close();
   });
 
-  return { app, reviewService, canix, state };
+  return {
+    app,
+    reviewService,
+    accountingService,
+    canix,
+    state,
+    accountingState,
+    coordinator,
+  };
 }

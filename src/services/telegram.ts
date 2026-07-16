@@ -1,16 +1,28 @@
-import type { ReviewRun } from "../domain.js";
+import type { AccountingRun, ReviewRun } from "../domain.js";
 
 export interface RunNotifier {
   send(run: ReviewRun): Promise<void>;
 }
 
-export class TelegramNotifier implements RunNotifier {
+export interface AccountingNotifier {
+  sendAccounting(run: AccountingRun): Promise<void>;
+}
+
+export class TelegramNotifier implements RunNotifier, AccountingNotifier {
   constructor(
     private readonly botToken: string,
     private readonly chatId: string,
   ) {}
 
   async send(run: ReviewRun): Promise<void> {
+    await this.sendMessage(formatTelegramReport(run));
+  }
+
+  async sendAccounting(run: AccountingRun): Promise<void> {
+    await this.sendMessage(formatAccountingTelegramReport(run));
+  }
+
+  private async sendMessage(text: string): Promise<void> {
     const response = await fetch(
       `https://api.telegram.org/bot${this.botToken}/sendMessage`,
       {
@@ -18,7 +30,7 @@ export class TelegramNotifier implements RunNotifier {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           chat_id: this.chatId,
-          text: formatTelegramReport(run),
+          text,
           disable_web_page_preview: true,
         }),
       },
@@ -84,6 +96,64 @@ export function formatTelegramReport(run: ReviewRun): string {
   }
 
   return truncate(lines.join("\n"), 4_000);
+}
+
+export function formatAccountingTelegramReport(run: AccountingRun): string {
+  const lines = [
+    `Treasury accounting run: ${run.status}`,
+    `Run: ${run.id}`,
+    `Completed: ${run.completedAt}`,
+  ];
+
+  if (run.summary) {
+    lines.push("DeFi positions:");
+    if (run.summary.defiByProtocol.length === 0) {
+      lines.push("  none");
+    } else {
+      for (const entry of run.summary.defiByProtocol) {
+        lines.push(
+          `  ${entry.protocol}: ${formatMoneyLabel(entry.valueUsd)} (${entry.positionCount})`,
+        );
+      }
+    }
+    lines.push(
+      `Wallet tokens total: ${formatMoneyLabel(run.summary.walletAsaValueUsd)}`,
+      `ALGO balance: ${run.summary.algoBalance}`,
+      `Account min balance: ${run.summary.minimumBalance}`,
+      run.summary.pnlAvailable
+        ? `P&L vs previous: ${formatMoneyLabel(run.summary.pnlUsd)}`
+        : "P&L vs previous: no previous baseline",
+    );
+    if (run.summary.unpricedAssetIds.length > 0) {
+      lines.push(`Unpriced ASAs: ${run.summary.unpricedAssetIds.join(", ")}`);
+    }
+    const reportNotes = run.summary.notes.filter(
+      (note) =>
+        note !== "No previous accounting baseline; P&L not available yet" &&
+        note !== "No DeFi positions",
+    );
+    if (reportNotes.length > 0) {
+      lines.push(`Notes: ${truncate(reportNotes.join("; "), 700)}`);
+    }
+  }
+  if (run.snapshotKey) {
+    lines.push(`Snapshot: ${run.snapshotKey}`);
+  }
+  if (run.error) {
+    lines.push(`Error: ${truncate(run.error, 500)}`);
+  }
+  if (run.notificationError) {
+    lines.push(`Notification warning: ${truncate(run.notificationError, 240)}`);
+  }
+
+  return truncate(lines.join("\n"), 4_000);
+}
+
+function formatMoneyLabel(value: string | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "n/a";
+  }
+  return `$${value}`;
 }
 
 function formatNumber(value: number): string {

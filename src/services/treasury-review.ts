@@ -11,11 +11,13 @@ import type {
   ReviewRun,
 } from "../domain.js";
 import type { PortfolioAgent } from "./portfolio-agent.js";
+import type { CoordinatorMode, RunCoordinator } from "./run-coordinator.js";
+import { RunCoordinatorBusyError } from "./run-coordinator.js";
 import type { RunNotifier } from "./telegram.js";
 
 export class RunInProgressError extends Error {
-  constructor() {
-    super("A treasury review is already running");
+  constructor(message = "A treasury review is already running") {
+    super(message);
     this.name = "RunInProgressError";
   }
 }
@@ -58,13 +60,35 @@ export class TreasuryReviewService {
     private readonly walletAddress: string | undefined,
     private readonly signingEnabled: boolean,
     private readonly portfolioReader?: SnapshotReader,
+    private readonly coordinator?: RunCoordinator,
   ) {}
 
-  async run(): Promise<ReviewRun> {
+  async run(mode: CoordinatorMode = "wait"): Promise<ReviewRun> {
     if (this.running) {
       throw new RunInProgressError();
     }
     this.running = true;
+    try {
+      if (this.coordinator) {
+        try {
+          return await this.coordinator.runExclusive(
+            () => this.execute(),
+            mode,
+          );
+        } catch (error) {
+          if (error instanceof RunCoordinatorBusyError) {
+            throw new RunInProgressError(error.message);
+          }
+          throw error;
+        }
+      }
+      return await this.execute();
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private async execute(): Promise<ReviewRun> {
     const id = randomUUID();
     const startedAt = new Date().toISOString();
     let result: ReviewRun;
@@ -173,10 +197,8 @@ export class TreasuryReviewService {
       await this.notifier.send(result);
     } catch (error) {
       result.notificationError = safeErrorMessage(error);
-    } finally {
-      this.state.latest = result;
-      this.running = false;
     }
+    this.state.latest = result;
     return result;
   }
 }

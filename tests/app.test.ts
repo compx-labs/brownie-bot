@@ -14,6 +14,10 @@ describe("backend routes", () => {
     OPEN_AI_API_KEY: "test-openai-key",
     TELEGRAM_BOT_TOKEN: "test-token",
     TELEGRAM_CHAT_ID: "test-chat",
+    DO_SPACES_ENDPOINT: "https://nyc3.digitaloceanspaces.com",
+    DO_SPACES_BUCKET: "bucket",
+    DO_SPACES_KEY: "key",
+    DO_SPACES_SECRET: "secret",
   };
 
   afterEach(async () => {
@@ -35,6 +39,7 @@ describe("backend routes", () => {
       signingEnabled: false,
       walletConfigured: true,
       telegramConfigured: true,
+      accountingEnabled: true,
     });
   });
 

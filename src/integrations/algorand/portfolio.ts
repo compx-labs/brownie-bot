@@ -65,6 +65,7 @@ export class AlgorandPortfolioReader implements PortfolioReader {
         protocols: positions.protocols,
         totals: positions.totals,
         liquidBalances: accountState.balances,
+        minimumBalanceRaw: accountState.minimumBalanceRaw,
         complete: caveats.length === 0,
         caveats,
       },
@@ -74,6 +75,7 @@ export class AlgorandPortfolioReader implements PortfolioReader {
 
   private async readAccountState(): Promise<{
     balances: LiquidBalance[];
+    minimumBalanceRaw: string;
     authAddress?: string;
   }> {
     const algod = new algosdk.Algodv2("", this.algodUrl, "");
@@ -130,6 +132,7 @@ export class AlgorandPortfolioReader implements PortfolioReader {
     const authAddress = account.authAddr?.toString();
     return {
       balances,
+      minimumBalanceRaw: minimumBalance.toString(),
       authAddress:
         authAddress && authAddress !== this.address ? authAddress : undefined,
     };

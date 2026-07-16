@@ -239,6 +239,110 @@ describe("Canix402Client", () => {
     });
   });
 
+  it("fetches free token prices without a payment builder", async () => {
+    const callTool = vi.fn<ToolCaller["callTool"]>().mockResolvedValue(
+      toolResult({
+        data: {
+          prices: [
+            { assetId: "0", priceUsd: 0.08 },
+            { assetId: "31566704", priceUsd: 1 },
+            { assetId: "999", priceUsd: null },
+          ],
+          source: "compx",
+          fetchedAt: "2026-07-16T10:08:49.782Z",
+        },
+        meta: { paymentRequired: false, executionSubmitted: false },
+      }),
+    );
+    const buildPayment = vi.fn();
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      { build: buildPayment },
+    );
+
+    const prices = await client.getTokenPrices([0, 31_566_704, 999, 0]);
+
+    expect(buildPayment).not.toHaveBeenCalled();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(callTool).toHaveBeenCalledWith("canix_get_token_prices", {
+      assetIds: [0, 31_566_704, 999],
+    });
+    expect(prices).toEqual([
+      {
+        assetId: 0,
+        priceUsd: "0.08",
+        source: "compx",
+        fetchedAt: "2026-07-16T10:08:49.782Z",
+        stale: false,
+      },
+      {
+        assetId: 31_566_704,
+        priceUsd: "1",
+        source: "compx",
+        fetchedAt: "2026-07-16T10:08:49.782Z",
+        stale: false,
+      },
+      {
+        assetId: 999,
+        priceUsd: null,
+        source: "compx",
+        fetchedAt: "2026-07-16T10:08:49.782Z",
+        stale: false,
+      },
+    ]);
+  });
+
+  it("rejects unexpected or duplicate priced asset IDs", async () => {
+    const callTool = vi.fn<ToolCaller["callTool"]>().mockResolvedValue(
+      toolResult({
+        data: {
+          prices: [
+            { assetId: "0", priceUsd: 1 },
+            { assetId: "0", priceUsd: 2 },
+          ],
+          source: "compx",
+          fetchedAt: "2026-07-16T10:08:49.782Z",
+        },
+        meta: { paymentRequired: false, executionSubmitted: false },
+      }),
+    );
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+    );
+    await expect(client.getTokenPrices([0])).rejects.toThrow(/Duplicate/);
+  });
+
+  it("batches more than 100 asset IDs", async () => {
+    const assetIds = Array.from({ length: 101 }, (_, index) => index);
+    const callTool = vi
+      .fn<ToolCaller["callTool"]>()
+      .mockImplementation((_name, args) => {
+        const ids = (args as { assetIds: number[] }).assetIds;
+        return Promise.resolve(
+          toolResult({
+            data: {
+              prices: ids.map((assetId) => ({
+                assetId: String(assetId),
+                priceUsd: 1,
+              })),
+              source: "compx",
+              fetchedAt: "2026-07-16T10:08:49.782Z",
+            },
+            meta: { paymentRequired: false, executionSubmitted: false },
+          }),
+        );
+      });
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+    );
+
+    const prices = await client.getTokenPrices(assetIds);
+    expect(callTool).toHaveBeenCalledTimes(2);
+    expect(prices).toHaveLength(101);
+  });
+
   it("removes wallet and payment fields from model-visible tool schemas", async () => {
     const caller: ToolCaller = {
       callTool: vi.fn(),

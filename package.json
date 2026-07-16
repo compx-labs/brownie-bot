@@ -10,6 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "run-once": "tsx src/run-once.ts",
+    "accounting-once": "tsx src/accounting-once.ts",
     "canix:opportunities": "tsx src/cli/opportunities.ts",
     "canix:personalized": "tsx src/cli/personalized-opportunities.ts",
     "build": "tsc -p tsconfig.build.json",
@@ -22,8 +23,10 @@
     "test:smoke": "vitest run tests/live-canix402.smoke.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1088.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "algosdk": "^3.6.0",
+    "decimal.js": "^10.6.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.10.0",
     "node-cron": "^4.6.0",

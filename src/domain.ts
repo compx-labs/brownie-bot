@@ -80,6 +80,8 @@ export interface PortfolioSnapshot {
   protocols: z.infer<typeof protocolPositionResultSchema>[];
   totals: WalletPositions["totals"];
   liquidBalances: LiquidBalance[];
+  /** Account minimum balance in microAlgos. */
+  minimumBalanceRaw: string;
   complete: boolean;
   caveats: string[];
 }
@@ -207,4 +209,102 @@ export interface ReviewRun {
 export interface OpportunityResult {
   opportunities: Opportunity[];
   payment?: PaymentReceipt;
+}
+
+/** Canonical decimal string used for accounting money values. */
+export const moneyStringSchema = z.string().regex(/^-?[0-9]+(?:\.[0-9]+)?$/);
+
+export const assetPriceSchema = z.object({
+  assetId: z.number().int().nonnegative(),
+  symbol: z.string().min(1).optional(),
+  priceUsd: moneyStringSchema.nullable(),
+  source: z.string().min(1),
+  fetchedAt: z.iso.datetime(),
+  stale: z.boolean().default(false),
+});
+
+export type AssetPrice = z.infer<typeof assetPriceSchema>;
+
+export const accountingCashflowSchema = z.object({
+  schemaVersion: z.literal(1),
+  eventId: z.string().min(1),
+  walletAddress: z.string().min(1),
+  type: z.enum([
+    "external_deposit",
+    "external_withdrawal",
+    "profit_share_withdrawal",
+  ]),
+  amountUsd: moneyStringSchema,
+  occurredAt: z.iso.datetime(),
+  recordedAt: z.iso.datetime(),
+  transactionId: z.string().min(1).optional(),
+  reference: z.string().min(1).optional(),
+  notes: z.string().optional(),
+  checksum: z.string().min(1),
+});
+
+export type AccountingCashflow = z.infer<typeof accountingCashflowSchema>;
+
+export const protocolValueSchema = z.object({
+  protocol: z.string().min(1),
+  valueUsd: moneyStringSchema.nullable(),
+  positionCount: z.number().int().nonnegative(),
+});
+
+export type ProtocolValue = z.infer<typeof protocolValueSchema>;
+
+export const accountingSnapshotSchema = z.object({
+  schemaVersion: z.literal(2),
+  id: z.string().min(1),
+  walletAddress: z.string().min(1),
+  asOf: z.iso.datetime(),
+  fetchedAt: z.iso.datetime(),
+  defiByProtocol: z.array(protocolValueSchema),
+  defiValueUsd: moneyStringSchema.nullable(),
+  walletAsaValueUsd: moneyStringSchema.nullable(),
+  unpricedAssetIds: z.array(z.number().int().nonnegative()),
+  algoBalance: z.string().regex(/^[0-9]+(?:\.[0-9]+)?$/),
+  algoBalanceRaw: z.string().regex(/^[0-9]+$/),
+  minimumBalance: z.string().regex(/^[0-9]+(?:\.[0-9]+)?$/),
+  minimumBalanceRaw: z.string().regex(/^[0-9]+$/),
+  totalValueUsd: moneyStringSchema.nullable(),
+  notes: z.array(z.string()),
+  prices: z.array(assetPriceSchema),
+  checksum: z.string().min(1),
+});
+
+export type AccountingSnapshot = z.infer<typeof accountingSnapshotSchema>;
+
+export const accountingSummarySchema = z.object({
+  schemaVersion: z.literal(2),
+  walletAddress: z.string().min(1),
+  asOf: z.iso.datetime(),
+  latestSnapshotId: z.string().min(1),
+  latestSnapshotKey: z.string().min(1),
+  latestTotalValueUsd: moneyStringSchema.nullable(),
+  previousTotalValueUsd: moneyStringSchema.nullable(),
+  pnlUsd: moneyStringSchema.nullable(),
+  pnlAvailable: z.boolean(),
+  defiByProtocol: z.array(protocolValueSchema),
+  defiValueUsd: moneyStringSchema.nullable(),
+  walletAsaValueUsd: moneyStringSchema.nullable(),
+  unpricedAssetIds: z.array(z.number().int().nonnegative()),
+  algoBalance: z.string().regex(/^[0-9]+(?:\.[0-9]+)?$/),
+  minimumBalance: z.string().regex(/^[0-9]+(?:\.[0-9]+)?$/),
+  notes: z.array(z.string()),
+  checksum: z.string().min(1),
+});
+
+export type AccountingSummary = z.infer<typeof accountingSummarySchema>;
+
+export interface AccountingRun {
+  id: string;
+  startedAt: string;
+  completedAt: string;
+  status: "completed" | "failed" | "busy";
+  snapshot?: AccountingSnapshot;
+  summary?: AccountingSummary;
+  snapshotKey?: string;
+  error?: string;
+  notificationError?: string;
 }

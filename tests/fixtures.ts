@@ -41,6 +41,7 @@ export function portfolioSnapshot(
         decimals: 6,
       },
     ],
+    minimumBalanceRaw: "100000",
     complete: true,
     caveats: [],
     ...overrides,

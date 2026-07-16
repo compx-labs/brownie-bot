@@ -5,10 +5,12 @@ import { z } from "zod";
 import {
   opportunitySchema,
   walletPositionsSchema,
+  type AssetPrice,
   type OpportunityResult,
   type PaymentReceipt,
   type WalletPositions,
 } from "../../domain.js";
+import { formatMoney, moneyOrNull } from "../../services/money.js";
 import type { PaymentBuilder } from "./payment.js";
 
 export interface McpToolDefinition {
@@ -265,9 +267,98 @@ export class Canix402Client {
     return parseToolPayload(await this.caller.callTool("canix_health", {}));
   }
 
+  async getTokenPrices(assetIds: number[]): Promise<AssetPrice[]> {
+    const uniqueOrdered = dedupeAssetIds(assetIds);
+    if (uniqueOrdered.length === 0) {
+      return [];
+    }
+    const prices: AssetPrice[] = [];
+    for (let offset = 0; offset < uniqueOrdered.length; offset += 100) {
+      const batch = uniqueOrdered.slice(offset, offset + 100);
+      const payload = parseToolPayload(
+        await this.caller.callTool("canix_get_token_prices", {
+          assetIds: batch,
+        }),
+      );
+      if (isToolError(payload)) {
+        throw new Error(formatToolError(payload));
+      }
+      prices.push(...normalizeTokenPrices(batch, payload));
+    }
+    return prices;
+  }
+
   close(): Promise<void> {
     return this.caller.close();
   }
+}
+
+const tokenPricesResponseSchema = z.object({
+  data: z.object({
+    prices: z.array(
+      z.object({
+        assetId: z.string().regex(/^[0-9]+$/),
+        priceUsd: z.number().finite().nullable(),
+      }),
+    ),
+    source: z.string().min(1),
+    fetchedAt: z.iso.datetime(),
+  }),
+  meta: z.object({
+    paymentRequired: z.literal(false),
+    executionSubmitted: z.literal(false),
+  }),
+});
+
+function dedupeAssetIds(assetIds: number[]): number[] {
+  const seen = new Set<number>();
+  const ordered: number[] = [];
+  for (const assetId of assetIds) {
+    if (!Number.isInteger(assetId) || assetId < 0) {
+      throw new Error(`Invalid asset ID for pricing: ${assetId}`);
+    }
+    if (seen.has(assetId)) {
+      continue;
+    }
+    seen.add(assetId);
+    ordered.push(assetId);
+  }
+  return ordered;
+}
+
+function normalizeTokenPrices(
+  requestedIds: number[],
+  payload: unknown,
+): AssetPrice[] {
+  const parsed = tokenPricesResponseSchema.parse(payload);
+  const byAssetId = new Map<number, { priceUsd: number | null }>();
+  for (const entry of parsed.data.prices) {
+    const assetId = Number(entry.assetId);
+    if (!Number.isSafeInteger(assetId) || assetId < 0) {
+      throw new Error(`Invalid priced asset ID: ${entry.assetId}`);
+    }
+    if (byAssetId.has(assetId)) {
+      throw new Error(`Duplicate priced asset ID: ${assetId}`);
+    }
+    if (!requestedIds.includes(assetId)) {
+      throw new Error(`Unexpected priced asset ID: ${assetId}`);
+    }
+    byAssetId.set(assetId, { priceUsd: entry.priceUsd });
+  }
+  return requestedIds.map((assetId) => {
+    const priced = byAssetId.get(assetId);
+    if (!priced) {
+      throw new Error(`Missing priced asset ID: ${assetId}`);
+    }
+    const price = moneyOrNull(priced.priceUsd);
+    return {
+      assetId,
+      priceUsd: price === null ? null : formatMoney(price),
+      source: parsed.data.source,
+      fetchedAt: parsed.data.fetchedAt,
+      stale: false,
+    };
+  });
 }
 
 export function prepareAgentTools(
