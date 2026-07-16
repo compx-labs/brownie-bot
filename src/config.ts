@@ -42,11 +42,6 @@ const configSchema = z.object({
   MAX_SLIPPAGE_BPS: z.coerce.number().int().min(0).max(10_000).default(100),
   MAX_PRICE_IMPACT_PCT: z.coerce.number().min(0).max(100).default(3),
   MAX_DAILY_TURNOVER_PCT: z.coerce.number().min(0).max(100).default(50),
-  MAX_TRANSACTION_FEE_MICROALGOS: z.coerce
-    .number()
-    .int()
-    .nonnegative()
-    .default(100_000),
   MAX_DAILY_X402_BASE_UNITS: z.coerce
     .number()
     .int()

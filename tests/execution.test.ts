@@ -81,7 +81,6 @@ function service(encodedTransaction: string, managedAddress: string) {
       "https://mainnet-api.algonode.cloud",
       {
         signingEnabled: false,
-        maxFeeMicroAlgos: 100_000n,
         maxSlippageBps: 100,
         maxPriceImpactPct: 3,
       },
@@ -90,13 +89,10 @@ function service(encodedTransaction: string, managedAddress: string) {
   };
 }
 
-describe("AlgorandExecutionService transaction validation", () => {
-  it("validates a mainnet group for the managed wallet without signing", async () => {
+describe("AlgorandExecutionService transaction signing", () => {
+  it("accepts MCP transaction payloads without decoding in dry-run", async () => {
     const managed = algosdk.generateAccount().addr.toString();
-    const { executor, callManagedTool } = service(
-      encodedPayment(managed),
-      managed,
-    );
+    const { executor, callManagedTool } = service("not-a-transaction", managed);
 
     await expect(executor.executeAction(action())).resolves.toMatchObject({
       outcome: {
@@ -111,7 +107,7 @@ describe("AlgorandExecutionService transaction validation", () => {
     );
   });
 
-  it("rejects transactions for a different sender", async () => {
+  it("does not locally reject transactions for a different sender", async () => {
     const managed = algosdk.generateAccount().addr.toString();
     const { executor } = service(
       encodedPayment(algosdk.generateAccount().addr.toString()),
@@ -119,13 +115,10 @@ describe("AlgorandExecutionService transaction validation", () => {
     );
 
     const result = await executor.executeAction(action());
-    expect(result.outcome.status).toBe("failed");
-    expect(result.outcome.error).toContain(
-      "Unexpected local transaction sender",
-    );
+    expect(result.outcome.status).toBe("validated-dry-run");
   });
 
-  it("rejects a treasury spend that differs from the approved action", async () => {
+  it("does not compare MCP transactions with approved action spends", async () => {
     const managed = algosdk.generateAccount().addr.toString();
     const { executor } = service(encodedPayment(managed), managed);
     const mismatchedAction = action();
@@ -133,13 +126,10 @@ describe("AlgorandExecutionService transaction validation", () => {
 
     const result = await executor.executeAction(mismatchedAction);
 
-    expect(result.outcome.status).toBe("failed");
-    expect(result.outcome.error).toContain(
-      "transaction spend does not match its approved amount",
-    );
+    expect(result.outcome.status).toBe("validated-dry-run");
   });
 
-  it("rejects rekey and non-mainnet transactions", async () => {
+  it("does not locally reject rekey or non-mainnet transactions", async () => {
     const managed = algosdk.generateAccount().addr.toString();
     const rekeyed = service(
       encodedPayment(managed, {
@@ -148,8 +138,7 @@ describe("AlgorandExecutionService transaction validation", () => {
       managed,
     );
     const rekeyedResult = await rekeyed.executor.executeAction(action());
-    expect(rekeyedResult.outcome.status).toBe("failed");
-    expect(rekeyedResult.outcome.error).toContain("Unsafe transaction");
+    expect(rekeyedResult.outcome.status).toBe("validated-dry-run");
 
     const testnet = service(
       encodedPayment(managed, {
@@ -160,9 +149,6 @@ describe("AlgorandExecutionService transaction validation", () => {
       managed,
     );
     const testnetResult = await testnet.executor.executeAction(action());
-    expect(testnetResult.outcome.status).toBe("failed");
-    expect(testnetResult.outcome.error).toContain(
-      "not bound to Algorand mainnet",
-    );
+    expect(testnetResult.outcome.status).toBe("validated-dry-run");
   });
 });

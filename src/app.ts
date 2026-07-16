@@ -90,7 +90,6 @@ export function createApp(config: AppConfig): AppContext {
     config.X402_ALGOD_URL,
     {
       signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
-      maxFeeMicroAlgos: BigInt(config.MAX_TRANSACTION_FEE_MICROALGOS),
       maxSlippageBps: config.MAX_SLIPPAGE_BPS,
       maxPriceImpactPct: config.MAX_PRICE_IMPACT_PCT,
     },

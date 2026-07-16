@@ -78,16 +78,8 @@ const optInGroupSchema = z.object({
   meta: z.object({ executionSubmitted: z.literal(false) }),
 });
 
-const MAINNET_GENESIS_HASH = Buffer.from(
-  "wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
-  "base64",
-);
-const MAX_ATOMIC_GROUP_SIZE = 16;
-const MAX_VALIDITY_WINDOW_ROUNDS = 1_000n;
-
 export interface ExecutionPolicy {
   signingEnabled: boolean;
-  maxFeeMicroAlgos: bigint;
   maxSlippageBps: number;
   maxPriceImpactPct: number;
 }
@@ -161,12 +153,7 @@ export class AlgorandExecutionService {
       encoded,
       signer: "user" as const,
     }));
-    const outcome = await this.validateSignAndSubmit(
-      action.id,
-      blobs,
-      (transactions) =>
-        assertActionSpends(transactions, this.managedAddress, action),
-    );
+    const outcome = await this.signAndSubmit(action.id, blobs);
     return {
       outcome: {
         ...outcome.outcome,
@@ -187,8 +174,6 @@ export class AlgorandExecutionService {
     ) {
       throw new Error(`Swap action ${action.id} is missing assets or amount`);
     }
-    const fromAssetId = action.fromAssetId;
-    const amountRaw = action.amountRaw;
     let quoteResult = await this.canix.callManagedTool(
       "canix_get_quote",
       {
@@ -214,14 +199,12 @@ export class AlgorandExecutionService {
     );
     const optIn = optInGroupSchema.parse(optInResult.data);
     if (optIn.data.required) {
-      const optInOutcome = await this.validateSignAndSubmit(
+      const optInOutcome = await this.signAndSubmit(
         `${action.id}:optin`,
         optIn.data.transactions.map((transaction) => ({
           encoded: transaction.encodedTransaction,
           signer: "user" as const,
         })),
-        (transactions) =>
-          assertOptInTransactions(transactions, this.managedAddress),
       );
       if (optInOutcome.outcome.status !== "confirmed") {
         return {
@@ -261,32 +244,13 @@ export class AlgorandExecutionService {
     );
     const group = walletlessGroupSchema.parse(swapResult.data);
     assertFresh(group.data.quoteExpiresAt);
-    assertOrderedGroup(group.data.transactions);
-    const userIndexes = new Set(group.data.userSignIndexes);
-    for (const transaction of group.data.transactions) {
-      if (
-        (transaction.signer === "user") !==
-        userIndexes.has(transaction.index)
-      ) {
-        throw new Error(
-          "Haystack userSignIndexes do not match signer metadata",
-        );
-      }
-    }
-    const outcome = await this.validateSignAndSubmit(
+    const outcome = await this.signAndSubmit(
       action.id,
       group.data.transactions.map((transaction) => ({
         encoded: transaction.encodedTransaction,
         signer: transaction.signer,
         signed: transaction.signedTransaction,
       })),
-      (transactions) =>
-        assertSwapSpend(
-          transactions,
-          this.managedAddress,
-          fromAssetId,
-          BigInt(amountRaw),
-        ),
     );
     return {
       outcome: { ...outcome.outcome, toolName: "canix_swap" },
@@ -294,82 +258,31 @@ export class AlgorandExecutionService {
     };
   }
 
-  private async validateSignAndSubmit(
+  private async signAndSubmit(
     actionId: string,
     members: Array<{
       encoded: string;
       signer: "user" | "haystack";
       signed?: string;
     }>,
-    validateTransactions?: (transactions: algosdk.Transaction[]) => void,
   ): Promise<{
     outcome: ExecutionOutcome;
-    transactions: algosdk.Transaction[];
   }> {
-    if (members.length > MAX_ATOMIC_GROUP_SIZE) {
-      throw new Error(
-        `Transaction group contains more than ${MAX_ATOMIC_GROUP_SIZE} members`,
-      );
+    if (!this.policy.signingEnabled) {
+      return {
+        outcome: { actionId, status: "validated-dry-run" },
+      };
     }
-    const decoded = members.map((member) => {
-      const transaction = algosdk.decodeUnsignedTransaction(
-        Buffer.from(member.encoded, "base64"),
-      );
-      const sender = transaction.sender.toString();
-      const fee = BigInt(transaction.fee);
-      if (fee > this.policy.maxFeeMicroAlgos) {
-        throw new Error(`Transaction fee ${fee} exceeds policy`);
+    const signed = members.map((member) => {
+      if (member.signer === "user") {
+        return signEncodedTransaction(member.encoded, this.wallet.secretKey);
       }
-      if (member.signer === "user" && sender !== this.managedAddress) {
-        throw new Error(`Unexpected local transaction sender ${sender}`);
-      }
-      if (member.signer === "haystack" && !member.signed) {
+      if (!member.signed) {
         throw new Error(
           "Haystack transaction is missing its provider signature",
         );
       }
-      assertSafeTransaction(transaction);
-      return transaction;
-    });
-    assertGroupIds(decoded);
-    validateTransactions?.(decoded);
-    const totalFee = decoded.reduce(
-      (total, transaction) => total + transaction.fee,
-      0n,
-    );
-    if (totalFee > this.policy.maxFeeMicroAlgos) {
-      throw new Error(`Transaction group fee ${totalFee} exceeds policy`);
-    }
-    const providerBlobs = members.map((member, index) => {
-      if (member.signer === "user") {
-        return undefined;
-      }
-      const blob = Buffer.from(member.signed ?? "", "base64");
-      const providerSigned = algosdk.decodeSignedTransaction(blob);
-      if (providerSigned.txn.txID() !== decoded[index]?.txID()) {
-        throw new Error("Haystack signature does not match transaction bytes");
-      }
-      return new Uint8Array(blob);
-    });
-    if (!this.policy.signingEnabled) {
-      return {
-        outcome: { actionId, status: "validated-dry-run" },
-        transactions: decoded,
-      };
-    }
-    const signed = members.map((member, index) => {
-      const transaction = decoded[index];
-      if (!transaction) {
-        throw new Error("Transaction group index mismatch");
-      }
-      if (member.signer === "user") {
-        return transaction.signTxn(this.wallet.secretKey);
-      }
-      const providerBlob = providerBlobs[index];
-      if (!providerBlob) {
-        throw new Error("Haystack signed transaction index mismatch");
-      }
-      return providerBlob;
+      return new Uint8Array(Buffer.from(member.signed, "base64"));
     });
     const submitted = (await this.algod.sendRawTransaction(signed).do()) as {
       txid: string;
@@ -386,7 +299,6 @@ export class AlgorandExecutionService {
         transactionId: submitted.txid,
         confirmedRound: confirmation.confirmedRound?.toString(),
       },
-      transactions: decoded,
     };
   }
 }
@@ -397,123 +309,13 @@ function assertFresh(expiresAt: string): void {
   }
 }
 
-function assertOrderedGroup(transactions: Array<{ index: number }>): void {
-  transactions.forEach((transaction, index) => {
-    if (transaction.index !== index) {
-      throw new Error("Transaction group order is invalid");
-    }
-  });
-}
-
-function assertGroupIds(transactions: algosdk.Transaction[]): void {
-  if (transactions.length <= 1) {
-    return;
-  }
-  const groups = transactions.map((transaction) =>
-    transaction.group ? Buffer.from(transaction.group).toString("base64") : "",
+function signEncodedTransaction(
+  encodedTransaction: string,
+  secretKey: Uint8Array,
+): Uint8Array {
+  // algosdk signs via a Transaction instance; do not inspect MCP-returned fields.
+  const transaction = algosdk.decodeUnsignedTransaction(
+    Buffer.from(encodedTransaction, "base64"),
   );
-  if (!groups[0] || groups.some((group) => group !== groups[0])) {
-    throw new Error("Transactions do not share one atomic group ID");
-  }
-}
-
-function assertSafeTransaction(transaction: algosdk.Transaction): void {
-  if (
-    !["pay", "axfer", "appl"].includes(transaction.type) ||
-    transaction.rekeyTo ||
-    transaction.payment?.closeRemainderTo ||
-    transaction.assetTransfer?.closeRemainderTo ||
-    transaction.assetTransfer?.assetSender
-  ) {
-    throw new Error(`Unsafe transaction ${transaction.txID()} was rejected`);
-  }
-  if (
-    !transaction.genesisHash ||
-    !Buffer.from(transaction.genesisHash).equals(MAINNET_GENESIS_HASH)
-  ) {
-    throw new Error("Transaction is not bound to Algorand mainnet");
-  }
-  if (
-    transaction.lastValid < transaction.firstValid ||
-    transaction.lastValid - transaction.firstValid > MAX_VALIDITY_WINDOW_ROUNDS
-  ) {
-    throw new Error("Transaction validity window exceeds policy");
-  }
-}
-
-function assertSwapSpend(
-  transactions: algosdk.Transaction[],
-  walletAddress: string,
-  fromAssetId: number,
-  expectedAmount: bigint,
-): void {
-  const spends = transactions.filter(
-    (transaction) =>
-      transaction.sender.toString() === walletAddress &&
-      (fromAssetId === 0
-        ? transaction.payment?.amount === expectedAmount
-        : transaction.assetTransfer?.assetIndex === BigInt(fromAssetId) &&
-          transaction.assetTransfer.amount === expectedAmount),
-  );
-  if (spends.length !== 1) {
-    throw new Error(
-      "Swap group does not contain exactly one matching treasury input",
-    );
-  }
-}
-
-function assertActionSpends(
-  transactions: algosdk.Transaction[],
-  walletAddress: string,
-  action: PortfolioAction,
-): void {
-  const positiveSpends = transactions.filter((transaction) => {
-    if (transaction.sender.toString() !== walletAddress) {
-      return false;
-    }
-    return (
-      (transaction.payment?.amount ?? 0n) > 0n ||
-      (transaction.assetTransfer?.amount ?? 0n) > 0n
-    );
-  });
-  const actual = new Map<number, bigint>();
-  for (const transaction of positiveSpends) {
-    const assetId = transaction.payment
-      ? 0
-      : Number(transaction.assetTransfer?.assetIndex);
-    const amount =
-      transaction.payment?.amount ?? transaction.assetTransfer?.amount ?? 0n;
-    actual.set(assetId, (actual.get(assetId) ?? 0n) + amount);
-  }
-  const authorized = new Map(
-    action.authorizedSpends.map((spend) => [
-      spend.assetId,
-      BigInt(spend.amountRaw),
-    ]),
-  );
-  if (
-    actual.size !== authorized.size ||
-    [...authorized].some(([assetId, amount]) => actual.get(assetId) !== amount)
-  ) {
-    throw new Error(
-      `Action ${action.id} transaction spend does not match its approved amount`,
-    );
-  }
-}
-
-function assertOptInTransactions(
-  transactions: algosdk.Transaction[],
-  walletAddress: string,
-): void {
-  for (const transaction of transactions) {
-    const validAssetOptIn =
-      transaction.assetTransfer?.amount === 0n &&
-      transaction.assetTransfer.receiver.toString() === walletAddress;
-    const validApplicationOptIn =
-      transaction.applicationCall?.onComplete ===
-      algosdk.OnApplicationComplete.OptInOC;
-    if (!validAssetOptIn && !validApplicationOptIn) {
-      throw new Error("Opt-in group contains a non-opt-in transaction");
-    }
-  }
+  return transaction.signTxn(secretKey);
 }
