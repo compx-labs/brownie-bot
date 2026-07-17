@@ -27,6 +27,10 @@ import {
   subtractMoney,
   type Money,
 } from "./money.js";
+import {
+  collectRepriceAssetIds,
+  repricePositionsFromTokenPrices,
+} from "./position-pricing.js";
 
 const ALGO_ASSET_ID = 0;
 const ALGO_DECIMALS = 6;
@@ -141,18 +145,26 @@ export class AccountingService {
     );
     const { snapshot: portfolio } = await this.portfolioReader.read();
     const walletAsas = standardWalletAsas(portfolio.liquidBalances);
+    const priceAssetIds = [
+      ...new Set([
+        ...walletAsas.map((balance) => balance.assetId),
+        ...collectRepriceAssetIds(portfolio.positions),
+      ]),
+    ];
     const prices =
-      walletAsas.length === 0
+      priceAssetIds.length === 0
         ? []
-        : await this.canix.getTokenPrices(
-            walletAsas.map((balance) => balance.assetId),
-          );
+        : await this.canix.getTokenPrices(priceAssetIds);
+    const { positions, notes: repriceNotes } = repricePositionsFromTokenPrices(
+      portfolio.positions,
+      prices,
+    );
     const pricedAsas = priceWalletAsas(
       walletAsas,
       prices,
       this.options.maxSourceAgeHours,
     );
-    const defiByProtocol = buildDefiByProtocol(portfolio.positions);
+    const defiByProtocol = buildDefiByProtocol(positions);
     const defiValueUsd = sumProtocolValues(defiByProtocol);
     const walletAsaValueUsd = pricedAsas.walletAsaValueUsd;
     const totalValueUsd = combineKnownTotals(defiValueUsd, walletAsaValueUsd);
@@ -167,7 +179,8 @@ export class AccountingService {
 
     const notes = [
       ...pricedAsas.notes,
-      ...defiNotes(portfolio.positions, defiByProtocol),
+      ...repriceNotes,
+      ...defiNotes(positions, defiByProtocol),
     ];
     if (!previous) {
       notes.push("No previous accounting baseline; P&L not available yet");

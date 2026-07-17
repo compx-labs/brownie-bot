@@ -4,6 +4,10 @@ import type { Canix402Client } from "../src/integrations/canix402/client.js";
 import type { PortfolioReader } from "../src/integrations/algorand/portfolio.js";
 import {
   OpenAiPortfolioAgent,
+  MAX_OPPORTUNITY_TOOL_LIMIT,
+  clampOpportunityToolArgs,
+  compactToolResultForModel,
+  selectAgentTools,
   type ResponsesClient,
 } from "../src/services/portfolio-agent.js";
 import { opportunity, portfolioPlan, portfolioSnapshot } from "./fixtures.js";
@@ -15,11 +19,14 @@ const requiredTools = [
   "canix_list_opportunities",
   "canix_search_opportunities",
   "canix_get_personalized_opportunities",
+  "canix_get_protocol_opportunities",
   "canix_list_execution_shapes",
   "canix_get_execution_quote",
   "canix_get_quote",
   "canix_optin",
   "canix_swap",
+  "canix_get_openapi",
+  "canix_list_strategies",
 ];
 
 function toolSchema(name: string) {
@@ -60,7 +67,7 @@ function toolSchema(name: string) {
   };
 }
 
-function setup(responses: unknown[]) {
+function setup(responses: unknown[], options?: { signingEnabled?: boolean }) {
   const create = vi.fn();
   responses.forEach((response) => create.mockResolvedValueOnce(response));
   const callManagedTool = vi.fn().mockResolvedValue({
@@ -96,10 +103,11 @@ function setup(responses: unknown[]) {
         maxSourceAgeHours: 24,
         minProjectedNetImprovementUsd: 1,
       },
-      signingEnabled: false,
+      signingEnabled: options?.signingEnabled ?? false,
     }),
     create,
     callManagedTool,
+    reader,
   };
 }
 
@@ -163,6 +171,261 @@ describe("OpenAiPortfolioAgent", () => {
     expect(toolNames).not.toContain("canix_get_execution_quote");
     expect(toolNames).not.toContain("canix_optin");
     expect(toolNames).not.toContain("canix_swap");
+    expect(toolNames).not.toContain("canix_get_openapi");
+    expect(toolNames).not.toContain("canix_list_strategies");
+    expect(toolNames).not.toContain("canix_get_positions");
+    const modelToolOutput = (
+      create.mock.calls[1]?.[0] as {
+        input: Array<{ output?: string }>;
+      }
+    ).input[0]?.output;
+    expect(modelToolOutput).toBeDefined();
+    const parsedOutput = JSON.parse(modelToolOutput!) as {
+      data: Array<{ executionShapes: Array<Record<string, unknown>> }>;
+      meta: { returnedCount: number };
+    };
+    expect(parsedOutput.meta.returnedCount).toBe(1);
+    expect(parsedOutput.data[0]?.executionShapes[0]).not.toHaveProperty(
+      "title",
+    );
+    expect(parsedOutput.data[0]?.executionShapes[0]).toHaveProperty("shapeKey");
+  });
+
+  it("does not expose or invoke final execution tools even when signing is enabled", async () => {
+    const { agent, create, callManagedTool } = setup(
+      [
+        {
+          id: "response-1",
+          output: [
+            {
+              type: "function_call",
+              call_id: "call-1",
+              name: "canix_get_execution_quote",
+              arguments: JSON.stringify({
+                quotes: [
+                  {
+                    shapeKey: "mainnet:folks:v2:deposit:escrow",
+                    input: { assetAmount: "1" },
+                  },
+                ],
+              }),
+            },
+          ],
+        },
+        {
+          id: "response-2",
+          output: [
+            {
+              type: "function_call",
+              call_id: "call-2",
+              name: "canix_list_opportunities",
+              arguments: JSON.stringify({ limit: 10 }),
+            },
+          ],
+        },
+        {
+          id: "response-3",
+          output: [],
+          output_text: JSON.stringify(portfolioPlan()),
+        },
+      ],
+      { signingEnabled: true },
+    );
+
+    await agent.run();
+
+    const toolNames = (
+      create.mock.calls[0]?.[0] as { tools: Array<{ name: string }> }
+    ).tools.map((tool) => tool.name);
+    expect(toolNames).not.toContain("canix_get_execution_quote");
+    expect(toolNames).not.toContain("canix_optin");
+    expect(toolNames).not.toContain("canix_swap");
+
+    const firstOutput = (
+      create.mock.calls[1]?.[0] as {
+        input: Array<{ output?: string }>;
+      }
+    ).input[0]?.output;
+    expect(firstOutput).toContain("EXECUTION_HOST_ONLY");
+    expect(callManagedTool).toHaveBeenCalledTimes(1);
+    expect(callManagedTool).toHaveBeenCalledWith(
+      "canix_list_opportunities",
+      { limit: 10 },
+      managedWallet,
+    );
+  });
+
+  it("clamps oversized opportunity limits before calling MCP", async () => {
+    const { agent, callManagedTool, create } = setup([
+      {
+        id: "response-1",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-1",
+            name: "canix_search_opportunities",
+            arguments: JSON.stringify({ limit: 200, sort: "tvl" }),
+          },
+        ],
+      },
+      {
+        id: "response-2",
+        output: [],
+        output_text: JSON.stringify(portfolioPlan()),
+      },
+    ]);
+
+    await agent.run();
+
+    expect(callManagedTool).toHaveBeenCalledWith(
+      "canix_search_opportunities",
+      { limit: MAX_OPPORTUNITY_TOOL_LIMIT, sort: "tvl" },
+      managedWallet,
+    );
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("compacts large opportunity payloads for the model while keeping host copies", () => {
+    const bulky = Array.from({ length: 40 }, (_, index) =>
+      opportunity({
+        opportunityId: `tinyman:pool:${index}`,
+        tvlUsd: 1_000_000 - index * 1_000,
+        executionReady: index < 30,
+        executionShapes: [
+          {
+            shapeKey: `shape:${index}`,
+            protocol: "tinyman",
+            protocolVersion: "v2",
+            action: "addLiquidity",
+            variant: "flexible",
+            title: "Very long title that should not reach the model",
+            summary: "Very long summary that should not reach the model",
+            order: 0,
+            requiredInputs: ["assetAAmount"],
+            requiredAssetIds: [0],
+            inputHints: { assetAId: 0 },
+          },
+        ],
+      }),
+    );
+    const compacted = compactToolResultForModel(
+      "canix_list_opportunities",
+      { data: bulky },
+      { minTvlUsd: 100_000, maxRows: 10 },
+    ) as {
+      data: Array<{ opportunityId: string; executionShapes: unknown[] }>;
+      meta: { sourceCount: number; returnedCount: number; truncated: boolean };
+    };
+
+    expect(compacted.meta).toMatchObject({
+      sourceCount: 40,
+      returnedCount: 10,
+      truncated: true,
+    });
+    expect(compacted.data).toHaveLength(10);
+    expect(compacted.data[0]?.opportunityId).toBe("tinyman:pool:0");
+    expect(compacted.data[0]?.executionShapes[0]).toEqual({
+      shapeKey: "shape:0",
+      action: "addLiquidity",
+      order: 0,
+      requiredInputs: ["assetAAmount"],
+      requiredAssetIds: [0],
+      inputHints: { assetAId: 0 },
+    });
+  });
+
+  it("selects only allowlisted research tools", () => {
+    const selected = selectAgentTools(
+      requiredTools.map((name) => ({
+        name,
+        inputSchema: { type: "object", properties: {} },
+      })),
+      false,
+    ).map((tool) => tool.name);
+
+    expect(selected).toEqual([
+      "canix_list_opportunities",
+      "canix_search_opportunities",
+      "canix_get_personalized_opportunities",
+      "canix_get_protocol_opportunities",
+      "canix_list_execution_shapes",
+      "canix_get_quote",
+    ]);
+    expect(clampOpportunityToolArgs("canix_list_opportunities", { limit: 200 }))
+      .toEqual({ limit: MAX_OPPORTUNITY_TOOL_LIMIT });
+  });
+
+  it("scales liquid balance base units for the model input", async () => {
+    const { agent, create, reader } = setup([
+      {
+        id: "response-1",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-1",
+            name: "canix_get_personalized_opportunities",
+            arguments: JSON.stringify({ limit: 25 }),
+          },
+        ],
+      },
+      {
+        id: "response-2",
+        output: [],
+        output_text: JSON.stringify(portfolioPlan()),
+      },
+    ]);
+    vi.mocked(reader.read).mockResolvedValueOnce({
+      snapshot: portfolioSnapshot({
+        liquidBalances: [
+          {
+            assetId: 0,
+            amountRaw: "1500000",
+            spendableAmountRaw: "500000",
+            decimals: 6,
+            symbol: "ALGO",
+          },
+          {
+            assetId: 31_566_704,
+            amountRaw: "30000000",
+            spendableAmountRaw: "30000000",
+            decimals: 6,
+            symbol: "USDC",
+          },
+        ],
+      }),
+      payments: [],
+    });
+
+    await agent.run();
+
+    const input = JSON.parse(
+      (create.mock.calls[0]?.[0] as { input: string }).input,
+    ) as {
+      portfolioSnapshot: {
+        liquidBalances: Array<{
+          assetId: number;
+          amountRaw: string;
+          amount?: string;
+          spendableAmount?: string;
+        }>;
+      };
+    };
+    expect(input.portfolioSnapshot.liquidBalances).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          assetId: 31_566_704,
+          amountRaw: "30000000",
+          amount: "30",
+          spendableAmount: "30",
+        }),
+        expect.objectContaining({
+          assetId: 0,
+          amountRaw: "1500000",
+          amount: "1.5",
+          spendableAmount: "0.5",
+        }),
+      ]),
+    );
   });
 
   it("fails closed when the model skips opportunity research", async () => {

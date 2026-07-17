@@ -6,6 +6,11 @@ import type {
   PortfolioSnapshot,
 } from "../../domain.js";
 import type { Canix402Client } from "../canix402/client.js";
+import {
+  collectRepriceAssetIds,
+  recomputeWalletPositionTotals,
+  repricePositionsFromTokenPrices,
+} from "../../services/position-pricing.js";
 
 export interface PortfolioReader {
   read(): Promise<{
@@ -30,6 +35,16 @@ export class AlgorandPortfolioReader implements PortfolioReader {
       this.canix.getPositions(this.address),
       this.readAccountState(),
     ]);
+    const repriceAssetIds = collectRepriceAssetIds(positions.data);
+    const prices =
+      repriceAssetIds.length === 0
+        ? []
+        : await this.canix.getTokenPrices(repriceAssetIds);
+    const { positions: pricedPositions } = repricePositionsFromTokenPrices(
+      positions.data,
+      prices,
+    );
+    const totals = recomputeWalletPositionTotals(pricedPositions);
     const caveats: string[] = [];
     if (accountState.authAddress) {
       caveats.push(
@@ -44,7 +59,7 @@ export class AlgorandPortfolioReader implements PortfolioReader {
       }
     }
     const oldestAllowed = Date.now() - this.maxSourceAgeHours * 3_600_000;
-    for (const position of positions.data) {
+    for (const position of pricedPositions) {
       if (
         position.sourceTimestamp &&
         new Date(position.sourceTimestamp).getTime() < oldestAllowed
@@ -54,16 +69,16 @@ export class AlgorandPortfolioReader implements PortfolioReader {
         );
       }
     }
-    if (Object.values(positions.totals).some((value) => value === null)) {
+    if (Object.values(totals).some((value) => value === null)) {
       caveats.push("At least one aggregate position valuation is incomplete");
     }
     return {
       snapshot: {
         address: this.address,
         fetchedAt: new Date().toISOString(),
-        positions: positions.data,
+        positions: pricedPositions,
         protocols: positions.protocols,
-        totals: positions.totals,
+        totals,
         liquidBalances: accountState.balances,
         minimumBalanceRaw: accountState.minimumBalanceRaw,
         complete: caveats.length === 0,

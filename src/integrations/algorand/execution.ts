@@ -9,6 +9,15 @@ import type {
 } from "../../domain.js";
 import type { Canix402Client } from "../canix402/client.js";
 import type { TreasuryWallet } from "../canix402/wallet.js";
+import type { FolksEscrowStore } from "./folks-escrow-store.js";
+import {
+  classifyFolksShape,
+  needsSequentialEscrowExecution,
+  resolveDepositAssetId,
+  resolvePoolAppId,
+  selectEscrowShapesToRun,
+  sortExecutionShapes,
+} from "./folks-execution.js";
 
 const executableQuoteSchema = z.object({
   shapeKey: z.string(),
@@ -16,6 +25,7 @@ const executableQuoteSchema = z.object({
   encodedTransactions: z.array(z.string().min(1)).min(1),
   warnings: z.array(z.string()).default([]),
   transactions: z.array(z.unknown()).default([]),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const executionQuoteBatchSchema = z.object({
@@ -101,6 +111,7 @@ export class AlgorandExecutionService {
     private readonly managedAddress: string,
     algodUrl: string,
     private readonly policy: ExecutionPolicy,
+    private readonly folksEscrowStore?: FolksEscrowStore,
   ) {
     if (policy.signingEnabled && wallet.address !== managedAddress) {
       throw new Error(
@@ -155,22 +166,33 @@ export class AlgorandExecutionService {
     if (!action.executionShapeKey || !action.executionInput) {
       throw new Error(`Action ${action.id} has no execution shape`);
     }
+    const opportunity = action.opportunityId
+      ? opportunities.find(
+          (candidate) => candidate.opportunityId === action.opportunityId,
+        )
+      : undefined;
+    if (
+      opportunity &&
+      needsSequentialEscrowExecution(opportunity.executionShapes)
+    ) {
+      return this.executeSequentialEscrowShapes(action, opportunity);
+    }
+    return this.executeBatchedShapes(action, opportunities);
+  }
+
+  private async executeBatchedShapes(
+    action: PortfolioAction,
+    opportunities: Opportunity[],
+  ): Promise<{
+    outcome: ExecutionOutcome;
+    payments: PaymentReceipt[];
+  }> {
     const quotes = buildQuoteRequests(
       action,
       opportunities,
       this.policy.maxSlippageBps,
     );
-    const result = await this.canix.callManagedTool(
-      "canix_get_execution_quote",
-      { quotes },
-      this.managedAddress,
-    );
-    const batch = executionQuoteBatchSchema.parse(result.data);
-    if (batch.data.length !== quotes.length) {
-      throw new Error(
-        `Execution quote count mismatch: requested ${quotes.length}, received ${batch.data.length}`,
-      );
-    }
+    const { batch, payments } = await this.requestQuotes(action.id, quotes);
     let lastOutcome: ExecutionOutcome = {
       actionId: action.id,
       status: "failed",
@@ -178,12 +200,9 @@ export class AlgorandExecutionService {
     };
     for (const [index, quote] of batch.data.entries()) {
       assertFresh(quote.expiresAt);
-      const submit = await this.signAndSubmit(
+      const submit = await this.signAndSubmitEncoded(
         batch.data.length === 1 ? action.id : `${action.id}:${index}`,
-        quote.encodedTransactions.map((encoded) => ({
-          encoded,
-          signer: "user" as const,
-        })),
+        quote.encodedTransactions,
       );
       lastOutcome = {
         ...submit.outcome,
@@ -191,16 +210,199 @@ export class AlgorandExecutionService {
         toolName: "canix_get_execution_quote",
       };
       if (submit.outcome.status !== "confirmed") {
-        return {
-          outcome: lastOutcome,
-          payments: result.payment ? [result.payment] : [],
-        };
+        return { outcome: lastOutcome, payments };
       }
     }
-    return {
-      outcome: lastOutcome,
-      payments: result.payment ? [result.payment] : [],
+    return { outcome: lastOutcome, payments };
+  }
+
+  private async executeSequentialEscrowShapes(
+    action: PortfolioAction,
+    opportunity: Opportunity,
+  ): Promise<{
+    outcome: ExecutionOutcome;
+    payments: PaymentReceipt[];
+  }> {
+    if (!this.folksEscrowStore) {
+      throw new Error(
+        "Folks escrow store is not configured; cannot run sequential escrow setup",
+      );
+    }
+    const shapes = sortExecutionShapes(opportunity.executionShapes);
+    const poolAppId = resolvePoolAppId(shapes, action.executionInput ?? {});
+    if (poolAppId === undefined) {
+      throw new Error(
+        `Action ${action.id} is missing poolAppId for Folks escrow execution`,
+      );
+    }
+    const assetId = resolveDepositAssetId(
+      shapes,
+      action.executionInput ?? {},
+      action.fromAssetId,
+    );
+    if (assetId === undefined) {
+      throw new Error(
+        `Action ${action.id} is missing assetId for Folks escrow execution`,
+      );
+    }
+
+    let escrow = await this.folksEscrowStore.get(this.managedAddress, poolAppId);
+    const escrowOptedIntoAsset = escrow
+      ? await this.isAssetOptedIn(escrow.escrowAddress, assetId)
+      : false;
+    const selected = selectEscrowShapesToRun(shapes, {
+      hasEscrow: Boolean(escrow),
+      escrowOptedIntoAsset,
+    });
+    if (selected.length === 0) {
+      throw new Error(`Action ${action.id} selected no Folks execution shapes`);
+    }
+
+    console.error(
+      `[execution] Folks sequential for ${action.id}: ${selected
+        .map((shape) => `${classifyFolksShape(shape)}:${shape.shapeKey}`)
+        .join(" → ")} (escrow=${escrow ? "present" : "missing"}, opted=${escrowOptedIntoAsset})`,
+    );
+
+    const payments: PaymentReceipt[] = [];
+    let lastOutcome: ExecutionOutcome = {
+      actionId: action.id,
+      status: "failed",
+      error: "No Folks steps executed",
     };
+    let escrowSecretKey = escrow
+      ? secretKeyFromBase64(escrow.escrowPrivateKeyBase64)
+      : undefined;
+
+    for (const shape of selected) {
+      const input = {
+        ...buildShapeInput(
+          shape,
+          {
+            ...(action.executionInput ?? {}),
+            ...(escrow ? { escrowAddress: escrow.escrowAddress } : {}),
+          },
+          this.policy.maxSlippageBps,
+        ),
+        ...(escrow ? { escrowAddress: escrow.escrowAddress } : {}),
+      };
+      const { batch, payments: stepPayments } = await this.requestQuotes(
+        `${action.id}:${classifyFolksShape(shape)}`,
+        [{ shapeKey: shape.shapeKey, input }],
+      );
+      payments.push(...stepPayments);
+      const quote = batch.data[0]!;
+      assertFresh(quote.expiresAt);
+
+      const metadataEscrow = readEscrowMetadata(quote.metadata);
+      if (metadataEscrow?.escrowPrivateKeyBase64) {
+        escrowSecretKey = secretKeyFromBase64(
+          metadataEscrow.escrowPrivateKeyBase64,
+        );
+      }
+      const extraSigners = new Map<string, Uint8Array>();
+      const escrowAddress =
+        metadataEscrow?.escrowAddress ?? escrow?.escrowAddress;
+      if (escrowAddress && escrowSecretKey) {
+        extraSigners.set(escrowAddress, escrowSecretKey);
+      }
+
+      const submit = await this.signAndSubmitEncoded(
+        `${action.id}:${classifyFolksShape(shape)}`,
+        quote.encodedTransactions,
+        extraSigners,
+      );
+      lastOutcome = {
+        ...submit.outcome,
+        actionId: action.id,
+        toolName: "canix_get_execution_quote",
+      };
+      if (submit.outcome.status !== "confirmed") {
+        return { outcome: lastOutcome, payments };
+      }
+
+      if (classifyFolksShape(shape) === "setup") {
+        if (
+          !metadataEscrow?.escrowAddress ||
+          !metadataEscrow.escrowPrivateKeyBase64
+        ) {
+          throw new Error(
+            `Folks setup quote for ${action.id} did not return escrowAddress/escrowPrivateKeyBase64 metadata`,
+          );
+        }
+        escrow = await this.folksEscrowStore.save({
+          walletAddress: this.managedAddress,
+          poolAppId,
+          depositsAppId: metadataEscrow.depositsAppId,
+          escrowAddress: metadataEscrow.escrowAddress,
+          escrowPrivateKeyBase64: metadataEscrow.escrowPrivateKeyBase64,
+        });
+        escrowSecretKey = secretKeyFromBase64(
+          metadataEscrow.escrowPrivateKeyBase64,
+        );
+        console.error(
+          `[execution] Persisted Folks escrow ${escrow.escrowAddress} for pool ${poolAppId}`,
+        );
+      }
+    }
+
+    return { outcome: lastOutcome, payments };
+  }
+
+  private async requestQuotes(
+    label: string,
+    quotes: Array<{ shapeKey: string; input: Record<string, unknown> }>,
+  ): Promise<{
+    batch: z.infer<typeof executionQuoteBatchSchema>;
+    payments: PaymentReceipt[];
+  }> {
+    console.error(
+      `[execution] Requesting ${quotes.length} quote(s) for ${label}: ${quotes
+        .map((quote) => quote.shapeKey)
+        .join(" → ")}`,
+    );
+    console.error(
+      `[execution] Quote payload: ${JSON.stringify({ quotes }, null, 2)}`,
+    );
+    try {
+      const result = await this.canix.callManagedTool(
+        "canix_get_execution_quote",
+        { quotes },
+        this.managedAddress,
+      );
+      const batch = executionQuoteBatchSchema.parse(result.data);
+      if (batch.data.length !== quotes.length) {
+        throw new Error(
+          `Execution quote count mismatch: requested ${quotes.length}, received ${batch.data.length}`,
+        );
+      }
+      return {
+        batch,
+        payments: result.payment ? [result.payment] : [],
+      };
+    } catch (error) {
+      console.error(
+        `[execution] canix_get_execution_quote failed for ${label}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw error;
+    }
+  }
+
+  private async isAssetOptedIn(
+    address: string,
+    assetId: number,
+  ): Promise<boolean> {
+    try {
+      await this.algod.accountAssetInformation(address, assetId).do();
+      return true;
+    } catch (error) {
+      if (isAccountAssetMissing(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   private async executeSwap(action: PortfolioAction): Promise<{
@@ -298,6 +500,48 @@ export class AlgorandExecutionService {
     };
   }
 
+  private async signAndSubmitEncoded(
+    actionId: string,
+    encodedTransactions: string[],
+    extraSigners: Map<string, Uint8Array> = new Map(),
+  ): Promise<{ outcome: ExecutionOutcome }> {
+    if (!this.policy.signingEnabled) {
+      return { outcome: { actionId, status: "validated-dry-run" } };
+    }
+    const signed = encodedTransactions.map((encoded) => {
+      const transaction = algosdk.decodeUnsignedTransaction(
+        Buffer.from(encoded, "base64"),
+      );
+      const sender = transaction.sender.toString();
+      if (sender === this.managedAddress) {
+        return signTransaction(transaction, this.wallet.secretKey);
+      }
+      const escrowKey = extraSigners.get(sender);
+      if (escrowKey) {
+        return signTransaction(transaction, escrowKey);
+      }
+      throw new Error(
+        `No signer available for transaction sender ${sender} in ${actionId}`,
+      );
+    });
+    const submitted = (await this.algod.sendRawTransaction(signed).do()) as {
+      txid: string;
+    };
+    const confirmation = await algosdk.waitForConfirmation(
+      this.algod,
+      submitted.txid,
+      8,
+    );
+    return {
+      outcome: {
+        actionId,
+        status: "confirmed",
+        transactionId: submitted.txid,
+        confirmedRound: confirmation.confirmedRound?.toString(),
+      },
+    };
+  }
+
   private async signAndSubmit(
     actionId: string,
     members: Array<{
@@ -353,33 +597,140 @@ export function buildQuoteRequests(
         (candidate) => candidate.opportunityId === action.opportunityId,
       )
     : undefined;
-  const baseInput = {
-    ...(action.executionInput ?? {}),
-    maxSlippageBps,
-  };
+  const executionInput = action.executionInput ?? {};
   if (
     ["open", "increase"].includes(action.type) &&
     opportunity &&
-    opportunity.executionShapes.length > 0
+    opportunity.executionShapes.length > 0 &&
+    !needsSequentialEscrowExecution(opportunity.executionShapes)
   ) {
-    const shapes = [...opportunity.executionShapes].sort(
-      (left, right) =>
-        left.order - right.order || left.shapeKey.localeCompare(right.shapeKey),
-    );
+    const shapes = sortExecutionShapes(opportunity.executionShapes);
     return shapes.map((shape) => ({
       shapeKey: shape.shapeKey,
-      input: {
-        ...(shape.inputHints ?? {}),
-        ...baseInput,
-      },
+      input: buildShapeInput(shape, executionInput, maxSlippageBps),
     }));
   }
   return [
     {
       shapeKey: action.executionShapeKey!,
-      input: baseInput,
+      input: {
+        ...executionInput,
+        maxSlippageBps,
+      },
     },
   ];
+}
+
+/** Per-shape inputs only: hints + required fields from the action, not the full deposit blob. */
+export function buildShapeInput(
+  shape: {
+    shapeKey?: string;
+    action?: string;
+    variant?: string;
+    requiredInputs: string[];
+    inputHints?: Record<string, unknown>;
+  },
+  executionInput: Record<string, unknown>,
+  maxSlippageBps: number,
+): Record<string, unknown> {
+  const required: Record<string, unknown> = {};
+  for (const key of shape.requiredInputs) {
+    if (key in executionInput) {
+      required[key] = executionInput[key];
+    }
+  }
+  const input: Record<string, unknown> = {
+    ...(shape.inputHints ?? {}),
+    ...required,
+    maxSlippageBps,
+  };
+  return sanitizeFolksIdentifierFields(shape, input);
+}
+
+/**
+ * Folks shapes reject sending both poolAppId and assetId. Prefer poolAppId
+ * because USDC maps to multiple Folks pools and the gateway requires it.
+ */
+export function sanitizeFolksIdentifierFields(
+  shape: {
+    shapeKey?: string;
+    action?: string;
+    variant?: string;
+  },
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const role = classifyFolksShape({
+    shapeKey: shape.shapeKey ?? "",
+    protocol: "folks-finance",
+    protocolVersion: "v2",
+    action: shape.action ?? "unknown",
+    variant: shape.variant ?? "unknown",
+    title: "",
+    summary: "",
+    order: 0,
+    requiredInputs: [],
+    requiredAssetIds: [],
+  });
+  if (
+    role !== "setup" &&
+    role !== "opt" &&
+    role !== "deposit"
+  ) {
+    return input;
+  }
+  const sanitized = { ...input };
+  if (sanitized.poolAppId !== undefined && sanitized.assetId !== undefined) {
+    delete sanitized.assetId;
+  }
+  return sanitized;
+}
+
+function readEscrowMetadata(metadata: Record<string, unknown> | undefined): {
+  escrowAddress?: string;
+  escrowPrivateKeyBase64?: string;
+  depositsAppId?: number;
+} | null {
+  if (!metadata) {
+    return null;
+  }
+  const escrowAddress =
+    typeof metadata.escrowAddress === "string"
+      ? metadata.escrowAddress
+      : undefined;
+  const escrowPrivateKeyBase64 =
+    typeof metadata.escrowPrivateKeyBase64 === "string"
+      ? metadata.escrowPrivateKeyBase64
+      : undefined;
+  const depositsAppId =
+    typeof metadata.depositsAppId === "number"
+      ? metadata.depositsAppId
+      : undefined;
+  if (!escrowAddress && !escrowPrivateKeyBase64) {
+    return null;
+  }
+  return { escrowAddress, escrowPrivateKeyBase64, depositsAppId };
+}
+
+function secretKeyFromBase64(value: string): Uint8Array {
+  const bytes = new Uint8Array(Buffer.from(value, "base64"));
+  if (bytes.length === 64) {
+    return bytes;
+  }
+  if (bytes.length === 32) {
+    // Seed form — expand via algosdk account from mnemonic isn't available;
+    // Folks returns full 64-byte sk. Reject unexpected 32-byte payloads.
+    throw new Error(
+      "Escrow key must be a 64-byte Algorand secret key (got 32-byte seed)",
+    );
+  }
+  throw new Error(
+    `Unexpected escrow secret key length ${bytes.length}; expected 64 bytes`,
+  );
+}
+
+function isAccountAssetMissing(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /asset|not found|404|no accounts/i.test(message);
 }
 
 function formatExecutionError(error: unknown): string {
@@ -414,9 +765,15 @@ function signEncodedTransaction(
   encodedTransaction: string,
   secretKey: Uint8Array,
 ): Uint8Array {
-  // algosdk signs via a Transaction instance; do not inspect MCP-returned fields.
   const transaction = algosdk.decodeUnsignedTransaction(
     Buffer.from(encodedTransaction, "base64"),
   );
+  return signTransaction(transaction, secretKey);
+}
+
+function signTransaction(
+  transaction: algosdk.Transaction,
+  secretKey: Uint8Array,
+): Uint8Array {
   return transaction.signTxn(secretKey);
 }

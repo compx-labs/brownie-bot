@@ -65,6 +65,8 @@ const configSchema = z
     ACCOUNTING_CRON_TIMEZONE: z.string().min(1).default("UTC"),
     /** Local JSON root when DigitalOcean Spaces is not configured. */
     ACCOUNTING_DATA_DIR: z.string().min(1).default("data/accounting"),
+    /** Persisted Folks deposit escrow address + signing key (mode 0600 files). */
+    FOLKS_ESCROW_DATA_DIR: z.string().min(1).default("data/folks-escrows"),
     DO_SPACES_ENDPOINT: optionalUrl,
     DO_SPACES_REGION: z.string().min(1).default("nyc3"),
     DO_SPACES_BUCKET: optionalString(),
