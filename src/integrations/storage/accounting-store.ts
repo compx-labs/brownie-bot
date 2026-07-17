@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join, relative as relativePath } from "node:path";
 
 import {
   GetObjectCommand,
@@ -56,6 +58,252 @@ export interface SpacesAccountingStoreOptions {
   secretAccessKey: string;
   prefix?: string;
   client?: S3Client;
+}
+
+export interface LocalFilesystemAccountingStoreOptions {
+  /** Absolute or relative root directory for accounting JSON. */
+  rootDir: string;
+  prefix?: string;
+}
+
+/**
+ * File-backed AccountingStore with the same key layout as Spaces.
+ * Used when DigitalOcean Spaces is not configured.
+ */
+export class LocalFilesystemAccountingStore implements AccountingStore {
+  private readonly rootDir: string;
+  private readonly prefix: string;
+
+  constructor(options: LocalFilesystemAccountingStoreOptions) {
+    this.rootDir = options.rootDir;
+    this.prefix = trimSlashes(options.prefix ?? "");
+  }
+
+  async putSnapshot(snapshot: AccountingSnapshot): Promise<string> {
+    const asOf = new Date(snapshot.asOf);
+    const key = joinKey(
+      this.prefix,
+      "wallets",
+      snapshot.walletAddress,
+      "snapshots",
+      String(asOf.getUTCFullYear()),
+      pad(asOf.getUTCMonth() + 1),
+      pad(asOf.getUTCDate()),
+      `${snapshot.id}.json`,
+    );
+    await this.putImmutableJson(key, snapshot);
+    return key;
+  }
+
+  async putCashflow(cashflow: AccountingCashflow): Promise<string> {
+    const occurredAt = new Date(cashflow.occurredAt);
+    const key = joinKey(
+      this.prefix,
+      "wallets",
+      cashflow.walletAddress,
+      "cashflows",
+      String(occurredAt.getUTCFullYear()),
+      pad(occurredAt.getUTCMonth() + 1),
+      `${cashflow.eventId}.json`,
+    );
+    const existing = await this.getJson(key);
+    if (existing !== undefined) {
+      const parsed = accountingCashflowSchema.parse(existing);
+      if (parsed.checksum !== cashflow.checksum) {
+        throw new Error(
+          `Conflicting cashflow already exists for event ${cashflow.eventId}`,
+        );
+      }
+      return key;
+    }
+    await this.putImmutableJson(key, cashflow);
+    return key;
+  }
+
+  async getCashflowByEventId(
+    walletAddress: string,
+    eventId: string,
+  ): Promise<AccountingCashflow | undefined> {
+    const prefix = joinKey(this.prefix, "wallets", walletAddress, "cashflows");
+    const keys = await this.listKeys(prefix);
+    const match = keys.find((key) => key.endsWith(`/${eventId}.json`));
+    if (!match) {
+      return undefined;
+    }
+    const payload = await this.getJson(match);
+    return payload === undefined
+      ? undefined
+      : accountingCashflowSchema.parse(payload);
+  }
+
+  async getLatestSummary(
+    walletAddress: string,
+  ): Promise<AccountingSummary | undefined> {
+    const key = joinKey(
+      this.prefix,
+      "wallets",
+      walletAddress,
+      "state",
+      "latest.json",
+    );
+    const payload = await this.getJson(key);
+    if (payload === undefined) {
+      return undefined;
+    }
+    const parsed = accountingSummarySchema.safeParse(payload);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  async putLatestSummary(summary: AccountingSummary): Promise<string> {
+    const key = joinKey(
+      this.prefix,
+      "wallets",
+      summary.walletAddress,
+      "state",
+      "latest.json",
+    );
+    await this.putMutableJson(key, summary);
+    return key;
+  }
+
+  async getMonthlySummary(
+    walletAddress: string,
+    yearMonth: string,
+  ): Promise<AccountingSummary | undefined> {
+    const key = joinKey(
+      this.prefix,
+      "wallets",
+      walletAddress,
+      "state",
+      "monthly",
+      `${yearMonth}.json`,
+    );
+    const payload = await this.getJson(key);
+    if (payload === undefined) {
+      return undefined;
+    }
+    const parsed = accountingSummarySchema.safeParse(payload);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  async putMonthlySummary(
+    summary: AccountingSummary,
+    yearMonth: string,
+  ): Promise<string> {
+    const key = joinKey(
+      this.prefix,
+      "wallets",
+      summary.walletAddress,
+      "state",
+      "monthly",
+      `${yearMonth}.json`,
+    );
+    await this.putMutableJson(key, summary);
+    return key;
+  }
+
+  async listCashflows(
+    walletAddress: string,
+    fromInclusive: string,
+    toExclusive: string,
+  ): Promise<AccountingCashflow[]> {
+    const prefix = joinKey(this.prefix, "wallets", walletAddress, "cashflows");
+    const keys = await this.listKeys(prefix);
+    const from = new Date(fromInclusive).getTime();
+    const to = new Date(toExclusive).getTime();
+    const cashflows: AccountingCashflow[] = [];
+    for (const key of keys) {
+      const payload = await this.getJson(key);
+      if (payload === undefined) {
+        continue;
+      }
+      const cashflow = accountingCashflowSchema.parse(payload);
+      const occurred = new Date(cashflow.occurredAt).getTime();
+      if (occurred >= from && occurred < to) {
+        cashflows.push(cashflow);
+      }
+    }
+    return cashflows.sort((left, right) =>
+      left.occurredAt.localeCompare(right.occurredAt),
+    );
+  }
+
+  async listSnapshots(
+    walletAddress: string,
+    year: number,
+    month: number,
+  ): Promise<AccountingSnapshot[]> {
+    const prefix = joinKey(
+      this.prefix,
+      "wallets",
+      walletAddress,
+      "snapshots",
+      String(year),
+      pad(month),
+    );
+    const keys = await this.listKeys(prefix);
+    const snapshots: AccountingSnapshot[] = [];
+    for (const key of keys) {
+      const payload = await this.getJson(key);
+      if (payload === undefined) {
+        continue;
+      }
+      const parsed = accountingSnapshotSchema.safeParse(payload);
+      if (parsed.success) {
+        snapshots.push(parsed.data);
+      }
+    }
+    return snapshots.sort((left, right) => left.asOf.localeCompare(right.asOf));
+  }
+
+  private async putImmutableJson(
+    key: string,
+    body: AccountingSnapshot | AccountingCashflow,
+  ): Promise<void> {
+    const existing = await this.getJson(key);
+    if (existing !== undefined) {
+      throw new Error(`Immutable accounting object already exists at ${key}`);
+    }
+    await this.putMutableJson(key, body);
+  }
+
+  private async putMutableJson(
+    key: string,
+    body: AccountingSnapshot | AccountingCashflow | AccountingSummary,
+  ): Promise<void> {
+    const filePath = this.resolvePath(key);
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, JSON.stringify(body), "utf8");
+  }
+
+  private async getJson(key: string): Promise<unknown> {
+    try {
+      const text = await readFile(this.resolvePath(key), "utf8");
+      return JSON.parse(text) as unknown;
+    } catch (error) {
+      if (isErrnoNotFound(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private async listKeys(prefix: string): Promise<string[]> {
+    const directory = this.resolvePath(prefix);
+    const keys: string[] = [];
+    await walkJsonFiles(directory, (absolutePath) => {
+      const relative = relativePath(this.rootDir, absolutePath).split(/[/\\]/).join("/");
+      keys.push(relative);
+    });
+    const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
+    return keys.filter(
+      (key) => key === prefix || key.startsWith(normalizedPrefix),
+    );
+  }
+
+  private resolvePath(key: string): string {
+    return join(this.rootDir, ...key.split("/").filter((part) => part.length > 0));
+  }
 }
 
 export class SpacesAccountingStore implements AccountingStore {
@@ -380,4 +628,41 @@ function isNotFound(error: unknown): boolean {
       typeof record.$metadata === "object" &&
       (record.$metadata as { httpStatusCode?: number }).httpStatusCode === 404)
   );
+}
+
+function isErrnoNotFound(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: string }).code === "ENOENT"
+  );
+}
+
+async function walkJsonFiles(
+  directory: string,
+  onFile: (absolutePath: string) => void,
+): Promise<void> {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isErrnoNotFound(error)) {
+      return;
+    }
+    throw error;
+  }
+  for (const entry of entries) {
+    const absolutePath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await walkJsonFiles(absolutePath, onFile);
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".json")) {
+      const info = await stat(absolutePath);
+      if (info.isFile()) {
+        onFile(absolutePath);
+      }
+    }
+  }
 }

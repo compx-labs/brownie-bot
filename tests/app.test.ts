@@ -12,12 +12,6 @@ describe("backend routes", () => {
     BOT_WALLET: account.addr.toString(),
     WALLET_MNEMONIC: algosdk.secretKeyToMnemonic(account.sk),
     OPEN_AI_API_KEY: "test-openai-key",
-    TELEGRAM_BOT_TOKEN: "test-token",
-    TELEGRAM_CHAT_ID: "test-chat",
-    DO_SPACES_ENDPOINT: "https://nyc3.digitaloceanspaces.com",
-    DO_SPACES_BUCKET: "bucket",
-    DO_SPACES_KEY: "key",
-    DO_SPACES_SECRET: "secret",
   };
 
   afterEach(async () => {
@@ -25,7 +19,7 @@ describe("backend routes", () => {
     context = undefined;
   });
 
-  it("reports safe configuration state", async () => {
+  it("reports safe configuration state without optional integrations", async () => {
     context = createApp(loadConfig(environment));
     const response = await context.app.inject({
       method: "GET",
@@ -38,8 +32,32 @@ describe("backend routes", () => {
       mode: "autonomous",
       signingEnabled: false,
       walletConfigured: true,
-      telegramConfigured: true,
+      telegramConfigured: false,
       accountingEnabled: true,
+      accountingStorage: "local",
+    });
+  });
+
+  it("reports Telegram and Spaces when configured", async () => {
+    context = createApp(
+      loadConfig({
+        ...environment,
+        TELEGRAM_BOT_TOKEN: "test-token",
+        TELEGRAM_CHAT_ID: "test-chat",
+        DO_SPACES_ENDPOINT: "https://nyc3.digitaloceanspaces.com",
+        DO_SPACES_BUCKET: "bucket",
+        DO_SPACES_KEY: "key",
+        DO_SPACES_SECRET: "secret",
+      }),
+    );
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/health",
+    });
+
+    expect(response.json()).toMatchObject({
+      telegramConfigured: true,
+      accountingStorage: "spaces",
     });
   });
 

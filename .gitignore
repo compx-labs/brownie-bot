@@ -72,6 +72,9 @@ web_modules/
 .ENV
 .ENV.*
 
+# Local accounting JSON (when DigitalOcean Spaces is not configured)
+data/
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

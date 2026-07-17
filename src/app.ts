@@ -2,6 +2,12 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import type { AppConfig } from "./config.js";
+import {
+  isSpacesConfigured,
+  isTelegramConfigured,
+  requireSpacesCredentials,
+  requireTelegramCredentials,
+} from "./config.js";
 import { accountingCashflowSchema } from "./domain.js";
 import {
   Canix402Client,
@@ -11,7 +17,11 @@ import { AlgorandPaymentBuilder } from "./integrations/canix402/payment.js";
 import { walletFromMnemonic } from "./integrations/canix402/wallet.js";
 import { AlgorandPortfolioReader } from "./integrations/algorand/portfolio.js";
 import { AlgorandExecutionService } from "./integrations/algorand/execution.js";
-import { SpacesAccountingStore } from "./integrations/storage/accounting-store.js";
+import {
+  LocalFilesystemAccountingStore,
+  SpacesAccountingStore,
+  type AccountingStore,
+} from "./integrations/storage/accounting-store.js";
 import {
   AccountingRunInProgressError,
   AccountingService,
@@ -25,7 +35,12 @@ import {
 } from "./services/treasury-review.js";
 import { createPortfolioAgent } from "./services/portfolio-agent.js";
 import { PortfolioPolicy } from "./services/portfolio-policy.js";
-import { TelegramNotifier } from "./services/telegram.js";
+import {
+  ConsoleNotifier,
+  TelegramNotifier,
+  type AccountingNotifier,
+  type RunNotifier,
+} from "./services/telegram.js";
 
 export interface AppContext {
   app: FastifyInstance;
@@ -121,10 +136,14 @@ export function createApp(config: AppConfig): AppContext {
       maxPriceImpactPct: config.MAX_PRICE_IMPACT_PCT,
     },
   );
-  const notifier = new TelegramNotifier(
-    config.TELEGRAM_BOT_TOKEN,
-    config.TELEGRAM_CHAT_ID,
-  );
+  const notifier: RunNotifier & AccountingNotifier = isTelegramConfigured(
+    config,
+  )
+    ? (() => {
+        const telegram = requireTelegramCredentials(config);
+        return new TelegramNotifier(telegram.botToken, telegram.chatId);
+      })()
+    : new ConsoleNotifier();
   const coordinator = new RunCoordinator();
   const state: ReviewState = {};
   const accountingState: AccountingState = {};
@@ -139,14 +158,22 @@ export function createApp(config: AppConfig): AppContext {
     portfolioReader,
     coordinator,
   );
-  const store = new SpacesAccountingStore({
-    endpoint: config.DO_SPACES_ENDPOINT,
-    region: config.DO_SPACES_REGION,
-    bucket: config.DO_SPACES_BUCKET,
-    accessKeyId: config.DO_SPACES_KEY,
-    secretAccessKey: config.DO_SPACES_SECRET,
-    prefix: config.DO_SPACES_PREFIX,
-  });
+  const store: AccountingStore = isSpacesConfigured(config)
+    ? (() => {
+        const spaces = requireSpacesCredentials(config);
+        return new SpacesAccountingStore({
+          endpoint: spaces.endpoint,
+          region: config.DO_SPACES_REGION,
+          bucket: spaces.bucket,
+          accessKeyId: spaces.key,
+          secretAccessKey: spaces.secret,
+          prefix: config.DO_SPACES_PREFIX,
+        });
+      })()
+    : new LocalFilesystemAccountingStore({
+        rootDir: config.ACCOUNTING_DATA_DIR,
+        prefix: config.DO_SPACES_PREFIX,
+      });
   const accountingService = new AccountingService(
     portfolioReader,
     canix,
@@ -165,8 +192,9 @@ export function createApp(config: AppConfig): AppContext {
     mode: "autonomous",
     signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
     walletConfigured: true,
-    telegramConfigured: true,
+    telegramConfigured: isTelegramConfigured(config),
     accountingEnabled: true,
+    accountingStorage: isSpacesConfigured(config) ? "spaces" : "local",
   }));
 
   app.get("/runs/latest", async (_request, reply) => {

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  ConsoleNotifier,
   formatAccountingTelegramReport,
   formatTelegramReport,
 } from "../src/services/telegram.js";
@@ -153,5 +154,31 @@ describe("formatAccountingTelegramReport", () => {
     expect(report).toContain("P&L vs previous: no previous baseline");
     expect(report).toContain("Unpriced ASAs: 1164556102");
     expect(report).not.toContain("Caveats:");
+  });
+});
+
+describe("ConsoleNotifier", () => {
+  it("prints review reports to stdout", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const notifier = new ConsoleNotifier();
+    await notifier.send({
+      id: "run-1",
+      startedAt: "2026-07-13T09:00:00.000Z",
+      completedAt: "2026-07-13T09:00:01.000Z",
+      status: "no-op",
+      mode: "autonomous",
+      signingEnabled: false,
+      walletAddress:
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      snapshot: portfolioSnapshot(),
+      plan: portfolioPlan(),
+      opportunities: [],
+      payments: [],
+    });
+    expect(log).toHaveBeenCalledOnce();
+    expect(String(log.mock.calls[0]?.[0])).toContain(
+      "Treasury portfolio run: no-op",
+    );
+    log.mockRestore();
   });
 });

@@ -12,16 +12,33 @@ When explicitly enabled, it fetches transaction groups, signs approved
 transactions locally, and submits unchanged atomic groups through its own Algod
 client. Canix402 never receives the mnemonic.
 
+**New here?** Start with **[QUICKSTART.md](./QUICKSTART.md)** (minimum setup +
+expected Canix402 / OpenAI costs), then return to this README for full
+configuration and ops detail. Want to change the code? See
+**[CONTRIBUTING.md](./CONTRIBUTING.md)**.
+
 ## Requirements
 
-- Node.js 20 or newer
-- An Algorand mainnet wallet with:
-  - enough ALGO to meet minimum-balance requirements
-  - an opt-in to mainnet USDC ASA `31566704`
-  - enough USDC for Canix402 calls (the personalized endpoint currently costs
-    50,000 base units, or 0.05 USDC)
-- A Telegram bot token and destination chat ID for reporting
-- An OpenAI API key for opportunity recommendations
+- Node.js 22 or newer
+- An Algorand mainnet wallet with USDC ASA `31566704` opt-in and enough USDC/ALGO
+  for x402 (see [QUICKSTART.md — Expected costs](./QUICKSTART.md#expected-costs))
+- An OpenAI API key
+- Optional: Telegram (otherwise reports print to the terminal)
+- Optional: DigitalOcean Spaces (otherwise accounting JSON under
+  `data/accounting/`)
+
+## Quick start
+
+See **[QUICKSTART.md](./QUICKSTART.md)** for the dry-run checklist and cost
+table. Short version:
+
+```bash
+npm install
+cp .env.example .env
+# set BOT_WALLET, WALLET_MNEMONIC, OPEN_AI_API_KEY
+npm run canix:wallet-scan
+npm run run-once
+```
 
 ## Setup
 
@@ -82,8 +99,9 @@ ceilings are code-level invariants rather than environment configuration.
 Current ceilings are 5,000 base units for positions and swap transaction
 generation, 10,000 for general/search/protocol opportunities, 50,000 for
 personalized opportunities, and 100,000 for execution quotes. A separate daily
-x402 cap applies. The bot validates every live requirement against these limits
-before signing. Facilitator fee-payer groups are supported.
+x402 cap applies (default `MAX_DAILY_X402_BASE_UNITS`, 5 USDC). The bot validates
+every live requirement against these limits before signing. Facilitator
+fee-payer groups are supported.
 
 ## Canix402 CLI tests
 
@@ -142,19 +160,22 @@ npm run run-once
 ```
 
 Every review reconstructs its planning state from current on-chain liquid
-balances and the Canix402 positions endpoint. Accounting history is always
-stored in DigitalOcean Spaces. The in-process latest-run response is operational
-convenience only and is lost on restart. The scheduler and overlap lock assume a
-single service replica.
+balances and the Canix402 positions endpoint. Accounting history is stored in
+DigitalOcean Spaces when configured, otherwise under `ACCOUNTING_DATA_DIR`. The
+in-process latest-run response is operational convenience only and is lost on
+restart. The scheduler and overlap lock assume a single service replica.
 
 ## Accounting snapshots
 
-Accounting is always enabled. Configure DigitalOcean Spaces and the daily
-schedule:
+Accounting is always enabled. Persistence defaults to local JSON under
+`data/accounting/` (override with `ACCOUNTING_DATA_DIR`). To use DigitalOcean
+Spaces instead, set all four of `DO_SPACES_ENDPOINT`, `DO_SPACES_BUCKET`,
+`DO_SPACES_KEY`, and `DO_SPACES_SECRET` (plus optional region/prefix):
 
 ```dotenv
 ACCOUNTING_CRON_SCHEDULE="0 8 * * *"
 ACCOUNTING_CRON_TIMEZONE="UTC"
+# ACCOUNTING_DATA_DIR=data/accounting
 DO_SPACES_ENDPOINT="https://nyc3.digitaloceanspaces.com"
 DO_SPACES_REGION="nyc3"
 DO_SPACES_BUCKET="your-bucket"
@@ -229,7 +250,8 @@ request.
 
 ## Telegram
 
-Set both variables:
+Telegram is optional. Set both variables to enable it; otherwise the same report
+text is printed to the terminal:
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=

@@ -1,8 +1,13 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { AccountingCashflow, AccountingSnapshot } from "../src/domain.js";
 import {
   canonicalChecksum,
+  LocalFilesystemAccountingStore,
   SpacesAccountingStore,
 } from "../src/integrations/storage/accounting-store.js";
 
@@ -160,5 +165,52 @@ describe("SpacesAccountingStore", () => {
       "2026-07-17T00:00:00.000Z",
     );
     expect(listed.map((item) => item.eventId)).toEqual(["b"]);
+  });
+});
+
+describe("LocalFilesystemAccountingStore", () => {
+  it("writes immutable snapshots under the local data directory", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "brownie-accounting-"));
+    try {
+      const store = new LocalFilesystemAccountingStore({
+        rootDir,
+        prefix: "brownie",
+      });
+      const body = {
+        schemaVersion: 2 as const,
+        id: "run-1",
+        walletAddress: "WALLET",
+        asOf: "2026-07-16T08:00:00.000Z",
+        fetchedAt: "2026-07-16T08:00:00.000Z",
+        defiByProtocol: [],
+        defiValueUsd: "0",
+        walletAsaValueUsd: "10",
+        unpricedAssetIds: [],
+        algoBalance: "1",
+        algoBalanceRaw: "1000000",
+        minimumBalance: "0.1",
+        minimumBalanceRaw: "100000",
+        totalValueUsd: "10",
+        notes: [],
+        prices: [],
+      };
+      const snapshot: AccountingSnapshot = {
+        ...body,
+        checksum: canonicalChecksum(body),
+      };
+
+      const key = await store.putSnapshot(snapshot);
+      expect(key).toBe(
+        "brownie/wallets/WALLET/snapshots/2026/07/16/run-1.json",
+      );
+      await expect(store.putSnapshot(snapshot)).rejects.toThrow(
+        /already exists/,
+      );
+      const listed = await store.listSnapshots("WALLET", 2026, 7);
+      expect(listed).toHaveLength(1);
+      expect(listed[0]?.id).toBe("run-1");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
   });
 });

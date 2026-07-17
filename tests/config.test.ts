@@ -15,10 +15,7 @@ describe("loadConfig", () => {
   };
   const requiredEnvironment = {
     ...walletEnvironment,
-    ...spacesEnvironment,
     OPEN_AI_API_KEY: "test-openai-key",
-    TELEGRAM_BOT_TOKEN: "token",
-    TELEGRAM_CHAT_ID: "chat",
   };
 
   it("uses fixed Canix402 infrastructure defaults", () => {
@@ -31,59 +28,71 @@ describe("loadConfig", () => {
     expect(config.ENABLE_TRANSACTION_SIGNING).toBe(false);
     expect(config.DO_SPACES_PREFIX).toBe("brownie-bot");
     expect(config.ACCOUNTING_CRON_SCHEDULE).toBe("0 8 * * *");
+    expect(config.ACCOUNTING_DATA_DIR).toBe("data/accounting");
+    expect(config.TELEGRAM_BOT_TOKEN).toBeUndefined();
+    expect(config.DO_SPACES_BUCKET).toBeUndefined();
   });
 
   it("requires an OpenAI API key", () => {
-    expect(() =>
-      loadConfig({
-        ...walletEnvironment,
-        ...spacesEnvironment,
-        TELEGRAM_BOT_TOKEN: "token",
-        TELEGRAM_CHAT_ID: "chat",
-      }),
-    ).toThrow(/OPEN_AI_API_KEY/);
+    expect(() => loadConfig({ ...walletEnvironment })).toThrow(
+      /OPEN_AI_API_KEY/,
+    );
   });
 
   it("requires both wallet identity and signer", () => {
     expect(() =>
       loadConfig({
-        ...spacesEnvironment,
         WALLET_MNEMONIC: "test mnemonic",
         OPEN_AI_API_KEY: "test-openai-key",
-        TELEGRAM_BOT_TOKEN: "token",
-        TELEGRAM_CHAT_ID: "chat",
       }),
     ).toThrow(/BOT_WALLET/);
     expect(() =>
       loadConfig({
-        ...spacesEnvironment,
         BOT_WALLET: walletEnvironment.BOT_WALLET,
         OPEN_AI_API_KEY: "test-openai-key",
-        TELEGRAM_BOT_TOKEN: "token",
-        TELEGRAM_CHAT_ID: "chat",
       }),
     ).toThrow(/WALLET_MNEMONIC/);
   });
 
-  it("requires complete Telegram credentials", () => {
-    expect(() =>
-      loadConfig({
-        ...walletEnvironment,
-        ...spacesEnvironment,
-        TELEGRAM_BOT_TOKEN: "token",
-        OPEN_AI_API_KEY: "test-openai-key",
-      }),
-    ).toThrow(/TELEGRAM_CHAT_ID/);
+  it("allows omitting Telegram credentials", () => {
+    const config = loadConfig(requiredEnvironment);
+    expect(config.TELEGRAM_BOT_TOKEN).toBeUndefined();
+    expect(config.TELEGRAM_CHAT_ID).toBeUndefined();
   });
 
-  it("requires Spaces credentials", () => {
+  it("rejects partial Telegram credentials", () => {
     expect(() =>
       loadConfig({
-        ...walletEnvironment,
-        OPEN_AI_API_KEY: "test-openai-key",
+        ...requiredEnvironment,
         TELEGRAM_BOT_TOKEN: "token",
-        TELEGRAM_CHAT_ID: "chat",
       }),
-    ).toThrow(/DO_SPACES_ENDPOINT/);
+    ).toThrow(/TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID/);
+  });
+
+  it("allows omitting Spaces credentials", () => {
+    const config = loadConfig(requiredEnvironment);
+    expect(config.DO_SPACES_ENDPOINT).toBeUndefined();
+    expect(config.DO_SPACES_BUCKET).toBeUndefined();
+  });
+
+  it("rejects partial Spaces credentials", () => {
+    expect(() =>
+      loadConfig({
+        ...requiredEnvironment,
+        DO_SPACES_ENDPOINT: "https://nyc3.digitaloceanspaces.com",
+        DO_SPACES_BUCKET: "bucket",
+      }),
+    ).toThrow(/DO_SPACES_ENDPOINT, DO_SPACES_BUCKET/);
+  });
+
+  it("accepts complete Telegram and Spaces credentials together", () => {
+    const config = loadConfig({
+      ...requiredEnvironment,
+      ...spacesEnvironment,
+      TELEGRAM_BOT_TOKEN: "token",
+      TELEGRAM_CHAT_ID: "chat",
+    });
+    expect(config.TELEGRAM_BOT_TOKEN).toBe("token");
+    expect(config.DO_SPACES_BUCKET).toBe("bucket");
   });
 });

@@ -41,6 +41,17 @@ export class TelegramNotifier implements RunNotifier, AccountingNotifier {
   }
 }
 
+/** Fallback when Telegram is not configured: print the same report text to stdout. */
+export class ConsoleNotifier implements RunNotifier, AccountingNotifier {
+  async send(run: ReviewRun): Promise<void> {
+    console.log(formatTelegramReport(run));
+  }
+
+  async sendAccounting(run: AccountingRun): Promise<void> {
+    console.log(formatAccountingTelegramReport(run));
+  }
+}
+
 export function formatTelegramReport(run: ReviewRun): string {
   const heading = `Treasury portfolio run: ${run.status}`;
   const lines = [
