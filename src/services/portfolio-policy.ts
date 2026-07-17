@@ -1,6 +1,8 @@
 import type {
   Opportunity,
+  OpportunityExecutionShape,
   PolicyResult,
+  PortfolioAction,
   PortfolioPlan,
   PortfolioSnapshot,
 } from "../domain.js";
@@ -14,6 +16,126 @@ export interface PortfolioPolicyConfig {
   minProjectedNetImprovementUsd: number;
   /** When false, structural and data-quality issues become warnings so planning/dry-run can pass. */
   signingEnabled: boolean;
+}
+
+/** Host expands these at quote time; standalone plan actions are redundant. */
+const PREREQUISITE_SHAPE_ACTIONS = new Set([
+  "setup",
+  "optin",
+  "create",
+  "create-escrow",
+]);
+
+/**
+ * Drop standalone setup/opt-in enter actions when a capital-deploying open/increase
+ * for the same opportunity remains (host expands prerequisites at quote time),
+ * fill missing executionInput from shape inputHints, and drop dependency entries
+ * that are not action ids in this plan (models often stuff shapeKeys there).
+ */
+export function normalizePortfolioPlan(
+  plan: PortfolioPlan,
+  opportunities: Opportunity[],
+): PortfolioPlan {
+  const shapesByKey = new Map<string, OpportunityExecutionShape>();
+  for (const opportunity of opportunities) {
+    for (const shape of opportunity.executionShapes) {
+      shapesByKey.set(shape.shapeKey, shape);
+    }
+  }
+
+  const capitalOpportunityIds = new Set<string>();
+  for (const action of plan.actions) {
+    if (!isEnterAction(action) || !action.opportunityId) {
+      continue;
+    }
+    const shape = action.executionShapeKey
+      ? shapesByKey.get(action.executionShapeKey)
+      : undefined;
+    if (shape && !isPrerequisiteShape(shape)) {
+      capitalOpportunityIds.add(action.opportunityId);
+    }
+  }
+
+  const droppedIds = new Set<string>();
+  let changed = false;
+  const actions = plan.actions.flatMap((action) => {
+    if (!isEnterAction(action) || !action.opportunityId) {
+      return [action];
+    }
+    const shape = action.executionShapeKey
+      ? shapesByKey.get(action.executionShapeKey)
+      : undefined;
+    if (
+      shape &&
+      isPrerequisiteShape(shape) &&
+      capitalOpportunityIds.has(action.opportunityId)
+    ) {
+      droppedIds.add(action.id);
+      changed = true;
+      return [];
+    }
+    const filled = fillExecutionInputFromHints(action, shape);
+    if (filled !== action) {
+      changed = true;
+    }
+    return [filled];
+  });
+
+  const actionIds = new Set(actions.map((action) => action.id));
+  const normalizedActions = actions.map((action) => {
+    const dependencies = action.dependencies.filter((dependency) => {
+      if (droppedIds.has(dependency)) {
+        return false;
+      }
+      if (dependency === action.id) {
+        return true;
+      }
+      if (actionIds.has(dependency)) {
+        return true;
+      }
+      // Shape keys / invented prerequisite labels are not executable dependencies.
+      changed = true;
+      console.warn(
+        `[portfolio-policy] Dropping non-action dependency ${JSON.stringify(dependency)} from action ${JSON.stringify(action.id)}`,
+      );
+      return false;
+    });
+    if (dependencies.length !== action.dependencies.length) {
+      changed = true;
+      return { ...action, dependencies };
+    }
+    return action;
+  });
+
+  if (!changed) {
+    return plan;
+  }
+
+  return {
+    ...plan,
+    actions: normalizedActions,
+  };
+}
+
+function isEnterAction(action: PortfolioAction): boolean {
+  return action.type === "open" || action.type === "increase";
+}
+
+function isPrerequisiteShape(shape: OpportunityExecutionShape): boolean {
+  return PREREQUISITE_SHAPE_ACTIONS.has(shape.action.toLowerCase());
+}
+
+function fillExecutionInputFromHints(
+  action: PortfolioAction,
+  shape: OpportunityExecutionShape | undefined,
+): PortfolioAction {
+  if (action.executionInput || !shape?.inputHints) {
+    return action;
+  }
+  return {
+    ...action,
+    executionInput: { ...shape.inputHints },
+  };
 }
 
 export class PortfolioPolicy {
@@ -198,11 +320,6 @@ export class PortfolioPolicy {
         BigInt(balance.spendableAmountRaw ?? balance.amountRaw),
       ]),
     );
-    const actionsById = new Map(
-      plan.actions.map((action) => [action.id, action]),
-    );
-    /** Spends that must be funded from current liquid balances (not swap outputs). */
-    const liquidFundedSpends = new Map<number, bigint>();
 
     for (const allocation of plan.targetAllocations) {
       if (
@@ -210,7 +327,7 @@ export class PortfolioPolicy {
         !opportunityById.has(allocation.opportunityId) &&
         !existingOpportunityIds.has(allocation.opportunityId)
       ) {
-        violations.push(
+        soft.push(
           `Target allocation ${allocation.key} references an unknown opportunity`,
         );
       }
@@ -256,15 +373,6 @@ export class PortfolioPolicy {
       );
       if (new Set(spendAssetIds).size !== spendAssetIds.length) {
         violations.push(`Action ${action.id} has duplicate authorized spends`);
-      }
-      for (const spend of action.authorizedSpends) {
-        if (!spendCoveredByDependencySwap(action, spend.assetId, actionsById)) {
-          liquidFundedSpends.set(
-            spend.assetId,
-            (liquidFundedSpends.get(spend.assetId) ?? 0n) +
-              BigInt(spend.amountRaw),
-          );
-        }
       }
       if (action.type === "swap") {
         if (
@@ -346,13 +454,6 @@ export class PortfolioPolicy {
         } else {
           validateExitOrManageShape(action, position, violations);
         }
-      }
-    }
-    for (const [assetId, amount] of liquidFundedSpends) {
-      if (amount > (availableBalances.get(assetId) ?? 0n)) {
-        violations.push(
-          `Planned spend of asset ${assetId} exceeds the on-chain spendable balance`,
-        );
       }
     }
   }
@@ -490,21 +591,6 @@ function actionRequiresDeclaredSpend(
     return false;
   }
   return shape.requiredInputs.some((input) => /amount/i.test(input));
-}
-
-/** True when a dependency swap's output funds this spend (exact out unknown at plan time). */
-function spendCoveredByDependencySwap(
-  action: PortfolioPlan["actions"][number],
-  assetId: number,
-  actionsById: Map<string, PortfolioPlan["actions"][number]>,
-): boolean {
-  if (action.type === "swap") {
-    return false;
-  }
-  return action.dependencies.some((dependencyId) => {
-    const dependency = actionsById.get(dependencyId);
-    return dependency?.type === "swap" && dependency.toAssetId === assetId;
-  });
 }
 
 function sum(values: number[]): number {

@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { PortfolioAction } from "../src/domain.js";
-import { PortfolioPolicy } from "../src/services/portfolio-policy.js";
+import { PortfolioPolicy, normalizePortfolioPlan } from "../src/services/portfolio-policy.js";
 import {
   enterShape,
   opportunity,
@@ -151,7 +151,7 @@ describe("PortfolioPolicy", () => {
     );
   });
 
-  it("rejects unknown opportunities, malformed dependencies, and zero amounts", () => {
+  it("rejects malformed dependencies and zero amounts, and warns on unknown target opportunities", () => {
     const result = policy.validate(
       portfolioSnapshot(),
       portfolioPlan({
@@ -176,8 +176,63 @@ describe("PortfolioPolicy", () => {
     );
 
     expect(result.approved).toBe(false);
+    expect(result.warnings).toContain(
+      "Target allocation unknown references an unknown opportunity",
+    );
     expect(result.violations.join("\n")).toMatch(
-      /unknown opportunity|depends on "missing"|zero amount|researched opportunity/,
+      /depends on "missing"|zero amount|researched opportunity/,
+    );
+    expect(result.violations.join("\n")).not.toMatch(/unknown opportunity/);
+  });
+
+  it("does not block hold allocations for opportunities missing from research results", () => {
+    const candidate = opportunity({
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+    });
+    const result = policy.validate(
+      portfolioSnapshot(),
+      portfolioPlan({
+        currentAllocations: [
+          liquid,
+          {
+            key: "tinyman-existing-lp",
+            protocol: "tinyman",
+            opportunityId: "tinyman:pool:held-but-unlisted",
+            assetIds: [0, 31_566_704],
+            weightPct: 0,
+            expectedApyPct: 5,
+          },
+        ],
+        targetAllocations: [
+          { ...liquid, weightPct: 60 },
+          {
+            key: "tinyman-existing-lp",
+            protocol: "tinyman",
+            opportunityId: "tinyman:pool:held-but-unlisted",
+            assetIds: [0, 31_566_704],
+            weightPct: 0,
+            expectedApyPct: 5,
+          },
+          {
+            key: "opportunity:tinyman:pool:1",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: candidate.assetIds ?? [],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [openAction()],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.warnings).toContain(
+      "Target allocation tinyman-existing-lp references an unknown opportunity",
     );
   });
 
@@ -356,7 +411,7 @@ describe("PortfolioPolicy", () => {
     expect(result.violations).toContain("Duplicate action ID: open-1");
   });
 
-  it("rejects spends above the fresh on-chain liquid balance", () => {
+  it("does not block spends above the on-chain liquid balance", () => {
     const candidate = opportunity({
       sourceTimestamp: new Date().toISOString(),
       fetchedAt: new Date().toISOString(),
@@ -365,7 +420,17 @@ describe("PortfolioPolicy", () => {
       portfolioSnapshot(),
       portfolioPlan({
         currentAllocations: [liquid],
-        targetAllocations: [liquid],
+        targetAllocations: [
+          { ...liquid, weightPct: 60 },
+          {
+            key: "opportunity:tinyman:pool:1",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: candidate.assetIds ?? [],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
         actions: [
           openAction({
             authorizedSpends: [
@@ -378,7 +443,8 @@ describe("PortfolioPolicy", () => {
       [candidate],
     );
 
-    expect(result.violations).toContain(
+    expect(result.approved).toBe(true);
+    expect(result.violations).not.toContain(
       "Planned spend of asset 31566704 exceeds the on-chain spendable balance",
     );
   });
@@ -523,8 +589,118 @@ describe("PortfolioPolicy", () => {
         }),
       ],
     });
-    const result = policy.validate(
-      portfolioSnapshot(),
+    const rawPlan = portfolioPlan({
+      currentAllocations: [liquid],
+      targetAllocations: [
+        { ...liquid, weightPct: 60 },
+        {
+          key: "opportunity:folks:usdc:1",
+          protocol: "folks",
+          opportunityId: candidate.opportunityId,
+          assetIds: [31_566_704],
+          weightPct: 40,
+          expectedApyPct: 13.44,
+        },
+      ],
+      actions: [
+        openAction({
+          id: "create-folks-deposit-escrow",
+          protocol: "folks",
+          opportunityId: candidate.opportunityId,
+          amountRaw: null,
+          fromAssetId: null,
+          executionShapeKey: "mainnet:folks:v2:setup:escrow",
+          executionInput: { poolAppId: 123 },
+          authorizedSpends: [],
+        }),
+        openAction({
+          id: "opt-folks-escrow-into-usdc",
+          protocol: "folks",
+          opportunityId: candidate.opportunityId,
+          amountRaw: null,
+          fromAssetId: null,
+          executionShapeKey: "mainnet:folks:v2:optin:escrow",
+          executionInput: null,
+          authorizedSpends: [],
+          dependencies: ["create-folks-deposit-escrow"],
+        }),
+        openAction({
+          id: "deposit-usdc-to-folks",
+          protocol: "folks",
+          opportunityId: candidate.opportunityId,
+          executionShapeKey: "mainnet:folks:v2:deposit:escrow",
+          executionInput: {
+            assetId: 31_566_704,
+            assetAmount: "100000000",
+          },
+          dependencies: [
+            "create-folks-deposit-escrow",
+            "opt-folks-escrow-into-usdc",
+          ],
+        }),
+      ],
+      projectedNetBenefitUsd: 10,
+    });
+    const plan = normalizePortfolioPlan(rawPlan, [candidate]);
+    expect(plan.actions.map((action) => action.id)).toEqual([
+      "deposit-usdc-to-folks",
+    ]);
+    expect(plan.actions[0]?.dependencies).toEqual([]);
+
+    const result = policy.validate(portfolioSnapshot(), plan, [candidate]);
+
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  it("drops shapeKey strings mistakenly placed in dependencies", () => {
+    const candidate = opportunity({
+      protocol: "folks",
+      opportunityId: "folks:usdc:1",
+      assetPair: "USDC",
+      assetIds: [31_566_704],
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:folks-finance:v2:setup:depositEscrow",
+          protocol: "folks",
+          action: "setup",
+          variant: "depositEscrow",
+          title: "Setup",
+          summary: "Create escrow",
+          order: 0,
+          requiredInputs: [],
+          requiredAssetIds: [],
+        }),
+        enterShape({
+          shapeKey: "mainnet:folks-finance:v2:setup:optEscrowAsset",
+          protocol: "folks",
+          action: "optin",
+          variant: "optEscrowAsset",
+          title: "Opt in",
+          summary: "Opt escrow into USDC",
+          order: 1,
+          requiredInputs: ["assetId"],
+          requiredAssetIds: [31_566_704],
+          inputHints: { assetId: 31_566_704 },
+        }),
+        enterShape({
+          shapeKey: "mainnet:folks-finance:v2:deposit:escrow",
+          protocol: "folks",
+          action: "deposit",
+          variant: "escrow",
+          title: "Deposit",
+          summary: "Deposit USDC",
+          order: 2,
+          requiredInputs: ["assetAmount"],
+          requiredAssetIds: [31_566_704],
+          inputHints: { assetId: 31_566_704 },
+        }),
+      ],
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const plan = normalizePortfolioPlan(
       portfolioPlan({
         currentAllocations: [liquid],
         targetAllocations: [
@@ -540,38 +716,20 @@ describe("PortfolioPolicy", () => {
         ],
         actions: [
           openAction({
-            id: "create-folks-deposit-escrow",
+            id: "open-folks-usdc",
             protocol: "folks",
             opportunityId: candidate.opportunityId,
-            amountRaw: null,
-            fromAssetId: null,
-            executionShapeKey: "mainnet:folks:v2:setup:escrow",
-            executionInput: { poolAppId: 123 },
-            authorizedSpends: [],
-          }),
-          openAction({
-            id: "opt-folks-escrow-into-usdc",
-            protocol: "folks",
-            opportunityId: candidate.opportunityId,
-            amountRaw: null,
-            fromAssetId: null,
-            executionShapeKey: "mainnet:folks:v2:optin:escrow",
-            executionInput: { assetId: 31_566_704 },
-            authorizedSpends: [],
-            dependencies: ["create-folks-deposit-escrow"],
-          }),
-          openAction({
-            id: "deposit-usdc-to-folks",
-            protocol: "folks",
-            opportunityId: candidate.opportunityId,
-            executionShapeKey: "mainnet:folks:v2:deposit:escrow",
+            executionShapeKey: "mainnet:folks-finance:v2:deposit:escrow",
             executionInput: {
               assetId: 31_566_704,
-              assetAmount: "100000000",
+              assetAmount: "30000000",
             },
+            authorizedSpends: [
+              { assetId: 31_566_704, amountRaw: "30000000" },
+            ],
             dependencies: [
-              "create-folks-deposit-escrow",
-              "opt-folks-escrow-into-usdc",
+              "mainnet:folks-finance:v2:setup:depositEscrow",
+              "mainnet:folks-finance:v2:setup:optEscrowAsset",
             ],
           }),
         ],
@@ -580,6 +738,12 @@ describe("PortfolioPolicy", () => {
       [candidate],
     );
 
+    expect(plan.actions).toHaveLength(1);
+    expect(plan.actions[0]?.dependencies).toEqual([]);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+
+    const result = policy.validate(portfolioSnapshot(), plan, [candidate]);
     expect(result.approved).toBe(true);
     expect(result.violations).toEqual([]);
   });

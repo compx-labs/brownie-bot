@@ -8,12 +8,13 @@ export const opportunityExecutionInputHintsSchema = z
     depositAssetId: z.number().int().nonnegative().optional(),
     poolAppId: z.number().int().positive().optional(),
     marketAppId: z.number().int().positive().optional(),
+    farmAppId: z.number().int().positive().optional(),
     poolId: z.string().min(1).optional(),
     programId: z.number().int().positive().optional(),
     liquidityAssetId: z.number().int().nonnegative().optional(),
     escrowAddress: z.string().min(58).max(58).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const opportunityExecutionShapeSchema = z.object({
   shapeKey: z.string().min(1),

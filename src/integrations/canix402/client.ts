@@ -412,21 +412,64 @@ function formatToolError(payload: {
   error: string;
   message?: string;
   details?: unknown;
+  status?: unknown;
+  bodySnippet?: unknown;
 }) {
   const base = payload.message
     ? `Canix402 ${payload.error}: ${payload.message}`
     : `Canix402 ${payload.error}`;
-  if (!payload.details || typeof payload.details !== "object") {
-    return base;
-  }
-  const record = payload.details as Record<string, unknown>;
-  const parts = [
-    typeof record.quoteIndex === "number"
-      ? `quoteIndex=${record.quoteIndex}`
+  const topLevelParts = [
+    typeof payload.status === "number" ? `status=${payload.status}` : null,
+    typeof payload.bodySnippet === "string"
+      ? `body=${truncateErrorDetail(payload.bodySnippet)}`
       : null,
-    typeof record.shapeKey === "string" ? `shapeKey=${record.shapeKey}` : null,
   ].filter(Boolean);
-  return parts.length > 0 ? `${base} (${parts.join(", ")})` : base;
+  if (payload.details === undefined || payload.details === null) {
+    return topLevelParts.length > 0
+      ? `${base} (${topLevelParts.join(", ")})`
+      : base;
+  }
+  if (typeof payload.details === "object") {
+    const record = payload.details as Record<string, unknown>;
+    const parts = [
+      ...topLevelParts,
+      typeof record.quoteIndex === "number"
+        ? `quoteIndex=${record.quoteIndex}`
+        : null,
+      typeof record.shapeKey === "string"
+        ? `shapeKey=${record.shapeKey}`
+        : null,
+      typeof record.status === "number" ? `status=${record.status}` : null,
+      typeof record.body === "string"
+        ? `body=${truncateErrorDetail(record.body)}`
+        : null,
+      typeof record.responseBody === "string"
+        ? `body=${truncateErrorDetail(record.responseBody)}`
+        : null,
+      typeof record.bodySnippet === "string"
+        ? `body=${truncateErrorDetail(record.bodySnippet)}`
+        : null,
+      typeof record.reason === "string"
+        ? `reason=${truncateErrorDetail(record.reason)}`
+        : null,
+    ].filter(Boolean);
+    if (parts.length > 0) {
+      return `${base} (${parts.join(", ")})`;
+    }
+    try {
+      return `${base} (details=${truncateErrorDetail(JSON.stringify(payload.details))})`;
+    } catch {
+      return base;
+    }
+  }
+  return `${base} (details=${truncateErrorDetail(String(payload.details))})`;
+}
+
+function truncateErrorDetail(text: string, maxLength = 500): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength)}…`;
 }
 
 interface PaymentResourceExpectation {

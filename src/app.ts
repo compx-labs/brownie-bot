@@ -18,6 +18,11 @@ import { walletFromMnemonic } from "./integrations/canix402/wallet.js";
 import { AlgorandPortfolioReader } from "./integrations/algorand/portfolio.js";
 import { AlgorandExecutionService } from "./integrations/algorand/execution.js";
 import {
+  LocalFolksEscrowStore,
+  SpacesFolksEscrowStore,
+  type FolksEscrowStore,
+} from "./integrations/algorand/folks-escrow-store.js";
+import {
   LocalFilesystemAccountingStore,
   SpacesAccountingStore,
   type AccountingStore,
@@ -125,6 +130,19 @@ export function createApp(config: AppConfig): AppContext {
     ...hostGuidance,
     signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
   });
+  const folksEscrowStore: FolksEscrowStore = isSpacesConfigured(config)
+    ? (() => {
+        const spaces = requireSpacesCredentials(config);
+        return new SpacesFolksEscrowStore({
+          endpoint: spaces.endpoint,
+          region: config.DO_SPACES_REGION,
+          bucket: spaces.bucket,
+          accessKeyId: spaces.key,
+          secretAccessKey: spaces.secret,
+          prefix: config.DO_SPACES_PREFIX,
+        });
+      })()
+    : new LocalFolksEscrowStore(config.FOLKS_ESCROW_DATA_DIR);
   const executor = new AlgorandExecutionService(
     canix,
     wallet,
@@ -135,6 +153,7 @@ export function createApp(config: AppConfig): AppContext {
       maxSlippageBps: config.MAX_SLIPPAGE_BPS,
       maxPriceImpactPct: config.MAX_PRICE_IMPACT_PCT,
     },
+    folksEscrowStore,
   );
   const notifier: RunNotifier & AccountingNotifier = isTelegramConfigured(
     config,
@@ -195,6 +214,7 @@ export function createApp(config: AppConfig): AppContext {
     telegramConfigured: isTelegramConfigured(config),
     accountingEnabled: true,
     accountingStorage: isSpacesConfigured(config) ? "spaces" : "local",
+    folksEscrowStorage: isSpacesConfigured(config) ? "spaces" : "local",
   }));
 
   app.get("/runs/latest", async (_request, reply) => {

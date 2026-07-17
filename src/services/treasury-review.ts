@@ -191,6 +191,11 @@ export class TreasuryReviewService {
         payments: agentResult.payments,
       };
     } catch (error) {
+      const message = safeErrorMessage(error);
+      console.error(`[treasury-review] Run failed: ${message}`);
+      if (error instanceof Error && error.stack) {
+        console.error(error.stack);
+      }
       result = {
         id,
         startedAt,
@@ -200,7 +205,7 @@ export class TreasuryReviewService {
         signingEnabled: this.signingEnabled,
         walletAddress: this.walletAddress,
         opportunities: [],
-        error: safeErrorMessage(error),
+        error: message,
       };
     }
 
