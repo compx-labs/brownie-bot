@@ -126,38 +126,43 @@ invent, omit, or rewrite facilitator fields.
 
 For `canix_get_execution_quote`:
 
-1. Use `canix_list_execution_shapes` first and supply the shape's required
-   inputs in base units.
-2. Complete the x402 payment workflow above.
-3. Require `meta.executionSubmitted === false`.
-4. Before signing, review:
-   - `data.expiresAt` has not passed
-   - every warning in `data.warnings`
+1. Prefer enter shapes from the opportunity's `executionShapes` (and exit/manage
+   keys from positions). Use `canix_list_execution_shapes` only as a catalog
+   cross-check—do not invent keys.
+2. Pass `{ quotes: [{ shapeKey, input }, ...] }` (min 1). Multi-step opens
+   (e.g. Folks setup then deposit) should appear as separate items in
+   `executionShapes` order. Response `data` is an `ExecutableQuote[]` in the
+   same order; groups are never merged. Price is flat ~0.10 USDC per request.
+3. Complete the x402 payment workflow above.
+4. Require `meta.executionSubmitted === false`.
+5. For each quote in `data`, before signing, review:
+   - `expiresAt` has not passed
+   - every warning in `warnings`
    - every sender, receiver, amount, asset ID, app ID, fee, and group member in
-     `data.transactions`
+     `transactions`
    - the group still matches the user's stated intent and spending limits
-5. Decode each item in `data.encodedTransactions` as an unsigned Algorand
+6. Decode each item in `encodedTransactions` as an unsigned Algorand
    transaction and sign it with the key for that transaction's sender.
-6. Preserve order and group IDs. Do not rebuild, regroup, or modify quoted
-   transactions after validation.
-7. Submit all signed blobs atomically before expiry. If expired, request and
-   pay for a fresh quote unless the service explicitly supports refreshing it
-   without another payment.
+7. Preserve order and group IDs. Do not rebuild, regroup, or modify quoted
+   transactions after validation. Submit each group atomically before expiry,
+   then proceed to the next quote in `data`.
+8. On failure, expect `error.details.quoteIndex` and `error.details.shapeKey`.
 
-Example for a single user signer:
+Example for a single user signer over one quote:
 
 ```typescript
-const signed = quote.data.encodedTransactions.map((encoded: string) => {
-  const txn = algosdk.decodeUnsignedTransaction(
-    Buffer.from(encoded, "base64"),
-  );
-  if (txn.sender.toString() !== account.addr.toString()) {
-    throw new Error(`Unexpected signer ${txn.sender.toString()}`);
-  }
-  return algosdk.signTransaction(txn, account.sk).blob;
-});
-
-await algod.sendRawTransaction(signed).do();
+for (const quote of response.data) {
+  const signed = quote.encodedTransactions.map((encoded: string) => {
+    const txn = algosdk.decodeUnsignedTransaction(
+      Buffer.from(encoded, "base64"),
+    );
+    if (txn.sender.toString() !== account.addr.toString()) {
+      throw new Error(`Unexpected signer ${txn.sender.toString()}`);
+    }
+    return algosdk.signTransaction(txn, account.sk).blob;
+  });
+  await algod.sendRawTransaction(signed).do();
+}
 ```
 
 Some shapes require multiple signers. Resolve keys by decoded transaction

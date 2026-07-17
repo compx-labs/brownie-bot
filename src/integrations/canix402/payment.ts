@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import algosdk from "algosdk";
 import { z } from "zod";
 
@@ -54,6 +56,8 @@ const ENDPOINT_CEILINGS = new Map([
 export interface PaymentPolicy {
   algodUrl: string;
   maxDailyBaseUnits?: bigint;
+  /** Test seam; production fetches fresh params from algod. */
+  getSuggestedParams?: () => Promise<algosdk.SuggestedParams>;
 }
 
 export interface BuiltPayment {
@@ -133,14 +137,14 @@ export class AlgorandPaymentBuilder implements PaymentBuilder {
       );
     }
 
-    const algod = new algosdk.Algodv2("", this.policy.algodUrl, "");
-    const suggestedParams = await algod.getTransactionParams().do();
+    const suggestedParams = await this.loadSuggestedParams();
+    const paymentNonce = randomUUID();
     const transfer = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
       sender: this.wallet.address,
       receiver: accepted.payTo,
       amount,
       assetIndex: BigInt(accepted.asset),
-      note: new TextEncoder().encode("x402-payment-v2"),
+      note: encodePaymentNote(resourceUrl.pathname, paymentNonce),
       suggestedParams: {
         ...suggestedParams,
         flatFee: true,
@@ -156,7 +160,7 @@ export class AlgorandPaymentBuilder implements PaymentBuilder {
           sender: accepted.extra.feePayer,
           receiver: accepted.extra.feePayer,
           amount: 0n,
-          note: new TextEncoder().encode("x402-fee-payer"),
+          note: encodeFeePayerNote(resourceUrl.pathname, paymentNonce),
           suggestedParams: {
             ...suggestedParams,
             flatFee: true,
@@ -216,6 +220,14 @@ export class AlgorandPaymentBuilder implements PaymentBuilder {
     };
   }
 
+  private async loadSuggestedParams(): Promise<algosdk.SuggestedParams> {
+    if (this.policy.getSuggestedParams) {
+      return this.policy.getSuggestedParams();
+    }
+    const algod = new algosdk.Algodv2("", this.policy.algodUrl, "");
+    return algod.getTransactionParams().do();
+  }
+
   private resetDailySpendIfNeeded(): void {
     const today = new Date().toISOString().slice(0, 10);
     if (today !== this.spendDate) {
@@ -223,4 +235,18 @@ export class AlgorandPaymentBuilder implements PaymentBuilder {
       this.spentToday = 0n;
     }
   }
+}
+
+/** Unique note so concurrent identical-price x402 payments do not collide. */
+export function encodePaymentNote(resourcePath: string, nonce: string): Uint8Array {
+  return new TextEncoder().encode(
+    `x402-payment-v2|${resourcePath}|${nonce}`,
+  );
+}
+
+export function encodeFeePayerNote(
+  resourcePath: string,
+  nonce: string,
+): Uint8Array {
+  return new TextEncoder().encode(`x402-fee-payer|${resourcePath}|${nonce}`);
 }

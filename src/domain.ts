@@ -1,5 +1,39 @@
 import { z } from "zod";
 
+export const opportunityExecutionInputHintsSchema = z
+  .object({
+    assetId: z.number().int().nonnegative().optional(),
+    assetAId: z.number().int().nonnegative().optional(),
+    assetBId: z.number().int().nonnegative().optional(),
+    depositAssetId: z.number().int().nonnegative().optional(),
+    poolAppId: z.number().int().positive().optional(),
+    marketAppId: z.number().int().positive().optional(),
+    poolId: z.string().min(1).optional(),
+    programId: z.number().int().positive().optional(),
+    liquidityAssetId: z.number().int().nonnegative().optional(),
+    escrowAddress: z.string().min(58).max(58).optional(),
+  })
+  .strict();
+
+export const opportunityExecutionShapeSchema = z.object({
+  shapeKey: z.string().min(1),
+  protocol: z.string().min(1),
+  protocolVersion: z.string().min(1),
+  action: z.string().min(1),
+  variant: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  order: z.number().int().nonnegative(),
+  prerequisiteShapeKeys: z.array(z.string().min(1)).optional(),
+  requiredInputs: z.array(z.string().min(1)),
+  requiredAssetIds: z.array(z.number().int().nonnegative()),
+  inputHints: opportunityExecutionInputHintsSchema.optional(),
+});
+
+export type OpportunityExecutionShape = z.infer<
+  typeof opportunityExecutionShapeSchema
+>;
+
 export const opportunitySchema = z.object({
   protocol: z.string().min(1),
   opportunityType: z.string().min(1),
@@ -13,6 +47,8 @@ export const opportunitySchema = z.object({
   sourceTimestamp: z.iso.datetime(),
   fetchedAt: z.iso.datetime(),
   notes: z.string().optional(),
+  executionReady: z.boolean(),
+  executionShapes: z.array(opportunityExecutionShapeSchema),
 });
 
 export type Opportunity = z.infer<typeof opportunitySchema>;
@@ -31,6 +67,8 @@ export const positionSchema = z.object({
   sourceTimestamp: z.iso.datetime().optional(),
   caveats: z.array(z.string()).optional(),
   notes: z.string().optional(),
+  compatibleExitShapeKeys: z.array(z.string().min(1)).default([]),
+  compatibleManageShapeKeys: z.array(z.string().min(1)).default([]),
 });
 
 export type Position = z.infer<typeof positionSchema>;
@@ -162,6 +200,8 @@ export type PortfolioPlan = z.infer<typeof portfolioPlanSchema>;
 export interface PolicyResult {
   approved: boolean;
   violations: string[];
+  /** Advisory issues (concentration guidance, dry-run notes). Do not block approval. */
+  warnings: string[];
   metrics: {
     maxPositionPct: number;
     maxProtocolPct: number;

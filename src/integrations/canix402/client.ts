@@ -399,6 +399,7 @@ function parseToolPayload(result: unknown): unknown {
 function isToolError(payload: unknown): payload is {
   error: string;
   message?: string;
+  details?: unknown;
 } {
   return Boolean(
     payload &&
@@ -407,10 +408,25 @@ function isToolError(payload: unknown): payload is {
   );
 }
 
-function formatToolError(payload: { error: string; message?: string }) {
-  return payload.message
+function formatToolError(payload: {
+  error: string;
+  message?: string;
+  details?: unknown;
+}) {
+  const base = payload.message
     ? `Canix402 ${payload.error}: ${payload.message}`
     : `Canix402 ${payload.error}`;
+  if (!payload.details || typeof payload.details !== "object") {
+    return base;
+  }
+  const record = payload.details as Record<string, unknown>;
+  const parts = [
+    typeof record.quoteIndex === "number"
+      ? `quoteIndex=${record.quoteIndex}`
+      : null,
+    typeof record.shapeKey === "string" ? `shapeKey=${record.shapeKey}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? `${base} (${parts.join(", ")})` : base;
 }
 
 interface PaymentResourceExpectation {
@@ -509,11 +525,21 @@ function injectManagedWallet(
     args.address = walletAddress;
   }
   if (toolName === "canix_get_execution_quote") {
-    const input =
-      args.input && typeof args.input === "object"
-        ? (args.input as Record<string, unknown>)
-        : {};
-    args.input = { ...input, userAddress: walletAddress };
+    const quotes = Array.isArray(args.quotes) ? args.quotes : [];
+    args.quotes = quotes.map((item) => {
+      const record =
+        item && typeof item === "object"
+          ? (item as Record<string, unknown>)
+          : {};
+      const input =
+        record.input && typeof record.input === "object"
+          ? (record.input as Record<string, unknown>)
+          : {};
+      return {
+        ...record,
+        input: { ...input, userAddress: walletAddress },
+      };
+    });
   }
   if (
     (toolName === "canix_optin" || toolName === "canix_swap") &&

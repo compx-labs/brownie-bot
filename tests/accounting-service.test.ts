@@ -85,6 +85,8 @@ describe("AccountingService", () => {
                 amountRaw: "2000000",
                 amount: "2",
                 usdValue: 2,
+                compatibleExitShapeKeys: [],
+                compatibleManageShapeKeys: [],
               },
             ],
             protocols: [

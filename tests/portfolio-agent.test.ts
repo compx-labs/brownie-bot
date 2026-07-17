@@ -29,14 +29,19 @@ function toolSchema(name: string) {
       address: { type: "string" },
     },
     canix_get_execution_quote: {
-      shapeKey: { type: "string" },
-      input: {
-        type: "object",
-        properties: {
-          userAddress: { type: "string" },
-          assetAId: {},
-          assetBId: {},
-          maxSlippageBps: {},
+      quotes: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            shapeKey: { type: "string" },
+            input: {
+              type: "object",
+              properties: {
+                userAddress: { type: "string" },
+              },
+            },
+          },
         },
       },
     },
@@ -83,7 +88,15 @@ function setup(responses: unknown[]) {
       reasoningEffort: "medium",
       maxToolCalls: 8,
       walletAddress: managedWallet,
-      minimumHoldingHorizonDays: 30,
+      hostGuidance: {
+        maxPositionPct: 35,
+        maxProtocolPct: 50,
+        minLiquidReservePct: 10,
+        minTvlUsd: 100_000,
+        maxSourceAgeHours: 24,
+        minProjectedNetImprovementUsd: 1,
+      },
+      signingEnabled: false,
     }),
     create,
     callManagedTool,
@@ -144,6 +157,12 @@ describe("OpenAiPortfolioAgent", () => {
       managedWallet,
     );
     expect(create).toHaveBeenCalledTimes(2);
+    const toolNames = (
+      create.mock.calls[0]?.[0] as { tools: Array<{ name: string }> }
+    ).tools.map((tool) => tool.name);
+    expect(toolNames).not.toContain("canix_get_execution_quote");
+    expect(toolNames).not.toContain("canix_optin");
+    expect(toolNames).not.toContain("canix_swap");
   });
 
   it("fails closed when the model skips opportunity research", async () => {
@@ -158,6 +177,64 @@ describe("OpenAiPortfolioAgent", () => {
     await expect(agent.run()).rejects.toThrow(
       /without researching opportunities/,
     );
+  });
+
+  it("skips failed protocol opportunity research and continues", async () => {
+    const finalPlan = portfolioPlan();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { agent, create, callManagedTool } = setup([
+      {
+        id: "response-1",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-1",
+            name: "canix_get_protocol_opportunities",
+            arguments: JSON.stringify({ protocol: "compx", limit: 25 }),
+          },
+        ],
+      },
+      {
+        id: "response-2",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-2",
+            name: "canix_list_opportunities",
+            arguments: JSON.stringify({ limit: 25 }),
+          },
+        ],
+      },
+      {
+        id: "response-3",
+        output: [],
+        output_text: JSON.stringify(finalPlan),
+      },
+    ]);
+    callManagedTool
+      .mockRejectedValueOnce(
+        new Error(
+          "Canix402 GATEWAY_CLIENT_ERROR: /protocols/compx/opportunities: expected 200 or 402, got 500",
+        ),
+      )
+      .mockResolvedValueOnce({ data: { data: [opportunity()] } });
+
+    const result = await agent.run();
+
+    expect(result.plan).toEqual(finalPlan);
+    expect(callManagedTool).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(3);
+    const secondInput = (
+      create.mock.calls[1]?.[0] as {
+        input: Array<{ call_id?: string; output?: string }>;
+      }
+    ).input;
+    expect(secondInput[0]?.call_id).toBe("call-1");
+    expect(secondInput[0]?.output).toContain("TOOL_UNAVAILABLE");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("canix_get_protocol_opportunities"),
+    );
+    errorSpy.mockRestore();
   });
 
   it("rejects malformed tool arguments", async () => {

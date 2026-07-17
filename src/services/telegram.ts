@@ -61,9 +61,14 @@ export function formatTelegramReport(run: ReviewRun): string {
       `Summary: ${truncate(run.plan.summary, 700)}`,
     );
   }
-  if (run.policy && !run.policy.approved) {
+  if (run.policy && !run.policy.approved && run.policy.violations.length > 0) {
     lines.push(
       `Policy blocked: ${truncate(run.policy.violations.join("; "), 750)}`,
+    );
+  }
+  if (run.policy && run.policy.warnings.length > 0) {
+    lines.push(
+      `Policy notes: ${truncate(run.policy.warnings.join("; "), 750)}`,
     );
   }
   for (const execution of run.executions ?? []) {

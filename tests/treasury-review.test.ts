@@ -19,6 +19,7 @@ function dependencies(agent: PortfolioAgent) {
     validate: vi.fn().mockReturnValue({
       approved: true,
       violations: [],
+      warnings: [],
       metrics: {
         maxPositionPct: 0,
         maxProtocolPct: 0,
@@ -151,6 +152,44 @@ describe("TreasuryReviewService", () => {
     });
   });
 
+  it("does not call the executor when signing is disabled", async () => {
+    const action = {
+      id: "open-1",
+      type: "open" as const,
+      protocol: "tinyman",
+      opportunityId: "tinyman:pool:1",
+      positionId: null,
+      amountRaw: "100000000",
+      fromAssetId: 31_566_704,
+      toAssetId: null,
+      targetWeightPct: 10,
+      executionShapeKey: "tinyman:open",
+      executionInput: {},
+      authorizedSpends: [{ assetId: 31_566_704, amountRaw: "100000000" }],
+      rationale: "Test",
+      dependencies: [],
+    };
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot(),
+        plan: portfolioPlan({ actions: [action], projectedNetBenefitUsd: 5 }),
+        opportunities: [opportunity()],
+        payments: [],
+        toolCalls: ["canix_list_opportunities"],
+      }),
+    };
+    const executeAction = vi.fn();
+    const { instance } = service(agent, {
+      executor: { executeAction },
+    });
+
+    await expect(instance.run()).resolves.toMatchObject({
+      status: "validated-dry-run",
+      executions: [{ actionId: "open-1", status: "validated-dry-run" }],
+    });
+    expect(executeAction).not.toHaveBeenCalled();
+  });
+
   it("stops before execution when deterministic policy rejects the plan", async () => {
     const action = {
       id: "open-1",
@@ -180,7 +219,8 @@ describe("TreasuryReviewService", () => {
     const policy: PlanValidator = {
       validate: vi.fn().mockReturnValue({
         approved: false,
-        violations: ["Position cap exceeded."],
+        violations: ["Action open-1 has no executable shape"],
+        warnings: ["Target position 50% exceeds guidance of 35%"],
         metrics: {
           maxPositionPct: 50,
           maxProtocolPct: 50,

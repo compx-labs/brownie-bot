@@ -39,6 +39,45 @@ describe("formatTelegramReport", () => {
     expect(report).toContain("Plan confidence: 85%");
     expect(report).toContain("50000 USDC base units");
   });
+
+  it("reports policy notes without treating them as blocks", () => {
+    const report = formatTelegramReport({
+      id: "run-2",
+      startedAt: "2026-07-13T09:00:00.000Z",
+      completedAt: "2026-07-13T09:00:01.000Z",
+      status: "validated-dry-run",
+      mode: "autonomous",
+      signingEnabled: false,
+      walletAddress:
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      snapshot: portfolioSnapshot({
+        complete: false,
+        caveats: ["folks positions are unavailable: timeout"],
+      }),
+      plan: portfolioPlan(),
+      policy: {
+        approved: true,
+        violations: [],
+        warnings: [
+          "Portfolio snapshot is incomplete (folks positions are unavailable: timeout); signing is disabled so the plan is still reported",
+          "Target position 52.57% exceeds guidance of 35%",
+        ],
+        metrics: {
+          maxPositionPct: 52.57,
+          maxProtocolPct: 40,
+          liquidReservePct: 20,
+          turnoverPct: 10,
+        },
+      },
+      opportunities: [],
+      payments: [],
+    });
+
+    expect(report).toContain("Policy notes:");
+    expect(report).toContain("folks positions are unavailable: timeout");
+    expect(report).toContain("exceeds guidance of 35%");
+    expect(report).not.toContain("Policy blocked:");
+  });
 });
 
 describe("formatAccountingTelegramReport", () => {

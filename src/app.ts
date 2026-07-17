@@ -85,6 +85,14 @@ export function createApp(config: AppConfig): AppContext {
     config.X402_ALGOD_URL,
     config.MAX_SOURCE_AGE_HOURS,
   );
+  const hostGuidance = {
+    maxPositionPct: config.MAX_POSITION_PCT,
+    maxProtocolPct: config.MAX_PROTOCOL_PCT,
+    minLiquidReservePct: config.MIN_LIQUID_RESERVE_PCT,
+    minTvlUsd: config.MIN_TVL_USD,
+    maxSourceAgeHours: config.MAX_SOURCE_AGE_HOURS,
+    minProjectedNetImprovementUsd: config.MIN_PROJECTED_NET_IMPROVEMENT_USD,
+  };
   const agent = createPortfolioAgent(
     config.OPEN_AI_API_KEY,
     canix,
@@ -94,18 +102,13 @@ export function createApp(config: AppConfig): AppContext {
       reasoningEffort: config.OPENAI_REASONING_EFFORT,
       maxToolCalls: config.AI_MAX_TOOL_CALLS,
       walletAddress: config.BOT_WALLET,
-      minimumHoldingHorizonDays: config.MIN_HOLDING_HORIZON_DAYS,
+      hostGuidance,
+      signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
     },
   );
   const policy = new PortfolioPolicy({
-    maxPositionPct: config.MAX_POSITION_PCT,
-    maxProtocolPct: config.MAX_PROTOCOL_PCT,
-    minLiquidReservePct: config.MIN_LIQUID_RESERVE_PCT,
-    maxDailyTurnoverPct: config.MAX_DAILY_TURNOVER_PCT,
-    minTvlUsd: config.MIN_TVL_USD,
-    maxSourceAgeHours: config.MAX_SOURCE_AGE_HOURS,
-    minHoldingHorizonDays: config.MIN_HOLDING_HORIZON_DAYS,
-    minProjectedNetImprovementUsd: config.MIN_PROJECTED_NET_IMPROVEMENT_USD,
+    ...hostGuidance,
+    signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
   });
   const executor = new AlgorandExecutionService(
     canix,

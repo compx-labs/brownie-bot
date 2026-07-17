@@ -27,7 +27,10 @@ export interface ReviewState {
 }
 
 export interface ActionExecutor {
-  executeAction(action: PortfolioAction): Promise<{
+  executeAction(
+    action: PortfolioAction,
+    context?: { opportunities?: Opportunity[] },
+  ): Promise<{
     outcome: ExecutionOutcome;
     payments: PaymentReceipt[];
   }>;
@@ -109,7 +112,15 @@ export class TreasuryReviewService {
         (action) => action.type !== "hold",
       );
       const executions: ExecutionOutcome[] = [];
-      if (policy.approved) {
+      if (policy.approved && !this.signingEnabled) {
+        for (const action of agentResult.plan.actions) {
+          executions.push(
+            action.type === "hold"
+              ? { actionId: action.id, status: "skipped" }
+              : { actionId: action.id, status: "validated-dry-run" },
+          );
+        }
+      } else if (policy.approved) {
         for (const action of orderActions(agentResult.plan.actions)) {
           if (action.type === "hold") {
             executions.push({ actionId: action.id, status: "skipped" });
@@ -123,9 +134,7 @@ export class TreasuryReviewService {
               return (
                 outcome &&
                 outcome.status !== "confirmed" &&
-                (this.signingEnabled ||
-                  outcome.status !== "validated-dry-run" ||
-                  action.dependencies.length > 0)
+                outcome.status !== "validated-dry-run"
               );
             })
           ) {
@@ -136,7 +145,9 @@ export class TreasuryReviewService {
             });
             continue;
           }
-          const execution = await this.executor.executeAction(action);
+          const execution = await this.executor.executeAction(action, {
+            opportunities: agentResult.opportunities,
+          });
           executions.push(execution.outcome);
           agentResult.payments.push(...execution.payments);
         }
@@ -219,9 +230,8 @@ function orderActions(actions: PortfolioAction[]): PortfolioAction[] {
     for (const dependency of action.dependencies) {
       const required = byId.get(dependency);
       if (!required) {
-        throw new Error(
-          `Action ${action.id} has unknown dependency ${dependency}`,
-        );
+        // Missing IDs are reported by policy; skip so dry-run can still proceed.
+        continue;
       }
       visit(required);
     }

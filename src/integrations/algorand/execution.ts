@@ -3,22 +3,26 @@ import { z } from "zod";
 
 import type {
   ExecutionOutcome,
+  Opportunity,
   PaymentReceipt,
   PortfolioAction,
 } from "../../domain.js";
 import type { Canix402Client } from "../canix402/client.js";
 import type { TreasuryWallet } from "../canix402/wallet.js";
 
-const executionQuoteSchema = z.object({
-  data: z.object({
-    shapeKey: z.string(),
-    expiresAt: z.iso.datetime(),
-    encodedTransactions: z.array(z.string().min(1)).min(1),
-    warnings: z.array(z.string()).default([]),
-    transactions: z.array(z.unknown()).default([]),
-  }),
+const executableQuoteSchema = z.object({
+  shapeKey: z.string(),
+  expiresAt: z.iso.datetime(),
+  encodedTransactions: z.array(z.string().min(1)).min(1),
+  warnings: z.array(z.string()).default([]),
+  transactions: z.array(z.unknown()).default([]),
+});
+
+const executionQuoteBatchSchema = z.object({
+  data: z.array(executableQuoteSchema).min(1),
   meta: z.object({
     executionSubmitted: z.literal(false),
+    quoteCount: z.number().int().positive().optional(),
   }),
 });
 
@@ -84,6 +88,10 @@ export interface ExecutionPolicy {
   maxPriceImpactPct: number;
 }
 
+export interface ExecuteActionContext {
+  opportunities?: Opportunity[];
+}
+
 export class AlgorandExecutionService {
   private readonly algod: algosdk.Algodv2;
 
@@ -102,7 +110,10 @@ export class AlgorandExecutionService {
     this.algod = new algosdk.Algodv2("", algodUrl, "");
   }
 
-  async executeAction(action: PortfolioAction): Promise<{
+  async executeAction(
+    action: PortfolioAction,
+    context: ExecuteActionContext = {},
+  ): Promise<{
     outcome: ExecutionOutcome;
     payments: PaymentReceipt[];
   }> {
@@ -112,53 +123,82 @@ export class AlgorandExecutionService {
         payments: [],
       };
     }
+    if (!this.policy.signingEnabled) {
+      return {
+        outcome: { actionId: action.id, status: "validated-dry-run" },
+        payments: [],
+      };
+    }
     try {
       return action.type === "swap"
         ? await this.executeSwap(action)
-        : await this.executeShape(action);
+        : await this.executeShape(action, context.opportunities ?? []);
     } catch (error) {
       return {
         outcome: {
           actionId: action.id,
           status: "failed",
-          error:
-            error instanceof Error ? error.message : "Unknown execution error",
+          error: formatExecutionError(error),
         },
         payments: [],
       };
     }
   }
 
-  private async executeShape(action: PortfolioAction): Promise<{
+  private async executeShape(
+    action: PortfolioAction,
+    opportunities: Opportunity[],
+  ): Promise<{
     outcome: ExecutionOutcome;
     payments: PaymentReceipt[];
   }> {
     if (!action.executionShapeKey || !action.executionInput) {
       throw new Error(`Action ${action.id} has no execution shape`);
     }
+    const quotes = buildQuoteRequests(
+      action,
+      opportunities,
+      this.policy.maxSlippageBps,
+    );
     const result = await this.canix.callManagedTool(
       "canix_get_execution_quote",
-      {
-        shapeKey: action.executionShapeKey,
-        input: {
-          ...action.executionInput,
-          maxSlippageBps: this.policy.maxSlippageBps,
-        },
-      },
+      { quotes },
       this.managedAddress,
     );
-    const quote = executionQuoteSchema.parse(result.data);
-    assertFresh(quote.data.expiresAt);
-    const blobs = quote.data.encodedTransactions.map((encoded) => ({
-      encoded,
-      signer: "user" as const,
-    }));
-    const outcome = await this.signAndSubmit(action.id, blobs);
-    return {
-      outcome: {
-        ...outcome.outcome,
+    const batch = executionQuoteBatchSchema.parse(result.data);
+    if (batch.data.length !== quotes.length) {
+      throw new Error(
+        `Execution quote count mismatch: requested ${quotes.length}, received ${batch.data.length}`,
+      );
+    }
+    let lastOutcome: ExecutionOutcome = {
+      actionId: action.id,
+      status: "failed",
+      error: "No execution quotes returned",
+    };
+    for (const [index, quote] of batch.data.entries()) {
+      assertFresh(quote.expiresAt);
+      const submit = await this.signAndSubmit(
+        batch.data.length === 1 ? action.id : `${action.id}:${index}`,
+        quote.encodedTransactions.map((encoded) => ({
+          encoded,
+          signer: "user" as const,
+        })),
+      );
+      lastOutcome = {
+        ...submit.outcome,
+        actionId: action.id,
         toolName: "canix_get_execution_quote",
-      },
+      };
+      if (submit.outcome.status !== "confirmed") {
+        return {
+          outcome: lastOutcome,
+          payments: result.payment ? [result.payment] : [],
+        };
+      }
+    }
+    return {
+      outcome: lastOutcome,
       payments: result.payment ? [result.payment] : [],
     };
   }
@@ -301,6 +341,67 @@ export class AlgorandExecutionService {
       },
     };
   }
+}
+
+export function buildQuoteRequests(
+  action: PortfolioAction,
+  opportunities: Opportunity[],
+  maxSlippageBps: number,
+): Array<{ shapeKey: string; input: Record<string, unknown> }> {
+  const opportunity = action.opportunityId
+    ? opportunities.find(
+        (candidate) => candidate.opportunityId === action.opportunityId,
+      )
+    : undefined;
+  const baseInput = {
+    ...(action.executionInput ?? {}),
+    maxSlippageBps,
+  };
+  if (
+    ["open", "increase"].includes(action.type) &&
+    opportunity &&
+    opportunity.executionShapes.length > 0
+  ) {
+    const shapes = [...opportunity.executionShapes].sort(
+      (left, right) =>
+        left.order - right.order || left.shapeKey.localeCompare(right.shapeKey),
+    );
+    return shapes.map((shape) => ({
+      shapeKey: shape.shapeKey,
+      input: {
+        ...(shape.inputHints ?? {}),
+        ...baseInput,
+      },
+    }));
+  }
+  return [
+    {
+      shapeKey: action.executionShapeKey!,
+      input: baseInput,
+    },
+  ];
+}
+
+function formatExecutionError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Unknown execution error";
+  }
+  const details = (error as Error & { details?: unknown }).details;
+  if (details && typeof details === "object") {
+    const record = details as Record<string, unknown>;
+    const parts = [
+      typeof record.quoteIndex === "number"
+        ? `quoteIndex=${record.quoteIndex}`
+        : null,
+      typeof record.shapeKey === "string"
+        ? `shapeKey=${record.shapeKey}`
+        : null,
+    ].filter(Boolean);
+    if (parts.length > 0) {
+      return `${error.message} (${parts.join(", ")})`;
+    }
+  }
+  return error.message;
 }
 
 function assertFresh(expiresAt: string): void {

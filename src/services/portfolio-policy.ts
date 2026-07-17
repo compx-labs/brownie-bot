@@ -9,11 +9,11 @@ export interface PortfolioPolicyConfig {
   maxPositionPct: number;
   maxProtocolPct: number;
   minLiquidReservePct: number;
-  maxDailyTurnoverPct: number;
   minTvlUsd: number;
   maxSourceAgeHours: number;
-  minHoldingHorizonDays: number;
   minProjectedNetImprovementUsd: number;
+  /** When false, structural and data-quality issues become warnings so planning/dry-run can pass. */
+  signingEnabled: boolean;
 }
 
 export class PortfolioPolicy {
@@ -24,13 +24,14 @@ export class PortfolioPolicy {
     plan: PortfolioPlan,
     opportunities: Opportunity[],
   ): PolicyResult {
-    const violations: string[] = [];
-    this.validatePlanStructure(snapshot, plan, opportunities, violations);
+    const hard: string[] = [];
+    const soft: string[] = [];
+    this.validatePlanStructure(snapshot, plan, opportunities, hard, soft);
     const currentTotal = sum(
       plan.currentAllocations.map((item) => item.weightPct),
     );
     if (Math.abs(currentTotal - 100) > 0.01) {
-      violations.push(
+      hard.push(
         `Current allocations total ${currentTotal.toFixed(4)}%, not 100%`,
       );
     }
@@ -38,17 +39,18 @@ export class PortfolioPolicy {
       plan.targetAllocations.map((item) => item.weightPct),
     );
     if (Math.abs(targetTotal - 100) > 0.01) {
-      violations.push(
+      hard.push(
         `Target allocations total ${targetTotal.toFixed(4)}%, not 100%`,
       );
     }
-    const maxPositionPct = Math.max(
-      0,
-      ...plan.targetAllocations.map((item) => item.weightPct),
-    );
+    // Liquid (protocol=null) is a reserve floor, not a position-size cap.
+    const deployedWeights = plan.targetAllocations
+      .filter((item) => item.protocol !== null)
+      .map((item) => item.weightPct);
+    const maxPositionPct = Math.max(0, ...deployedWeights);
     if (maxPositionPct > this.config.maxPositionPct) {
-      violations.push(
-        `Target position ${maxPositionPct}% exceeds ${this.config.maxPositionPct}%`,
+      soft.push(
+        `Target position ${maxPositionPct}% exceeds guidance of ${this.config.maxPositionPct}%`,
       );
     }
     const protocolWeights = new Map<string, number>();
@@ -63,8 +65,8 @@ export class PortfolioPolicy {
     }
     const maxProtocolPct = Math.max(0, ...protocolWeights.values());
     if (maxProtocolPct > this.config.maxProtocolPct) {
-      violations.push(
-        `Target protocol allocation ${maxProtocolPct}% exceeds ${this.config.maxProtocolPct}%`,
+      soft.push(
+        `Target protocol allocation ${maxProtocolPct}% exceeds guidance of ${this.config.maxProtocolPct}%`,
       );
     }
     const liquidReservePct = sum(
@@ -73,8 +75,8 @@ export class PortfolioPolicy {
         .map((item) => item.weightPct),
     );
     if (liquidReservePct < this.config.minLiquidReservePct) {
-      violations.push(
-        `Liquid reserve ${liquidReservePct}% is below ${this.config.minLiquidReservePct}%`,
+      soft.push(
+        `Liquid reserve ${liquidReservePct}% is below guidance of ${this.config.minLiquidReservePct}%`,
       );
     }
     const currentWeights = new Map(
@@ -95,36 +97,54 @@ export class PortfolioPolicy {
           ),
         ),
       ) / 2;
-    if (turnoverPct > this.config.maxDailyTurnoverPct) {
-      violations.push(
-        `Planned turnover ${turnoverPct}% exceeds ${this.config.maxDailyTurnoverPct}%`,
-      );
-    }
-    if (plan.holdingHorizonDays < this.config.minHoldingHorizonDays) {
-      violations.push(
-        `Holding horizon is below ${this.config.minHoldingHorizonDays} days`,
-      );
-    }
     if (
       plan.actions.some((action) => action.type !== "hold") &&
       plan.projectedNetBenefitUsd < this.config.minProjectedNetImprovementUsd
     ) {
-      violations.push(
-        `Projected net benefit is below $${this.config.minProjectedNetImprovementUsd}`,
+      soft.push(
+        `Projected net benefit is below guidance of $${this.config.minProjectedNetImprovementUsd}`,
       );
     }
     if (
       !snapshot.complete &&
       plan.actions.some((action) => action.type !== "hold")
     ) {
-      violations.push(
-        "Portfolio snapshot is incomplete; only hold is permitted",
-      );
+      const causes =
+        snapshot.caveats.length > 0
+          ? snapshot.caveats.join("; ")
+          : "no caveats were recorded";
+      const incompleteMessage = `Portfolio snapshot is incomplete (${causes})`;
+      if (this.config.signingEnabled) {
+        hard.push(`${incompleteMessage}; only hold is permitted while signing`);
+      } else {
+        soft.push(
+          `${incompleteMessage}; signing is disabled so the plan is still reported`,
+        );
+      }
     }
-    this.validateOpportunityActions(plan, opportunities, violations);
+    this.validateOpportunityActions(plan, opportunities, hard);
+    if (this.config.signingEnabled) {
+      return {
+        approved: hard.length === 0,
+        violations: hard,
+        warnings: soft,
+        metrics: {
+          maxPositionPct,
+          maxProtocolPct,
+          liquidReservePct,
+          turnoverPct,
+        },
+      };
+    }
     return {
-      approved: violations.length === 0,
-      violations,
+      approved: true,
+      violations: [],
+      warnings: [
+        ...soft,
+        ...hard.map(
+          (violation) => `Would block if signing enabled: ${violation}`,
+        ),
+      ],
       metrics: {
         maxPositionPct,
         maxProtocolPct,
@@ -139,6 +159,7 @@ export class PortfolioPolicy {
     plan: PortfolioPlan,
     opportunities: Opportunity[],
     violations: string[],
+    soft: string[],
   ): void {
     reportDuplicates(
       plan.currentAllocations.map((allocation) => allocation.key),
@@ -204,11 +225,23 @@ export class PortfolioPolicy {
     }
 
     for (const action of plan.actions) {
-      if (
-        action.dependencies.includes(action.id) ||
-        action.dependencies.some((dependency) => !actions.has(dependency))
-      ) {
-        violations.push(`Action ${action.id} has invalid dependencies`);
+      const missingDependencies = action.dependencies.filter(
+        (dependency) => !actions.has(dependency),
+      );
+      if (action.dependencies.includes(action.id)) {
+        violations.push(
+          `Action ${action.id} has invalid dependencies: depends on itself`,
+        );
+      } else if (missingDependencies.length > 0) {
+        const quotedMissing = missingDependencies
+          .map((dependency) => JSON.stringify(dependency))
+          .join(", ");
+        const planIds = [...actions]
+          .map((id) => JSON.stringify(id))
+          .join(", ");
+        violations.push(
+          `Action ${action.id} depends on ${quotedMissing} but the plan only defines action ID(s) ${planIds}`,
+        );
       }
       if (action.type === "hold") {
         continue;
@@ -249,7 +282,13 @@ export class PortfolioPolicy {
         continue;
       }
       if (!action.executionShapeKey || !action.executionInput) {
-        violations.push(`Action ${action.id} has no executable shape`);
+        const missing = [
+          !action.executionShapeKey ? "executionShapeKey" : null,
+          !action.executionInput ? "executionInput" : null,
+        ].filter((value): value is string => value !== null);
+        violations.push(
+          `Action ${action.id} has no executable shape (missing ${missing.join(" and ")})`,
+        );
       }
       if (["open", "increase"].includes(action.type)) {
         if (action.authorizedSpends.length === 0) {
@@ -267,6 +306,15 @@ export class PortfolioPolicy {
           action.protocol !== opportunity.protocol
         ) {
           violations.push(`Action ${action.id} has a protocol mismatch`);
+        } else {
+          validateEnterShape(action, opportunity, violations);
+          validateRequiredAssets(
+            action,
+            opportunity,
+            plan,
+            availableBalances,
+            this.config.signingEnabled ? violations : soft,
+          );
         }
       }
       if (["reduce", "close", "claim"].includes(action.type)) {
@@ -282,6 +330,8 @@ export class PortfolioPolicy {
           );
         } else if (action.protocol && action.protocol !== position.protocol) {
           violations.push(`Action ${action.id} has a protocol mismatch`);
+        } else {
+          validateExitOrManageShape(action, position, violations);
         }
       }
     }
@@ -332,6 +382,89 @@ export class PortfolioPolicy {
         );
       }
     }
+  }
+}
+
+function validateEnterShape(
+  action: PortfolioPlan["actions"][number],
+  opportunity: Opportunity,
+  violations: string[],
+): void {
+  if (!opportunity.executionReady || opportunity.executionShapes.length === 0) {
+    violations.push(
+      `Action ${action.id} targets opportunity ${opportunity.opportunityId} which is research-only (executionReady=false or empty executionShapes)`,
+    );
+    return;
+  }
+  const allowed = opportunity.executionShapes.map((shape) => shape.shapeKey);
+  if (
+    action.executionShapeKey &&
+    !allowed.includes(action.executionShapeKey)
+  ) {
+    violations.push(
+      `Action ${action.id} executionShapeKey ${JSON.stringify(action.executionShapeKey)} is not in opportunity ${opportunity.opportunityId} enter shapes [${allowed.map((key) => JSON.stringify(key)).join(", ")}]`,
+    );
+  }
+}
+
+function validateExitOrManageShape(
+  action: PortfolioPlan["actions"][number],
+  position: PortfolioSnapshot["positions"][number],
+  violations: string[],
+): void {
+  if (!action.executionShapeKey) {
+    return;
+  }
+  const allowed = [
+    ...position.compatibleExitShapeKeys,
+    ...position.compatibleManageShapeKeys,
+  ];
+  if (allowed.length === 0) {
+    violations.push(
+      `Action ${action.id} targets position ${position.positionId} with no compatibleExitShapeKeys/compatibleManageShapeKeys`,
+    );
+    return;
+  }
+  if (!allowed.includes(action.executionShapeKey)) {
+    violations.push(
+      `Action ${action.id} executionShapeKey ${JSON.stringify(action.executionShapeKey)} is not in position ${position.positionId} exit/manage keys [${allowed.map((key) => JSON.stringify(key)).join(", ")}]`,
+    );
+  }
+}
+
+function validateRequiredAssets(
+  action: PortfolioPlan["actions"][number],
+  opportunity: Opportunity,
+  plan: PortfolioPlan,
+  availableBalances: Map<number, bigint>,
+  sink: string[],
+): void {
+  const required = new Set(
+    opportunity.executionShapes.flatMap((shape) => shape.requiredAssetIds),
+  );
+  if (required.size === 0) {
+    return;
+  }
+  const coveredBySwaps = new Set(
+    plan.actions
+      .filter(
+        (candidate) =>
+          candidate.type === "swap" &&
+          action.dependencies.includes(candidate.id) &&
+          candidate.toAssetId !== null,
+      )
+      .map((candidate) => candidate.toAssetId as number),
+  );
+  const missing = [...required].filter((assetId) => {
+    if ((availableBalances.get(assetId) ?? 0n) > 0n) {
+      return false;
+    }
+    return !coveredBySwaps.has(assetId);
+  });
+  if (missing.length > 0) {
+    sink.push(
+      `Action ${action.id} requires asset ID(s) ${missing.join(", ")} (from executionShapes.requiredAssetIds) but liquid balances lack them and no dependency swap produces them`,
+    );
   }
 }
 

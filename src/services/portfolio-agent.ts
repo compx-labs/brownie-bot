@@ -16,6 +16,8 @@ import type {
 import { prepareAgentTools } from "../integrations/canix402/client.js";
 import type { PortfolioReader } from "../integrations/algorand/portfolio.js";
 
+const SKIPPABLE_RESEARCH_TOOLS = new Set(["canix_get_protocol_opportunities"]);
+
 const responseSchema = z
   .object({
     id: z.string().min(1),
@@ -49,36 +51,59 @@ export interface PortfolioAgent {
   run(): Promise<PortfolioAgentResult>;
 }
 
+export interface PortfolioHostGuidance {
+  maxPositionPct: number;
+  maxProtocolPct: number;
+  minLiquidReservePct: number;
+  minTvlUsd: number;
+  maxSourceAgeHours: number;
+  minProjectedNetImprovementUsd: number;
+}
+
+const FINAL_EXECUTION_TOOLS = new Set([
+  "canix_get_execution_quote",
+  "canix_optin",
+  "canix_swap",
+]);
+
 export interface PortfolioAgentOptions {
   model: string;
   reasoningEffort: "low" | "medium" | "high";
   maxToolCalls: number;
   walletAddress: string;
-  minimumHoldingHorizonDays: number;
+  hostGuidance: PortfolioHostGuidance;
+  signingEnabled: boolean;
 }
 
 export const PORTFOLIO_AGENT_PROMPT_V1 = `You are Brownie, an autonomous Algorand treasury portfolio manager that runs once per day.
 
 OBJECTIVE
-Maximize the treasury's expected net return over time, subject to the hard portfolio, liquidity, execution, and safety policies enforced by the host. Prefer higher expected return after fees, slippage, x402 costs, switching costs, and material risk—not headline APY alone. Preserve enough liquidity for operations and maintain diversification; never place the portfolio into one position or protocol merely because it advertises the highest yield.
+Maximize the treasury's expected net return over time after fees, slippage, x402 costs, switching costs, and material risk—not headline APY alone. Preserve enough liquidity for operations and maintain diversification; never place the portfolio into one position or protocol merely because it advertises the highest yield.
+
+HOST GUIDANCE (plan toward these; they inform your allocations and do not need to be gamed)
+The host supplies numeric guidance in the task input (maxPositionPct, maxProtocolPct, minLiquidReservePct, minTvlUsd, maxSourceAgeHours, minProjectedNetImprovementUsd). Prefer target allocations that keep any single deployed (protocol != null) position and any single protocol at or below those caps. Liquid wallet holdings (protocol=null) are the reserve: they may be any share from minLiquidReservePct up to nearly 100% and are not limited by maxPositionPct. Only propose non-hold actions when projected net benefit clears the guidance floor. Prefer opportunities that meet TVL and freshness guidance. The host still hard-enforces executable structure (valid dependencies that reference other action ids in this plan, execution shapes, spends within balances) when signing is enabled.
 
 REQUIRED WORKFLOW
-1. The host calls canix_get_positions and reads liquid Algorand balances before you begin. Inspect the supplied complete snapshot: open protocol positions, LP tokens, lending/staking deposits, debts, rewards, valuations, protocol availability, caveats, liquid balances, and available exit paths. Never treat a null value or partial/unavailable protocol result as zero or as a complete portfolio.
-2. Research broadly. Use personalized opportunities for assets already held, then use global, protocol, and filtered/search tools to find better uses of capital, including opportunities that require changing asset exposure through a supported Haystack route.
-3. Compare the current portfolio with a diversified target portfolio. You may choose to hold, claim, open, increase, reduce, close, or swap when supported. Consider dependencies and preserve the configured liquid reserve.
-4. Because you run once daily, avoid unnecessary churn. Rebalance only when expected benefit over the minimum holding horizon clearly exceeds execution, slippage, network, tax-unknown, and x402 costs plus a safety margin.
-5. Produce a coherent action plan with current and target allocations, integer base-unit amounts, and an exhaustive authorizedSpends list for every asset the treasury will transfer in each action. Include expected return impact, costs, dependencies, rationale, risks, and evidence from tool results.
-6. Discover execution shapes and request data or route quotes as needed. For swaps, use canix_get_quote and consider opt-in requirements. Do not claim a transaction has executed. The host alone requests final fresh transaction groups, decides whether signing is enabled, signs MCP-returned transactions locally without field inspection or verification, submits unchanged groups, and confirms them.
+1. The host calls canix_get_positions and reads liquid Algorand balances before you begin. Inspect the supplied snapshot: open protocol positions (including compatibleExitShapeKeys / compatibleManageShapeKeys), LP tokens, lending/staking deposits, debts, rewards, valuations, protocol availability, caveats, liquid balances, and available exit paths. Never treat a null value or partial/unavailable protocol result as zero or as a complete portfolio. If caveats mark the snapshot incomplete, prefer hold or clearly justified exits unless evidence is strong.
+2. Research broadly. Use personalized opportunities for assets already held, then use global, protocol, and filtered/search tools to find better uses of capital, including opportunities that require changing asset exposure through a supported Haystack route. Prefer opportunities with executionReady=true and a non-empty executionShapes array (enter shapes from Canix). Treat empty executionShapes as research-only—do not invent shape keys.
+3. Compare the current portfolio with a diversified target portfolio. You may choose to hold, claim, open, increase, reduce, close, or swap when supported. Set dependencies only to other action ids in this plan (for example a swap that must finish before an open). Preserve the guided liquid reserve.
+4. There is no minimum holding period. Re-evaluate every held position on each run. Exit, reduce, claim, or rotate when rewards end, APY collapses, risk worsens, or a clearly better risk-adjusted use of capital appears after fees and slippage. Avoid churn only when the expected net improvement is small versus costs—not because a position is "too new."
+5. Produce a coherent action plan with current and target allocations, integer base-unit amounts, and an exhaustive authorizedSpends list for every asset the treasury will transfer in each action. Include expected return impact, costs, dependencies, rationale, risks, and evidence from tool results. Use holdingHorizonDays as the assumed window for projecting net benefit of today's plan—not as a lock-up that prevents later exits.
+6. Execution wiring from Canix facts only:
+   - open/increase: set executionShapeKey to a shapeKey from that opportunity's executionShapes (never invent). Merge that shape's inputHints into executionInput and supply base-unit amounts for requiredInputs. The host expands multi-step enter shapes (ordered by executionShapes.order) at quote time.
+   - If liquid balances lack any requiredAssetIds for the chosen enter shape(s), emit prior Haystack swap action(s) (fromAssetId/toAssetId/amountRaw) and list those action ids in dependencies.
+   - reduce/close/claim: set executionShapeKey from the position's compatibleExitShapeKeys or compatibleManageShapeKeys.
+   - Swaps use canix_get_quote for planning; do not call canix_get_execution_quote, canix_swap, or canix_optin for final groups—the host does that only when signing is enabled. Do not claim a transaction has executed.
 
 DECISION RULES
-- Obey host policy failures; do not alter inputs to evade limits.
-- Treat APY/APR as variable estimates. Consider TVL, freshness, protocol and asset concentration, impermanent loss, smart-contract risk, liquidity, slippage, and incomplete data.
+- Plan within host guidance; do not alter inputs to evade structural checks.
+- Treat APY/APR as variable estimates. Consider TVL, freshness, protocol and asset concentration, impermanent loss, smart-contract risk, liquidity, slippage, and incomplete data. Prefer exiting a dead or collapsing yield position over waiting.
 - Use only tool facts. Never invent balances, positions, prices, supported execution paths, safety claims, or transactions.
 - Never request or reveal a mnemonic, private key, payment signature, signed transaction, API key, or secret.
 - Never change the managed wallet. Holding is valid when evidence is insufficient or net improvement is not compelling.
 
 FINAL OUTPUT
-Return the required structured plan with current and target allocations, ordered actions, hold decisions, expected annualized return before and after, one-time costs, projected net benefit over the holding horizon, evidence, assumptions, risks, confidence, and concise summary.`;
+Return the required structured plan with current and target allocations, ordered actions, hold decisions, expected annualized return before and after, one-time costs, projected net benefit over the plan's assumed holdingHorizonDays, evidence, assumptions, risks, confidence, and concise summary.`;
 
 const planFormat = {
   type: "json_schema",
@@ -204,8 +229,14 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
 
   async run(): Promise<PortfolioAgentResult> {
     const discoveredTools = await this.canix.listTools();
-    assertRequiredCapabilities(discoveredTools);
-    const definitions = prepareAgentTools(discoveredTools);
+    assertRequiredCapabilities(
+      discoveredTools,
+      this.options.signingEnabled,
+    );
+    const definitions = prepareAgentTools(discoveredTools).filter(
+      (tool) =>
+        this.options.signingEnabled || !FINAL_EXECUTION_TOOLS.has(tool.name),
+    );
     const { snapshot, payments } = await this.portfolioReader.read();
     const tools = definitions.map(toOpenAiTool);
     const toolCalls: string[] = ["canix_get_positions"];
@@ -217,7 +248,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
         input: JSON.stringify({
           task: "Research and produce today's portfolio plan.",
           managedWallet: this.options.walletAddress,
-          minimumHoldingHorizonDays: this.options.minimumHoldingHorizonDays,
+          hostGuidance: this.options.hostGuidance,
           portfolioSnapshot: snapshot,
         }),
         reasoning: { effort: this.options.reasoningEffort },
@@ -265,21 +296,57 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       const outputs: Array<Record<string, unknown>> = [];
       for (const call of functionCalls) {
         const args = parseArguments(call.arguments);
-        const result = await this.canix.callManagedTool(
-          call.name,
-          args,
-          this.options.walletAddress,
-        );
-        toolCalls.push(call.name);
-        if (result.payment) {
-          payments.push(result.payment);
+        if (
+          !this.options.signingEnabled &&
+          FINAL_EXECUTION_TOOLS.has(call.name)
+        ) {
+          outputs.push({
+            type: "function_call_output",
+            call_id: call.call_id,
+            output: JSON.stringify({
+              error: "EXECUTION_DISABLED",
+              message:
+                "Final execution tools are unavailable while transaction signing is disabled",
+            }),
+          });
+          continue;
         }
-        collectOpportunities(result.data, opportunities);
-        outputs.push({
-          type: "function_call_output",
-          call_id: call.call_id,
-          output: JSON.stringify(result.data),
-        });
+        try {
+          const result = await this.canix.callManagedTool(
+            call.name,
+            args,
+            this.options.walletAddress,
+          );
+          toolCalls.push(call.name);
+          if (result.payment) {
+            payments.push(result.payment);
+          }
+          collectOpportunities(result.data, opportunities);
+          outputs.push({
+            type: "function_call_output",
+            call_id: call.call_id,
+            output: JSON.stringify(result.data),
+          });
+        } catch (error) {
+          if (!SKIPPABLE_RESEARCH_TOOLS.has(call.name)) {
+            throw error;
+          }
+          const message = safeErrorMessage(error);
+          console.error(
+            `[portfolio-agent] Skipping ${call.name}: ${message}`,
+          );
+          toolCalls.push(call.name);
+          outputs.push({
+            type: "function_call_output",
+            call_id: call.call_id,
+            output: JSON.stringify({
+              error: "TOOL_UNAVAILABLE",
+              tool: call.name,
+              message,
+              skipped: true,
+            }),
+          });
+        }
       }
       response = responseSchema.parse(
         await this.openai.responses.create({
@@ -320,7 +387,10 @@ function toOpenAiTool(tool: McpToolDefinition) {
   };
 }
 
-function assertRequiredCapabilities(tools: McpToolDefinition[]): void {
+function assertRequiredCapabilities(
+  tools: McpToolDefinition[],
+  signingEnabled: boolean,
+): void {
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const contracts: Record<string, string[]> = {
     canix_get_positions: ["address"],
@@ -328,10 +398,14 @@ function assertRequiredCapabilities(tools: McpToolDefinition[]): void {
     canix_search_opportunities: [],
     canix_get_personalized_opportunities: ["address"],
     canix_list_execution_shapes: [],
-    canix_get_execution_quote: ["shapeKey", "input"],
     canix_get_quote: ["address", "fromAssetId", "toAssetId", "amount"],
-    canix_optin: ["address", "quote"],
-    canix_swap: ["address", "quote", "slippage"],
+    ...(signingEnabled
+      ? {
+          canix_get_execution_quote: ["quotes"],
+          canix_optin: ["address", "quote"],
+          canix_swap: ["address", "quote", "slippage"],
+        }
+      : {}),
   };
   const missing = Object.keys(contracts).filter((name) => !byName.has(name));
   const incompatible = Object.entries(contracts).flatMap(
@@ -346,25 +420,23 @@ function assertRequiredCapabilities(tools: McpToolDefinition[]): void {
         : [name];
     },
   );
-  const executionInput = byName.get("canix_get_execution_quote")?.inputSchema
-    .properties;
-  const inputProperties =
-    executionInput &&
-    typeof executionInput === "object" &&
-    "input" in executionInput &&
-    executionInput.input &&
-    typeof executionInput.input === "object"
-      ? schemaProperties(executionInput.input as Record<string, unknown>)
-      : new Set<string>();
-  for (const property of [
-    "userAddress",
-    "assetAId",
-    "assetBId",
-    "maxSlippageBps",
-  ]) {
-    if (!inputProperties.has(property)) {
+  if (signingEnabled) {
+    const properties = byName.get("canix_get_execution_quote")?.inputSchema
+      .properties as Record<string, unknown> | undefined;
+    const quotesSchema = properties?.quotes;
+    const quoteItemProperties =
+      quotesSchema &&
+      typeof quotesSchema === "object" &&
+      "items" in quotesSchema &&
+      quotesSchema.items &&
+      typeof quotesSchema.items === "object"
+        ? schemaProperties(quotesSchema.items as Record<string, unknown>)
+        : new Set<string>();
+    if (
+      !quoteItemProperties.has("shapeKey") ||
+      !quoteItemProperties.has("input")
+    ) {
       incompatible.push("canix_get_execution_quote");
-      break;
     }
   }
   if (missing.length > 0 || incompatible.length > 0) {
@@ -405,6 +477,10 @@ function parsePlan(text: string | undefined): PortfolioPlan {
   } catch {
     throw new Error("Portfolio agent returned an invalid structured plan");
   }
+}
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
 }
 
 function collectOpportunities(payload: unknown, target: Opportunity[]): void {

@@ -3,12 +3,14 @@
 An autonomous community treasury backend for Algorand. Once per day it reads
 liquid balances and Canix402 DeFi positions, researches personalized and global
 opportunities, asks OpenAI for a diversified portfolio plan, validates that plan
-against deterministic limits, and obtains unsigned execution groups.
+against deterministic limits, and — when signing is enabled — obtains unsigned
+execution groups for local signing.
 
-Transaction signing is disabled by default. In dry-run mode the bot decodes and
-validates groups but never signs or submits them. When explicitly enabled, it
-signs approved transactions locally and submits unchanged atomic groups through
-its own Algod client. Canix402 never receives the mnemonic.
+Transaction signing is disabled by default. In dry-run mode the bot reports the
+validated plan and does not call execution quote, swap, or opt-in endpoints.
+When explicitly enabled, it fetches transaction groups, signs approved
+transactions locally, and submits unchanged atomic groups through its own Algod
+client. Canix402 never receives the mnemonic.
 
 ## Requirements
 
@@ -55,8 +57,17 @@ ENABLE_TRANSACTION_SIGNING=false
 
 The model receives discovered Canix402 data and quote-generation tools but
 cannot access the mnemonic, payment signature, local signing, or Algod
-submission. The host injects `BOT_WALLET`, enforces allocation and spend policy,
-and fails closed on incomplete portfolio data or malformed transactions.
+submission. The host injects `BOT_WALLET` and planning guidance (position /
+protocol caps, liquid reserve, TVL and freshness floors). Concentration and
+reserve limits are soft notes in the plan report. With signing disabled, dry
+runs always surface the plan and do not call execution quote endpoints;
+incomplete snapshot caveats and structural issues are reported as policy notes.
+With signing enabled, incomplete portfolio data and malformed actions still fail
+closed. Opportunities include enter `executionShapes` (and `requiredAssetIds`);
+positions include `compatibleExitShapeKeys` / `compatibleManageShapeKeys`. The
+host validates plan shape keys against those catalogs and, when signing, calls
+`canix_get_execution_quote` with a `quotes` array (flat ~0.10 USDC per request),
+then signs each returned group in order.
 
 To enable execution, first confirm `BOT_WALLET` is the account derived from
 `WALLET_MNEMONIC`, review the policy variables in `.env.example`, complete
@@ -215,8 +226,9 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 ```
 
-Review reports include the portfolio plan, expected net benefit, policy blocks,
-signing mode, action outcomes, transaction IDs, x402 totals, and failures.
+Review reports include the portfolio plan, expected net benefit, policy blocks
+or notes, signing mode, action outcomes, transaction IDs, x402 totals, and
+failures.
 Accounting reports include DeFi value by protocol, wallet token total (including
 ALGO USD), ALGO and minimum balance in token units, P&L versus the previous
 snapshot when available, unpriced assets, and the Spaces snapshot key. Telegram

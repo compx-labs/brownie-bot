@@ -41,13 +41,11 @@ const configSchema = z.object({
   MAX_SOURCE_AGE_HOURS: z.coerce.number().positive().default(24),
   MAX_SLIPPAGE_BPS: z.coerce.number().int().min(0).max(10_000).default(100),
   MAX_PRICE_IMPACT_PCT: z.coerce.number().min(0).max(100).default(3),
-  MAX_DAILY_TURNOVER_PCT: z.coerce.number().min(0).max(100).default(50),
   MAX_DAILY_X402_BASE_UNITS: z.coerce
     .number()
     .int()
     .positive()
     .default(500_000),
-  MIN_HOLDING_HORIZON_DAYS: z.coerce.number().int().positive().default(30),
   MIN_PROJECTED_NET_IMPROVEMENT_USD: z.coerce.number().nonnegative().default(1),
   TELEGRAM_BOT_TOKEN: z.string().min(1),
   TELEGRAM_CHAT_ID: z.string().min(1),

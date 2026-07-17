@@ -23,6 +23,8 @@ describe("accounting report math", () => {
         amountRaw: "1000000",
         amount: "1",
         usdValue: 1,
+        compatibleExitShapeKeys: [],
+        compatibleManageShapeKeys: [],
       },
       {
         protocol: "folks",
@@ -34,6 +36,8 @@ describe("accounting report math", () => {
         amountRaw: "1000000",
         amount: "1",
         usdValue: 0.5,
+        compatibleExitShapeKeys: [],
+        compatibleManageShapeKeys: [],
       },
       {
         protocol: "tinyman",
@@ -45,6 +49,8 @@ describe("accounting report math", () => {
         amountRaw: "1",
         amount: "1",
         usdValue: 2,
+        compatibleExitShapeKeys: [],
+        compatibleManageShapeKeys: [],
       },
     ];
 
