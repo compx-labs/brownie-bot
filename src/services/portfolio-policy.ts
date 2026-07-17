@@ -30,7 +30,7 @@ export class PortfolioPolicy {
     const currentTotal = sum(
       plan.currentAllocations.map((item) => item.weightPct),
     );
-    if (Math.abs(currentTotal - 100) > 0.01) {
+    if (Math.abs(currentTotal - 100) > 1) {
       hard.push(
         `Current allocations total ${currentTotal.toFixed(4)}%, not 100%`,
       );
@@ -38,7 +38,7 @@ export class PortfolioPolicy {
     const targetTotal = sum(
       plan.targetAllocations.map((item) => item.weightPct),
     );
-    if (Math.abs(targetTotal - 100) > 0.01) {
+    if (Math.abs(targetTotal - 100) > 1) {
       hard.push(
         `Target allocations total ${targetTotal.toFixed(4)}%, not 100%`,
       );
@@ -198,7 +198,11 @@ export class PortfolioPolicy {
         BigInt(balance.spendableAmountRaw ?? balance.amountRaw),
       ]),
     );
-    const plannedSpends = new Map<number, bigint>();
+    const actionsById = new Map(
+      plan.actions.map((action) => [action.id, action]),
+    );
+    /** Spends that must be funded from current liquid balances (not swap outputs). */
+    const liquidFundedSpends = new Map<number, bigint>();
 
     for (const allocation of plan.targetAllocations) {
       if (
@@ -256,10 +260,15 @@ export class PortfolioPolicy {
         violations.push(`Action ${action.id} has duplicate authorized spends`);
       }
       for (const spend of action.authorizedSpends) {
-        plannedSpends.set(
-          spend.assetId,
-          (plannedSpends.get(spend.assetId) ?? 0n) + BigInt(spend.amountRaw),
-        );
+        if (
+          !spendCoveredByDependencySwap(action, spend.assetId, actionsById)
+        ) {
+          liquidFundedSpends.set(
+            spend.assetId,
+            (liquidFundedSpends.get(spend.assetId) ?? 0n) +
+              BigInt(spend.amountRaw),
+          );
+        }
       }
       if (action.type === "swap") {
         if (
@@ -291,9 +300,6 @@ export class PortfolioPolicy {
         );
       }
       if (["open", "increase"].includes(action.type)) {
-        if (action.authorizedSpends.length === 0) {
-          violations.push(`Action ${action.id} has no declared treasury spend`);
-        }
         const opportunity = action.opportunityId
           ? opportunityById.get(action.opportunityId)
           : undefined;
@@ -308,6 +314,17 @@ export class PortfolioPolicy {
           violations.push(`Action ${action.id} has a protocol mismatch`);
         } else {
           validateEnterShape(action, opportunity, violations);
+          const shape = opportunity.executionShapes.find(
+            (candidate) => candidate.shapeKey === action.executionShapeKey,
+          );
+          if (
+            action.authorizedSpends.length === 0 &&
+            actionRequiresDeclaredSpend(action, shape)
+          ) {
+            violations.push(
+              `Action ${action.id} has no declared treasury spend`,
+            );
+          }
           validateRequiredAssets(
             action,
             opportunity,
@@ -335,7 +352,7 @@ export class PortfolioPolicy {
         }
       }
     }
-    for (const [assetId, amount] of plannedSpends) {
+    for (const [assetId, amount] of liquidFundedSpends) {
       if (amount > (availableBalances.get(assetId) ?? 0n)) {
         violations.push(
           `Planned spend of asset ${assetId} exceeds the on-chain spendable balance`,
@@ -466,6 +483,37 @@ function validateRequiredAssets(
       `Action ${action.id} requires asset ID(s) ${missing.join(", ")} (from executionShapes.requiredAssetIds) but liquid balances lack them and no dependency swap produces them`,
     );
   }
+}
+
+/** True when this open/increase must declare authorizedSpends (capital transfer). */
+function actionRequiresDeclaredSpend(
+  action: PortfolioPlan["actions"][number],
+  shape: Opportunity["executionShapes"][number] | undefined,
+): boolean {
+  if (action.amountRaw !== null && BigInt(action.amountRaw) > 0n) {
+    return true;
+  }
+  if (!shape) {
+    return false;
+  }
+  return shape.requiredInputs.some((input) => /amount/i.test(input));
+}
+
+/** True when a dependency swap's output funds this spend (exact out unknown at plan time). */
+function spendCoveredByDependencySwap(
+  action: PortfolioPlan["actions"][number],
+  assetId: number,
+  actionsById: Map<string, PortfolioPlan["actions"][number]>,
+): boolean {
+  if (action.type === "swap") {
+    return false;
+  }
+  return action.dependencies.some((dependencyId) => {
+    const dependency = actionsById.get(dependencyId);
+    return (
+      dependency?.type === "swap" && dependency.toAssetId === assetId
+    );
+  });
 }
 
 function sum(values: number[]): number {

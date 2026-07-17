@@ -1,4 +1,9 @@
-import type { OpportunityResult } from "../domain.js";
+import type {
+  OpportunityResult,
+  PaymentReceipt,
+  PortfolioSnapshot,
+} from "../domain.js";
+import { AlgorandPortfolioReader } from "../integrations/algorand/portfolio.js";
 import {
   Canix402Client,
   McpSdkToolCaller,
@@ -50,6 +55,12 @@ export function assertNoExtraArgs(args: string[]): void {
   }
 }
 
+export function assertNoArgs(args: string[]): void {
+  if (args.length > 0) {
+    throw new Error("this command does not take positional arguments");
+  }
+}
+
 export function printOpportunities(
   heading: string,
   result: OpportunityResult,
@@ -96,6 +107,122 @@ export function printOpportunities(
   );
 }
 
+export async function readPortfolioSnapshot(
+  client: Canix402Client,
+  address: string,
+  algodUrl: string,
+  maxSourceAgeHours: number,
+): Promise<{
+  snapshot: PortfolioSnapshot;
+  payments: PaymentReceipt[];
+}> {
+  const reader = new AlgorandPortfolioReader(
+    client,
+    address,
+    algodUrl,
+    maxSourceAgeHours,
+  );
+  return reader.read();
+}
+
+export function printPortfolioSnapshot(
+  heading: string,
+  snapshot: PortfolioSnapshot,
+  payerAddress: string,
+  payments: PaymentReceipt[],
+  maxSourceAgeHours: number,
+): void {
+  console.log(`\n${heading}`);
+  console.log("=".repeat(heading.length));
+  console.log(`x402 payer: ${payerAddress}`);
+  console.log(`Scan target: ${snapshot.address}`);
+  console.log(`Fetched at: ${snapshot.fetchedAt}`);
+  console.log(`Max source age: ${maxSourceAgeHours}h`);
+  console.log(
+    `Snapshot complete: ${snapshot.complete ? "yes" : "NO — policy will treat non-hold plans as incomplete"}`,
+  );
+  for (const payment of payments) {
+    console.log(
+      `x402 payment: ${formatUsdc(payment.amountBaseUnits)} USDC (${payment.amountBaseUnits} base units)`,
+    );
+    if (payment.responseHeader) {
+      console.log(`Settlement: ${truncate(payment.responseHeader, 120)}`);
+    }
+  }
+
+  console.log("\nWhy incomplete (caveats)");
+  if (snapshot.caveats.length === 0) {
+    console.log("- none");
+  } else {
+    for (const [index, caveat] of snapshot.caveats.entries()) {
+      console.log(`${index + 1}. ${caveat}`);
+    }
+  }
+
+  console.log("\nProtocol scan status");
+  if (snapshot.protocols.length === 0) {
+    console.log("- no protocol results returned");
+  } else {
+    console.table(
+      snapshot.protocols.map((protocol) => ({
+        Protocol: protocol.protocol,
+        Status: protocol.status,
+        Positions: protocol.positionCount,
+        Message: protocol.message ?? "—",
+      })),
+    );
+  }
+
+  console.log("\nAggregate totals (null = incomplete valuation)");
+  console.table([
+    {
+      suppliedUsd: formatNullableUsd(snapshot.totals.suppliedUsd),
+      borrowedUsd: formatNullableUsd(snapshot.totals.borrowedUsd),
+      rewardsUsd: formatNullableUsd(snapshot.totals.rewardsUsd),
+      netUsd: formatNullableUsd(snapshot.totals.netUsd),
+    },
+  ]);
+
+  console.log(`\nPositions returned: ${snapshot.positions.length}`);
+  if (snapshot.positions.length > 0) {
+    console.table(
+      snapshot.positions.map((position) => ({
+        Protocol: position.protocol,
+        Type: position.positionType,
+        Id: truncate(position.positionId, 40),
+        Asset: position.assetSymbol ?? position.assetId ?? "—",
+        Amount: position.amount,
+        USD: formatNullableUsd(position.usdValue),
+        ExitKeys: position.compatibleExitShapeKeys.length,
+        ManageKeys: position.compatibleManageShapeKeys.length,
+        Freshness: position.sourceTimestamp
+          ? formatFreshness(position.sourceTimestamp)
+          : "—",
+      })),
+    );
+  }
+
+  console.log(`\nLiquid balances: ${snapshot.liquidBalances.length}`);
+  console.log(
+    `Account min balance (microAlgos): ${snapshot.minimumBalanceRaw}`,
+  );
+  if (snapshot.liquidBalances.length > 0) {
+    console.table(
+      snapshot.liquidBalances.map((balance) => ({
+        AssetId: balance.assetId,
+        Symbol: balance.symbol ?? "—",
+        AmountRaw: balance.amountRaw,
+        SpendableRaw: balance.spendableAmountRaw ?? balance.amountRaw,
+        Frozen: balance.frozen ? "yes" : "no",
+      })),
+    );
+  }
+
+  console.log(
+    `\nVerdict: ${snapshot.complete ? "COMPLETE" : "INCOMPLETE"} (${snapshot.caveats.length} caveat(s))`,
+  );
+}
+
 export function printCliError(error: unknown): void {
   const message =
     error instanceof Error ? error.message : "Unknown command failure";
@@ -112,6 +239,10 @@ function formatUsd(value: number): string {
   return `$${value.toLocaleString("en-US", {
     maximumFractionDigits: 2,
   })}`;
+}
+
+function formatNullableUsd(value: number | null): string {
+  return value === null ? "null" : formatUsd(value);
 }
 
 function formatFreshness(timestamp: string): string {

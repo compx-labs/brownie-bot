@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertNoArgs,
   assertNoExtraArgs,
   parseLimit,
   printOpportunities,
+  printPortfolioSnapshot,
 } from "../src/cli/shared.js";
-import { opportunity } from "./fixtures.js";
+import { opportunity, portfolioSnapshot, position } from "./fixtures.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -21,6 +23,7 @@ describe("CLI arguments", () => {
     expect(() => parseLimit("0")).toThrow(/between 1 and 200/);
     expect(() => parseLimit("2.5")).toThrow(/between 1 and 200/);
     expect(() => assertNoExtraArgs(["10", "extra"])).toThrow(/at most one/);
+    expect(() => assertNoArgs(["extra"])).toThrow(/does not take/);
   });
 });
 
@@ -58,5 +61,60 @@ describe("CLI opportunity output", () => {
         "APY %": "12.5",
       }),
     ]);
+  });
+});
+
+describe("CLI wallet scan output", () => {
+  it("prints completeness, caveats, and null totals for incomplete scans", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const table = vi.spyOn(console, "table").mockImplementation(() => {});
+
+    printPortfolioSnapshot(
+      "Wallet scan",
+      portfolioSnapshot({
+        complete: false,
+        caveats: [
+          "tinyman positions are partial: farm staking not exposed",
+          "At least one aggregate position valuation is incomplete",
+        ],
+        protocols: [
+          {
+            protocol: "tinyman",
+            status: "partial",
+            positionCount: 1,
+            message: "farm staking not exposed",
+          },
+          {
+            protocol: "dorkfi",
+            status: "ok",
+            positionCount: 0,
+            message: null,
+          },
+        ],
+        totals: {
+          suppliedUsd: 10,
+          borrowedUsd: null,
+          rewardsUsd: null,
+          netUsd: null,
+        },
+        positions: [position()],
+      }),
+      "PAYER",
+      [
+        {
+          amountBaseUnits: "5000",
+          assetId: "31566704",
+          network: "algorand:mainnet",
+        },
+      ],
+      24,
+    );
+
+    const output = log.mock.calls.flat().join("\n");
+    expect(output).toContain("Snapshot complete: NO");
+    expect(output).toContain("tinyman positions are partial");
+    expect(output).toContain("Verdict: INCOMPLETE (2 caveat(s))");
+    expect(output).toContain("0.005 USDC");
+    expect(table).toHaveBeenCalled();
   });
 });

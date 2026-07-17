@@ -13,6 +13,7 @@
     "accounting-once": "tsx src/accounting-once.ts",
     "canix:opportunities": "tsx src/cli/opportunities.ts",
     "canix:personalized": "tsx src/cli/personalized-opportunities.ts",
+    "canix:wallet-scan": "tsx src/cli/wallet-scan.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",

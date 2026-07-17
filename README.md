@@ -104,6 +104,16 @@ npm run canix:personalized
 npm run canix:personalized -- 25
 ```
 
+Wallet / portfolio scan for `BOT_WALLET` (positions ~0.005 USDC + free Algod
+balances). Uses the same reader as the daily review and prints completeness,
+every caveat, protocol status, totals (including nulls), positions, and liquid
+balances. Exit code `2` means the snapshot is incomplete; `1` means the scan
+failed.
+
+```bash
+npm run canix:wallet-scan
+```
+
 Each command prints the x402 payer, the personalization target when applicable,
 payment receipt details, and a ranked table containing protocol, type, assets,
 APY/APR, TVL, and source timestamp. No mnemonic or payment signature is printed.

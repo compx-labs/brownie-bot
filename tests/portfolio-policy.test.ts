@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PortfolioAction } from "../src/domain.js";
 import { PortfolioPolicy } from "../src/services/portfolio-policy.js";
-import { opportunity, portfolioPlan, portfolioSnapshot } from "./fixtures.js";
+import { enterShape, opportunity, portfolioPlan, portfolioSnapshot } from "./fixtures.js";
 
 const policyConfig = {
   maxPositionPct: 60,
@@ -377,6 +377,261 @@ describe("PortfolioPolicy", () => {
 
     expect(result.violations).toContain(
       "Planned spend of asset 31566704 exceeds the on-chain spendable balance",
+    );
+  });
+
+  it("allows deposit spends above liquid balance when a dependency swap produces the asset", () => {
+    const candidate = opportunity({
+      protocol: "folks",
+      opportunityId: "folks:usdc:1",
+      assetPair: "USDC",
+      assetIds: [31_566_704],
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:folks:v2:deposit:escrow",
+          protocol: "folks",
+          action: "deposit",
+          variant: "escrow",
+          title: "Deposit",
+          summary: "Deposit USDC",
+          requiredInputs: ["assetAmount"],
+          requiredAssetIds: [31_566_704],
+          inputHints: { assetId: 31_566_704 },
+        }),
+      ],
+    });
+    const result = policy.validate(
+      portfolioSnapshot({
+        liquidBalances: [
+          {
+            assetId: 0,
+            amountRaw: "2000000000",
+            spendableAmountRaw: "2000000000",
+            decimals: 6,
+          },
+          {
+            assetId: 31_566_704,
+            amountRaw: "1000000",
+            decimals: 6,
+          },
+        ],
+      }),
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [
+          { ...liquid, weightPct: 65 },
+          {
+            key: "opportunity:folks:usdc:1",
+            protocol: "folks",
+            opportunityId: candidate.opportunityId,
+            assetIds: [31_566_704],
+            weightPct: 35,
+            expectedApyPct: 13.44,
+          },
+        ],
+        actions: [
+          {
+            id: "swap-algo-to-usdc",
+            type: "swap",
+            protocol: null,
+            opportunityId: null,
+            positionId: null,
+            amountRaw: "950000000",
+            fromAssetId: 0,
+            toAssetId: 31_566_704,
+            targetWeightPct: null,
+            executionShapeKey: null,
+            executionInput: null,
+            authorizedSpends: [{ assetId: 0, amountRaw: "950000000" }],
+            rationale: "Fund USDC deposit.",
+            dependencies: [],
+          },
+          openAction({
+            id: "folks-deposit-usdc",
+            protocol: "folks",
+            opportunityId: candidate.opportunityId,
+            amountRaw: "500000000",
+            fromAssetId: 31_566_704,
+            executionShapeKey: "mainnet:folks:v2:deposit:escrow",
+            executionInput: {
+              assetId: 31_566_704,
+              assetAmount: "500000000",
+            },
+            authorizedSpends: [
+              { assetId: 31_566_704, amountRaw: "500000000" },
+            ],
+            dependencies: ["swap-algo-to-usdc"],
+          }),
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  it("allows open actions with empty spends for setup and opt-in shapes", () => {
+    const candidate = opportunity({
+      protocol: "folks",
+      opportunityId: "folks:usdc:1",
+      assetPair: "USDC",
+      assetIds: [31_566_704],
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:folks:v2:setup:escrow",
+          protocol: "folks",
+          action: "setup",
+          variant: "escrow",
+          title: "Setup",
+          summary: "Create escrow",
+          order: 0,
+          requiredInputs: [],
+          requiredAssetIds: [],
+          inputHints: { poolAppId: 123 },
+        }),
+        enterShape({
+          shapeKey: "mainnet:folks:v2:optin:escrow",
+          protocol: "folks",
+          action: "optin",
+          variant: "escrow",
+          title: "Opt in",
+          summary: "Opt escrow into USDC",
+          order: 1,
+          requiredInputs: ["assetId"],
+          // Asset id is listed for opt-in context, not a treasury transfer.
+          requiredAssetIds: [31_566_704],
+          inputHints: { assetId: 31_566_704 },
+        }),
+        enterShape({
+          shapeKey: "mainnet:folks:v2:deposit:escrow",
+          protocol: "folks",
+          action: "deposit",
+          variant: "escrow",
+          title: "Deposit",
+          summary: "Deposit USDC",
+          order: 2,
+          requiredInputs: ["assetAmount"],
+          requiredAssetIds: [31_566_704],
+          inputHints: { assetId: 31_566_704 },
+        }),
+      ],
+    });
+    const result = policy.validate(
+      portfolioSnapshot(),
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [
+          { ...liquid, weightPct: 60 },
+          {
+            key: "opportunity:folks:usdc:1",
+            protocol: "folks",
+            opportunityId: candidate.opportunityId,
+            assetIds: [31_566_704],
+            weightPct: 40,
+            expectedApyPct: 13.44,
+          },
+        ],
+        actions: [
+          openAction({
+            id: "create-folks-deposit-escrow",
+            protocol: "folks",
+            opportunityId: candidate.opportunityId,
+            amountRaw: null,
+            fromAssetId: null,
+            executionShapeKey: "mainnet:folks:v2:setup:escrow",
+            executionInput: { poolAppId: 123 },
+            authorizedSpends: [],
+          }),
+          openAction({
+            id: "opt-folks-escrow-into-usdc",
+            protocol: "folks",
+            opportunityId: candidate.opportunityId,
+            amountRaw: null,
+            fromAssetId: null,
+            executionShapeKey: "mainnet:folks:v2:optin:escrow",
+            executionInput: { assetId: 31_566_704 },
+            authorizedSpends: [],
+            dependencies: ["create-folks-deposit-escrow"],
+          }),
+          openAction({
+            id: "deposit-usdc-to-folks",
+            protocol: "folks",
+            opportunityId: candidate.opportunityId,
+            executionShapeKey: "mainnet:folks:v2:deposit:escrow",
+            executionInput: {
+              assetId: 31_566_704,
+              assetAmount: "100000000",
+            },
+            dependencies: [
+              "create-folks-deposit-escrow",
+              "opt-folks-escrow-into-usdc",
+            ],
+          }),
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  it("still requires declared spends on deposit shapes with amount inputs", () => {
+    const candidate = opportunity({
+      protocol: "folks",
+      opportunityId: "folks:usdc:1",
+      assetPair: "USDC",
+      assetIds: [31_566_704],
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:folks:v2:deposit:escrow",
+          protocol: "folks",
+          action: "deposit",
+          variant: "escrow",
+          title: "Deposit",
+          summary: "Deposit USDC",
+          requiredInputs: ["assetAmount"],
+          requiredAssetIds: [31_566_704],
+          inputHints: { assetId: 31_566_704 },
+        }),
+      ],
+    });
+    const result = policy.validate(
+      portfolioSnapshot(),
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [liquid],
+        actions: [
+          openAction({
+            id: "deposit-usdc-to-folks",
+            protocol: "folks",
+            opportunityId: candidate.opportunityId,
+            amountRaw: null,
+            executionShapeKey: "mainnet:folks:v2:deposit:escrow",
+            executionInput: {
+              assetId: 31_566_704,
+              assetAmount: "100000000",
+            },
+            authorizedSpends: [],
+          }),
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.violations).toContain(
+      "Action deposit-usdc-to-folks has no declared treasury spend",
     );
   });
 

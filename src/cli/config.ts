@@ -26,3 +26,14 @@ export function loadPersonalizedCliConfig(
     .extend({ BOT_WALLET: botWalletSchema })
     .parse(environment);
 }
+
+export function loadWalletScanCliConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  return baseCliConfigSchema
+    .extend({
+      BOT_WALLET: botWalletSchema,
+      MAX_SOURCE_AGE_HOURS: z.coerce.number().positive().default(24),
+    })
+    .parse(environment);
+}
