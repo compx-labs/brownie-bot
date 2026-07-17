@@ -29,13 +29,11 @@ export function enterShape(
 }
 
 export function opportunity(overrides: Partial<Opportunity> = {}): Opportunity {
-  const executionShapes =
-    overrides.executionShapes ??
-    [
-      enterShape({
-        requiredAssetIds: overrides.assetIds ?? [0, 31_566_704],
-      }),
-    ];
+  const executionShapes = overrides.executionShapes ?? [
+    enterShape({
+      requiredAssetIds: overrides.assetIds ?? [0, 31_566_704],
+    }),
+  ];
   return {
     protocol: "tinyman",
     opportunityType: "lp",
@@ -64,9 +62,7 @@ export function position(overrides: Partial<Position> = {}): Position {
     amountRaw: "1000",
     amount: "0.001",
     usdValue: 10,
-    compatibleExitShapeKeys: [
-      "mainnet:tinyman:v2:removeLiquidity:flexible",
-    ],
+    compatibleExitShapeKeys: ["mainnet:tinyman:v2:removeLiquidity:flexible"],
     compatibleManageShapeKeys: [],
     ...overrides,
   };

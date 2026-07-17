@@ -292,7 +292,9 @@ export class LocalFilesystemAccountingStore implements AccountingStore {
     const directory = this.resolvePath(prefix);
     const keys: string[] = [];
     await walkJsonFiles(directory, (absolutePath) => {
-      const relative = relativePath(this.rootDir, absolutePath).split(/[/\\]/).join("/");
+      const relative = relativePath(this.rootDir, absolutePath)
+        .split(/[/\\]/)
+        .join("/");
       keys.push(relative);
     });
     const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
@@ -302,7 +304,10 @@ export class LocalFilesystemAccountingStore implements AccountingStore {
   }
 
   private resolvePath(key: string): string {
-    return join(this.rootDir, ...key.split("/").filter((part) => part.length > 0));
+    return join(
+      this.rootDir,
+      ...key.split("/").filter((part) => part.length > 0),
+    );
   }
 }
 

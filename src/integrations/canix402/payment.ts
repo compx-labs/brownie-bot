@@ -238,10 +238,11 @@ export class AlgorandPaymentBuilder implements PaymentBuilder {
 }
 
 /** Unique note so concurrent identical-price x402 payments do not collide. */
-export function encodePaymentNote(resourcePath: string, nonce: string): Uint8Array {
-  return new TextEncoder().encode(
-    `x402-payment-v2|${resourcePath}|${nonce}`,
-  );
+export function encodePaymentNote(
+  resourcePath: string,
+  nonce: string,
+): Uint8Array {
+  return new TextEncoder().encode(`x402-payment-v2|${resourcePath}|${nonce}`);
 }
 
 export function encodeFeePayerNote(

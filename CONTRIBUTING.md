@@ -34,11 +34,15 @@ npm run typecheck
 npm run lint
 npm run format:check
 npm test
+npm run build
 ```
+
+The same checks run on GitHub Actions for pushes and pull requests to `main`
+(see `.github/workflows/ci.yml`). Live Canix smoke is **not** part of CI.
 
 - `npm test` mocks paid Canix402 behavior and should **not** spend funds.
 - `RUN_LIVE_SMOKE=true npm run test:smoke` hits the free health tool only — still
-  network-dependent; do not require it in normal PR CI.
+  network-dependent; run it manually when needed, never as required PR CI.
 - CLI scripts (`canix:opportunities`, `canix:personalized`, `canix:wallet-scan`)
   and `npm run run-once` **do** spend USDC. Use them intentionally on a funded
   test wallet.

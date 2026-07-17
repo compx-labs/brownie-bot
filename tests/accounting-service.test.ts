@@ -144,9 +144,9 @@ describe("AccountingService", () => {
     expect(run.summary?.notes.some((note) => note.includes("previous"))).toBe(
       true,
     );
-    expect(
-      run.summary?.notes.some((note) => note.includes("tinyman")),
-    ).toBe(false);
+    expect(run.summary?.notes.some((note) => note.includes("tinyman"))).toBe(
+      false,
+    );
     expect(store.snapshots).toHaveLength(1);
     expect(notifier.sendAccounting).toHaveBeenCalledOnce();
   });

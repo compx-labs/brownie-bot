@@ -113,9 +113,9 @@ export function isTelegramConfigured(config: AppConfig): boolean {
 export function isSpacesConfigured(config: AppConfig): boolean {
   return Boolean(
     config.DO_SPACES_ENDPOINT &&
-      config.DO_SPACES_BUCKET &&
-      config.DO_SPACES_KEY &&
-      config.DO_SPACES_SECRET,
+    config.DO_SPACES_BUCKET &&
+    config.DO_SPACES_KEY &&
+    config.DO_SPACES_SECRET,
   );
 }
 

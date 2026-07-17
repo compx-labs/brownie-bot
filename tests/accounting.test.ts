@@ -119,10 +119,7 @@ describe("accounting report math", () => {
       ],
       24,
     );
-    expect(balances.map((balance) => balance.assetId)).toEqual([
-      0,
-      31_566_704,
-    ]);
+    expect(balances.map((balance) => balance.assetId)).toEqual([0, 31_566_704]);
     expect(formatMoney(priced.walletAsaValueUsd!)).toBe("2");
   });
 

@@ -247,10 +247,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
 
   async run(): Promise<PortfolioAgentResult> {
     const discoveredTools = await this.canix.listTools();
-    assertRequiredCapabilities(
-      discoveredTools,
-      this.options.signingEnabled,
-    );
+    assertRequiredCapabilities(discoveredTools, this.options.signingEnabled);
     const definitions = prepareAgentTools(discoveredTools).filter(
       (tool) =>
         this.options.signingEnabled || !FINAL_EXECUTION_TOOLS.has(tool.name),
@@ -350,9 +347,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
             throw error;
           }
           const message = safeErrorMessage(error);
-          console.error(
-            `[portfolio-agent] Skipping ${call.name}: ${message}`,
-          );
+          console.error(`[portfolio-agent] Skipping ${call.name}: ${message}`);
           toolCalls.push(call.name);
           outputs.push({
             type: "function_call_output",

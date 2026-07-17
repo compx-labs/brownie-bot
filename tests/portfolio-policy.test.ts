@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { PortfolioAction } from "../src/domain.js";
 import { PortfolioPolicy } from "../src/services/portfolio-policy.js";
-import { enterShape, opportunity, portfolioPlan, portfolioSnapshot } from "./fixtures.js";
+import {
+  enterShape,
+  opportunity,
+  portfolioPlan,
+  portfolioSnapshot,
+} from "./fixtures.js";
 
 const policyConfig = {
   maxPositionPct: 60,
@@ -284,9 +289,7 @@ describe("PortfolioPolicy", () => {
       amountRaw: "1000",
       amount: "0.001",
       usdValue: 10,
-      compatibleExitShapeKeys: [
-        "mainnet:tinyman:v2:removeLiquidity:flexible",
-      ],
+      compatibleExitShapeKeys: ["mainnet:tinyman:v2:removeLiquidity:flexible"],
       compatibleManageShapeKeys: [] as string[],
     };
     const result = policy.validate(
@@ -459,9 +462,7 @@ describe("PortfolioPolicy", () => {
               assetId: 31_566_704,
               assetAmount: "500000000",
             },
-            authorizedSpends: [
-              { assetId: 31_566_704, amountRaw: "500000000" },
-            ],
+            authorizedSpends: [{ assetId: 31_566_704, amountRaw: "500000000" }],
             dependencies: ["swap-algo-to-usdc"],
           }),
         ],

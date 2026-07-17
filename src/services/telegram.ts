@@ -43,12 +43,14 @@ export class TelegramNotifier implements RunNotifier, AccountingNotifier {
 
 /** Fallback when Telegram is not configured: print the same report text to stdout. */
 export class ConsoleNotifier implements RunNotifier, AccountingNotifier {
-  async send(run: ReviewRun): Promise<void> {
+  send(run: ReviewRun): Promise<void> {
     console.log(formatTelegramReport(run));
+    return Promise.resolve();
   }
 
-  async sendAccounting(run: AccountingRun): Promise<void> {
+  sendAccounting(run: AccountingRun): Promise<void> {
     console.log(formatAccountingTelegramReport(run));
+    return Promise.resolve();
   }
 }
 

@@ -1,5 +1,7 @@
 # Brownie Bot
 
+[![CI](https://github.com/compx-labs/brownie-bot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/compx-labs/brownie-bot/actions/workflows/ci.yml)
+
 An autonomous community treasury backend for Algorand. Once per day it reads
 liquid balances and Canix402 DeFi positions, researches personalized and global
 opportunities, asks OpenAI for a diversified portfolio plan, validates that plan

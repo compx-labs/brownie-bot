@@ -228,10 +228,7 @@ export class AccountingService {
 
     try {
       await this.store.putLatestSummary(summaryWithKey);
-      await this.store.putMonthlySummary(
-        summaryWithKey,
-        asOf.slice(0, 7),
-      );
+      await this.store.putMonthlySummary(summaryWithKey, asOf.slice(0, 7));
     } catch (error) {
       summaryWithKey.notes = [
         ...summaryWithKey.notes,

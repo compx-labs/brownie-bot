@@ -240,9 +240,7 @@ export class PortfolioPolicy {
         const quotedMissing = missingDependencies
           .map((dependency) => JSON.stringify(dependency))
           .join(", ");
-        const planIds = [...actions]
-          .map((id) => JSON.stringify(id))
-          .join(", ");
+        const planIds = [...actions].map((id) => JSON.stringify(id)).join(", ");
         violations.push(
           `Action ${action.id} depends on ${quotedMissing} but the plan only defines action ID(s) ${planIds}`,
         );
@@ -260,9 +258,7 @@ export class PortfolioPolicy {
         violations.push(`Action ${action.id} has duplicate authorized spends`);
       }
       for (const spend of action.authorizedSpends) {
-        if (
-          !spendCoveredByDependencySwap(action, spend.assetId, actionsById)
-        ) {
+        if (!spendCoveredByDependencySwap(action, spend.assetId, actionsById)) {
           liquidFundedSpends.set(
             spend.assetId,
             (liquidFundedSpends.get(spend.assetId) ?? 0n) +
@@ -414,10 +410,7 @@ function validateEnterShape(
     return;
   }
   const allowed = opportunity.executionShapes.map((shape) => shape.shapeKey);
-  if (
-    action.executionShapeKey &&
-    !allowed.includes(action.executionShapeKey)
-  ) {
+  if (action.executionShapeKey && !allowed.includes(action.executionShapeKey)) {
     violations.push(
       `Action ${action.id} executionShapeKey ${JSON.stringify(action.executionShapeKey)} is not in opportunity ${opportunity.opportunityId} enter shapes [${allowed.map((key) => JSON.stringify(key)).join(", ")}]`,
     );
@@ -510,9 +503,7 @@ function spendCoveredByDependencySwap(
   }
   return action.dependencies.some((dependencyId) => {
     const dependency = actionsById.get(dependencyId);
-    return (
-      dependency?.type === "swap" && dependency.toAssetId === assetId
-    );
+    return dependency?.type === "swap" && dependency.toAssetId === assetId;
   });
 }
 
