@@ -35,8 +35,23 @@ const configSchema = z
     WALLET_MNEMONIC: z.string().min(1),
     X402_ALGOD_URL: z.url().default("https://mainnet-api.algonode.cloud"),
 
-    OPEN_AI_API_KEY: z.string().min(1),
-    OPENAI_MODEL: z.string().min(1).default("gpt-5.6-luna"),
+    /** OpenAI-compatible base URL. Default is host-local ZeroSignal zs-proxy. */
+    OPENAI_BASE_URL: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.url().default("http://127.0.0.1:8080/v1"),
+    ),
+    /**
+     * Placeholder for the OpenAI SDK (requires a non-empty string).
+     * zs-proxy ignores the key; admission is the on-chain wallet seal.
+     */
+    OPEN_AI_API_KEY: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().min(1).default("zerosignal"),
+    ),
+    OPENAI_MODEL: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().min(1).default("Qwen/Qwen3-Coder-480B-A35B-Instruct"),
+    ),
     OPENAI_REASONING_EFFORT: z
       .enum(["low", "medium", "high"])
       .default("medium"),

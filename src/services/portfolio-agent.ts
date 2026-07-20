@@ -49,11 +49,66 @@ const FINAL_EXECUTION_TOOLS = new Set([
 
 const responseSchema = z
   .object({
-    id: z.string().min(1),
-    output: z.array(z.unknown()),
+    /** ZeroSignal may return an empty top-level id; treat as missing. */
+    id: z.string().optional(),
+    output: z.array(z.unknown()).default([]),
     output_text: z.string().optional(),
   })
   .passthrough();
+
+export type NormalizedAgentResponse = {
+  id?: string;
+  output: unknown[];
+  output_text?: string;
+  raw: Record<string, unknown>;
+};
+
+/** Normalize Responses API payloads (including ZeroSignal empty `id`). */
+export function normalizeAgentResponse(raw: unknown): NormalizedAgentResponse {
+  const parsed = responseSchema.parse(raw);
+  const id =
+    typeof parsed.id === "string" && parsed.id.trim().length > 0
+      ? parsed.id
+      : undefined;
+  const output_text =
+    parsed.output_text && parsed.output_text.length > 0
+      ? parsed.output_text
+      : extractOutputText(parsed.output);
+  return {
+    id,
+    output: parsed.output,
+    output_text,
+    raw: parsed as Record<string, unknown>,
+  };
+}
+
+/** Pull assistant `output_text` parts when the SDK does not set `output_text`. */
+export function extractOutputText(output: unknown[]): string | undefined {
+  const texts: string[] = [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    if (record.type !== "message" || !Array.isArray(record.content)) {
+      continue;
+    }
+    for (const part of record.content) {
+      if (!part || typeof part !== "object") {
+        continue;
+      }
+      const content = part as Record<string, unknown>;
+      if (
+        content.type === "output_text" &&
+        typeof content.text === "string" &&
+        content.text.length > 0
+      ) {
+        texts.push(content.text);
+      }
+    }
+  }
+  return texts.length > 0 ? texts.join("") : undefined;
+}
 
 const functionCallSchema = z.object({
   type: z.literal("function_call"),
@@ -108,11 +163,13 @@ The host supplies numeric guidance in the task input (maxPositionPct, maxProtoco
 
 IDLE CAPITAL (default bias: deploy)
 - Compute deployable surplus = liquid share above minLiquidReservePct (and any liquid ALGO/USDC/other assets that are not needed for the reserve).
-- USDC operations buffer (end-of-run target): after all planned actions settle, liquid USDC (asset 31566704) should be at least ~5 USDC (5_000_000 base units) so later Canix402 / x402 calls can pay. This is an ending balance target, not a freeze on deploying USDC mid-plan.
+- Shared USDC ops budget: the managed wallet's liquid USDC (asset 31566704) pays both Canix402 x402 tool calls and ZeroSignal inference (host zs-proxy uses the same mnemonic as the x402 payer). Treat them as one ops sink—do not plan as if inference were a separate card or API key.
+- USDC operations buffer (end-of-run target): after all planned actions settle, liquid USDC should be at least ~5 USDC (5_000_000 base units) so later Canix402 / x402 calls and ZeroSignal inference can pay. This is an ending balance target, not a freeze on deploying USDC mid-plan.
   - You may deploy or spend USDC into yield when that is the best use of capital.
   - If the projected ending liquid USDC would be below ~5 (including when starting below 5, or after deploying most USDC), add a final consolidation Haystack swap: convert a small amount of other liquid tokens (prefer deep/liquid pairs; ALGO or other stables first) into enough USDC to restore the ~5 USDC buffer. Size that swap only for the shortfall plus a small cushion for slippage/fees—do not dump large idle balances into USDC just for the buffer.
   - Put consolidation last in the action order (depend on prior opens/swaps if needed so it runs after capital deployment). Prefer a dedicated swap action id such as "consolidate-usdc-buffer".
   - If other liquid assets cannot fund the shortfall without breaking minLiquidReservePct or leaving the wallet unable to pay fees, say so in evidence and keep as much USDC as practical.
+  - Never request or invent mnemonic, zs-proxy, or payment details; the host wires inference.
 - If surplus is material and tool research returns executable opportunities that clear TVL, freshness, and net-benefit guidance, prefer opening/increasing (with swaps if needed) over a pure hold.
 - A pure hold / no-op is allowed only when you can justify it: name the best candidates you considered (protocol, opportunityId, APY, TVL, executionReady) and why each failed (TVL, stale data, research-only shapes, net benefit below floor, concentration, incomplete snapshot, or missing from tools after required searches).
 - Incomplete snapshot caveats raise caution for exits and sizing; they do not automatically justify leaving surplus idle if other protocols still return executable enter paths.
@@ -127,7 +184,7 @@ REQUIRED WORKFLOW
    - Also use global/protocol tools for better uses of capital, including opportunities that need a Haystack swap first.
    - Prefer opportunities with executionReady=true and a non-empty executionShapes array. Treat empty executionShapes as research-only—do not invent shape keys. If the best asset-matched venues are missing or research-only, retry search/protocol queries before concluding no-op; record what the tools returned.
    - Do not call OpenAPI, discovery, metadata, health, or strategy tools—the host does not expose them.
-3. Compare the current portfolio with a diversified target that deploys surplus above the reserve. You may hold, claim, open, increase, reduce, close, or swap when supported. Set dependencies only to other action ids in this plan (for example a swap that must finish before an open). Keep at least minLiquidReservePct liquid; ensure ending liquid USDC is ~5+ via deployment sizing and/or a final USDC consolidation swap when short.
+3. Compare the current portfolio with a diversified target that deploys surplus above the reserve. You may hold, claim, open, increase, reduce, close, or swap when supported. Set dependencies only to other action ids in this plan (for example a swap that must finish before an open). Keep at least minLiquidReservePct liquid; ensure ending liquid USDC is ~5+ (for Canix402 x402 and ZeroSignal inference) via deployment sizing and/or a final USDC consolidation swap when short.
 4. There is no minimum holding period. Re-evaluate every held position on each run. Exit, reduce, claim, or rotate when rewards end, APY collapses, risk worsens, or a clearly better risk-adjusted use of capital appears after fees and slippage. Avoid churn only when the expected net improvement is small versus costs—not because a position is "too new."
 5. Produce a coherent action plan with current and target allocations, integer base-unit amounts, and an exhaustive authorizedSpends list for every asset the treasury will transfer in each action. Include expected return impact, costs, dependencies, rationale, risks, and evidence from tool results. Use holdingHorizonDays as the assumed window for projecting net benefit of today's plan—not as a lock-up that prevents later exits.
 6. Net benefit math (be honest; idle APY is ~0):
@@ -286,16 +343,20 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     const tools = definitions.map(toOpenAiTool);
     const toolCalls: string[] = ["canix_get_positions"];
     const opportunities: Opportunity[] = [];
-    let response = responseSchema.parse(
+    const initialInput = JSON.stringify({
+      task: "Research and produce today's portfolio plan.",
+      managedWallet: this.options.walletAddress,
+      inferenceProvider: "zerosignal",
+      hostGuidance: this.options.hostGuidance,
+      portfolioSnapshot: compactSnapshotForModel(snapshot),
+    });
+    /** When the provider omits response ids, replay the conversation explicitly. */
+    let conversationItems: unknown[] = [];
+    let response = normalizeAgentResponse(
       await this.openai.responses.create({
         model: this.options.model,
         instructions: PORTFOLIO_AGENT_PROMPT_V1,
-        input: JSON.stringify({
-          task: "Research and produce today's portfolio plan.",
-          managedWallet: this.options.walletAddress,
-          hostGuidance: this.options.hostGuidance,
-          portfolioSnapshot: compactSnapshotForModel(snapshot),
-        }),
+        input: initialInput,
         reasoning: { effort: this.options.reasoningEffort },
         tools,
         tool_choice: "auto",
@@ -412,16 +473,34 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
           });
         }
       }
-      response = responseSchema.parse(
-        await this.openai.responses.create({
-          model: this.options.model,
-          previous_response_id: response.id,
-          input: outputs,
-          reasoning: { effort: this.options.reasoningEffort },
-          tools,
-          tool_choice: "auto",
-          text: { format: planFormat },
-        }),
+
+      conversationItems = [...conversationItems, ...response.output, ...outputs];
+      const followUp =
+        response.id !== undefined
+          ? {
+              model: this.options.model,
+              previous_response_id: response.id,
+              input: outputs,
+              reasoning: { effort: this.options.reasoningEffort },
+              tools,
+              tool_choice: "auto" as const,
+              text: { format: planFormat },
+            }
+          : {
+              model: this.options.model,
+              instructions: PORTFOLIO_AGENT_PROMPT_V1,
+              input: [
+                { role: "user", content: initialInput },
+                ...conversationItems,
+              ],
+              reasoning: { effort: this.options.reasoningEffort },
+              tools,
+              tool_choice: "auto" as const,
+              text: { format: planFormat },
+            };
+
+      response = normalizeAgentResponse(
+        await this.openai.responses.create(followUp),
       );
     }
   }
@@ -432,9 +511,10 @@ export function createPortfolioAgent(
   canix: Canix402Client,
   portfolioReader: PortfolioReader,
   options: PortfolioAgentOptions,
+  baseURL: string,
 ): OpenAiPortfolioAgent {
   return new OpenAiPortfolioAgent(
-    new OpenAI({ apiKey }),
+    new OpenAI({ apiKey, baseURL }),
     canix,
     portfolioReader,
     options,

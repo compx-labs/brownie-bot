@@ -7,6 +7,8 @@ import {
   MAX_OPPORTUNITY_TOOL_LIMIT,
   clampOpportunityToolArgs,
   compactToolResultForModel,
+  extractOutputText,
+  normalizeAgentResponse,
   selectAgentTools,
   type ResponsesClient,
 } from "../src/services/portfolio-agent.js";
@@ -91,7 +93,7 @@ function setup(responses: unknown[], options?: { signingEnabled?: boolean }) {
   const openai: ResponsesClient = { responses: { create } };
   return {
     agent: new OpenAiPortfolioAgent(openai, canix, reader, {
-      model: "gpt-5.6-luna",
+      model: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
       reasoningEffort: "medium",
       maxToolCalls: 8,
       walletAddress: managedWallet,
@@ -517,5 +519,77 @@ describe("OpenAiPortfolioAgent", () => {
 
     await expect(agent.run()).rejects.toThrow(/invalid tool arguments/);
     expect(callManagedTool).not.toHaveBeenCalled();
+  });
+
+  it("normalizes ZeroSignal responses with empty id and message output_text", () => {
+    const normalized = normalizeAgentResponse({
+      id: "",
+      model: "glm-4.7-flash",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: '{"rationale":"ok"}' }],
+        },
+      ],
+    });
+    expect(normalized.id).toBeUndefined();
+    expect(normalized.output_text).toBe('{"rationale":"ok"}');
+    expect(
+      extractOutputText([
+        {
+          type: "message",
+          content: [{ type: "output_text", text: "hello" }],
+        },
+      ]),
+    ).toBe("hello");
+  });
+
+  it("continues tool loops without previous_response_id when id is empty", async () => {
+    const finalPlan = portfolioPlan();
+    const { agent, create } = setup([
+      {
+        id: "",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-1",
+            name: "canix_get_personalized_opportunities",
+            arguments: JSON.stringify({ limit: 10 }),
+          },
+        ],
+      },
+      {
+        id: "",
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify(finalPlan),
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const result = await agent.run();
+    expect(result.plan).toEqual(finalPlan);
+    expect(create).toHaveBeenCalledTimes(2);
+    const followUp = create.mock.calls[1]?.[0] as {
+      previous_response_id?: string;
+      input: unknown;
+    };
+    expect(followUp.previous_response_id).toBeUndefined();
+    expect(Array.isArray(followUp.input)).toBe(true);
+    const input = followUp.input as Array<Record<string, unknown>>;
+    expect(input[0]).toMatchObject({ role: "user" });
+    expect(input.some((item) => item.type === "function_call")).toBe(true);
+    expect(input.some((item) => item.type === "function_call_output")).toBe(
+      true,
+    );
   });
 });

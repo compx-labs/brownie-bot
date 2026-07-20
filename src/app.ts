@@ -125,6 +125,7 @@ export function createApp(config: AppConfig): AppContext {
       hostGuidance,
       signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
     },
+    config.OPENAI_BASE_URL,
   );
   const policy = new PortfolioPolicy({
     ...hostGuidance,
