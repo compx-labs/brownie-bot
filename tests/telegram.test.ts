@@ -32,6 +32,16 @@ describe("formatTelegramReport", () => {
           responseHeader: "settled",
         },
       ],
+      inferenceCost: {
+        totalUsdc: "0.0042",
+        requestCount: 1,
+        charges: [
+          {
+            amountUsdc: "0.0042",
+            headers: { "x-zs-inference-amount": "0.0042" },
+          },
+        ],
+      },
     });
 
     expect(report).toContain("Treasury portfolio run: no-op");
@@ -39,6 +49,7 @@ describe("formatTelegramReport", () => {
     expect(report).toContain("Signing: disabled");
     expect(report).toContain("Plan confidence: 85%");
     expect(report).toContain("50000 USDC base units");
+    expect(report).toContain("ZeroSignal inference: 1 request(s), $0.0042 USDC");
   });
 
   it("reports policy notes without treating them as blocks", () => {

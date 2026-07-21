@@ -75,9 +75,16 @@ OPENAI_BASE_URL="http://127.0.0.1:8080/v1"
 OPEN_AI_API_KEY="zerosignal"
 OPENAI_MODEL="Qwen/Qwen3-Coder-480B-A35B-Instruct"
 OPENAI_REASONING_EFFORT="medium"
+AI_MODE=full
 AI_MAX_TOOL_CALLS=16
 ENABLE_TRANSACTION_SIGNING=false
 ```
+
+`AI_MODE=full` lets the model call Canix research tools in a multi-turn loop.
+`AI_MODE=lite` has the host prefetch research (personalized + list) and makes a
+single decide-only LLM call — lower ZeroSignal spend; prefer
+`OPENAI_REASONING_EFFORT=high` for lite. `AI_MAX_TOOL_CALLS` only applies in full
+mode.
 
 `OPEN_AI_API_KEY` is a non-empty placeholder for the OpenAI SDK; zs-proxy ignores
 it. The model receives discovered Canix402 data and quote-generation tools but

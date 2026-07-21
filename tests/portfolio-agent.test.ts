@@ -5,6 +5,7 @@ import type { PortfolioReader } from "../src/integrations/algorand/portfolio.js"
 import {
   OpenAiPortfolioAgent,
   MAX_OPPORTUNITY_TOOL_LIMIT,
+  PORTFOLIO_AGENT_PROMPT_LITE,
   clampOpportunityToolArgs,
   compactToolResultForModel,
   extractOutputText,
@@ -69,11 +70,20 @@ function toolSchema(name: string) {
   };
 }
 
-function setup(responses: unknown[], options?: { signingEnabled?: boolean }) {
+function setup(
+  responses: unknown[],
+  options?: { signingEnabled?: boolean; aiMode?: "full" | "lite" },
+) {
   const create = vi.fn();
   responses.forEach((response) => create.mockResolvedValueOnce(response));
   const callManagedTool = vi.fn().mockResolvedValue({
     data: { data: [opportunity()] },
+  });
+  const getPersonalizedOpportunities = vi.fn().mockResolvedValue({
+    opportunities: [opportunity()],
+  });
+  const getOpportunities = vi.fn().mockResolvedValue({
+    opportunities: [opportunity({ opportunityId: "listed:1" })],
   });
   const canix = {
     listTools: vi.fn().mockResolvedValue(
@@ -83,6 +93,8 @@ function setup(responses: unknown[], options?: { signingEnabled?: boolean }) {
       })),
     ),
     callManagedTool,
+    getPersonalizedOpportunities,
+    getOpportunities,
   } as unknown as Canix402Client;
   const reader: PortfolioReader = {
     read: vi.fn().mockResolvedValue({
@@ -95,6 +107,7 @@ function setup(responses: unknown[], options?: { signingEnabled?: boolean }) {
     agent: new OpenAiPortfolioAgent(openai, canix, reader, {
       model: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
       reasoningEffort: "medium",
+      aiMode: options?.aiMode ?? "full",
       maxToolCalls: 8,
       walletAddress: managedWallet,
       hostGuidance: {
@@ -109,6 +122,9 @@ function setup(responses: unknown[], options?: { signingEnabled?: boolean }) {
     }),
     create,
     callManagedTool,
+    getPersonalizedOpportunities,
+    getOpportunities,
+    canix,
     reader,
   };
 }
@@ -191,6 +207,67 @@ describe("OpenAiPortfolioAgent", () => {
       "title",
     );
     expect(parsedOutput.data[0]?.executionShapes[0]).toHaveProperty("shapeKey");
+  });
+
+  it("lite mode prefetches host research and makes a single decide-only LLM call", async () => {
+    const finalPlan = portfolioPlan();
+    const {
+      agent,
+      create,
+      callManagedTool,
+      getPersonalizedOpportunities,
+      getOpportunities,
+    } = setup(
+      [
+        {
+          data: {
+            id: "response-1",
+            output: [],
+            output_text: JSON.stringify(finalPlan),
+          },
+          headers: { "x-zs-inference-amount": "0.012" },
+        },
+      ],
+      { aiMode: "lite" },
+    );
+
+    const result = await agent.run();
+
+    expect(result.plan).toEqual(finalPlan);
+    expect(result.toolCalls).toEqual([
+      "canix_get_positions",
+      "canix_get_personalized_opportunities",
+      "canix_list_opportunities",
+    ]);
+    expect(getPersonalizedOpportunities).toHaveBeenCalledWith(managedWallet, 25);
+    expect(getOpportunities).toHaveBeenCalledWith(25);
+    expect(callManagedTool).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+    const request = create.mock.calls[0]?.[0] as {
+      instructions: string;
+      tools?: unknown;
+      tool_choice?: unknown;
+      input: string;
+    };
+    expect(request.instructions).toBe(PORTFOLIO_AGENT_PROMPT_LITE);
+    expect(request.tools).toBeUndefined();
+    expect(request.tool_choice).toBeUndefined();
+    const input = JSON.parse(request.input) as {
+      aiMode: string;
+      researchedOpportunities: { data: unknown[] };
+    };
+    expect(input.aiMode).toBe("lite");
+    expect(input.researchedOpportunities.data.length).toBeGreaterThan(0);
+    expect(result.inferenceCost).toEqual({
+      totalUsdc: "0.012",
+      requestCount: 1,
+      charges: [
+        {
+          amountUsdc: "0.012",
+          headers: { "x-zs-inference-amount": "0.012" },
+        },
+      ],
+    });
   });
 
   it("does not expose or invoke final execution tools even when signing is enabled", async () => {

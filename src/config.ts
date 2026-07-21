@@ -55,6 +55,11 @@ const configSchema = z
     OPENAI_REASONING_EFFORT: z
       .enum(["low", "medium", "high"])
       .default("medium"),
+    /**
+     * `full` — LLM drives Canix research via a multi-turn tool loop.
+     * `lite` — host prefetches research; LLM decides once with tools disabled.
+     */
+    AI_MODE: z.enum(["full", "lite"]).default("full"),
     AI_MAX_TOOL_CALLS: z.coerce.number().int().min(3).max(50).default(16),
     ENABLE_TRANSACTION_SIGNING: booleanFromString,
     MAX_POSITION_PCT: z.coerce.number().positive().max(100).default(35),

@@ -188,13 +188,19 @@ accounting).
 
 ### Ballpark per dry-run review
 
-A typical dry-run pays for **positions + personalized + a few list/search/protocol
-calls**, plus **ZeroSignal** usage for the planning model turns. Recent Canix
+**`AI_MODE=full` (default):** a typical dry-run pays for **positions + personalized + a few list/search/protocol
+calls**, plus **ZeroSignal** usage for the multi-turn planning model loop. Recent Canix
 x402 spend often lands around **~0.05–0.15 USDC**, depending on how many research
 tools the model calls (`AI_MAX_TOOL_CALLS`, default 16). Inference cost depends
 on the live ZeroSignal catalog price for `OPENAI_MODEL` (default
-`Qwen/Qwen3-Coder-480B-A35B-Instruct`);
+`Qwen/Qwen3-Coder-480B-A35B-Instruct`) and how many tool-follow-up turns run;
 see [ZeroSignal pricing](https://txnlab.gitbook.io/zerosignal/for-users/pricing.md).
+
+**`AI_MODE=lite`:** the host prefetches research (personalized + list; no
+protocol favoritism), then makes **one**
+decide-only ZeroSignal call with tools disabled. Canix x402 is similar; ZeroSignal spend
+is usually much lower because there is no multi-turn tool loop. Prefer
+`OPENAI_REASONING_EFFORT=high` in lite so the single decide turn stays high quality.
 
 CLI one-shots (each spends real USDC; no LLM):
 

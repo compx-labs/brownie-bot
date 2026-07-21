@@ -25,6 +25,7 @@ describe("loadConfig", () => {
     expect(config.OPEN_AI_API_KEY).toBe("zerosignal");
     expect(config.OPENAI_MODEL).toBe("Qwen/Qwen3-Coder-480B-A35B-Instruct");
     expect(config.OPENAI_REASONING_EFFORT).toBe("medium");
+    expect(config.AI_MODE).toBe("full");
     expect(config.AI_MAX_TOOL_CALLS).toBe(16);
     expect(config.ENABLE_TRANSACTION_SIGNING).toBe(false);
     expect(config.DO_SPACES_PREFIX).toBe("brownie-bot");

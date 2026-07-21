@@ -1,4 +1,5 @@
 import type { AccountingRun, ReviewRun } from "../domain.js";
+import { formatInferenceCostLine } from "./inference-cost.js";
 
 export interface RunNotifier {
   send(run: ReviewRun): Promise<void>;
@@ -108,6 +109,10 @@ export function formatTelegramReport(run: ReviewRun): string {
     lines.push(
       `Canix402 payments: ${payments.length} call(s), ${total.toString()} USDC base units`,
     );
+  }
+  const inferenceLine = formatInferenceCostLine(run.inferenceCost);
+  if (inferenceLine) {
+    lines.push(inferenceLine);
   }
   if (run.error) {
     lines.push(`Error: ${truncate(run.error, 500)}`);

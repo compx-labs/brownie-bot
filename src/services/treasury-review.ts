@@ -189,6 +189,7 @@ export class TreasuryReviewService {
         executions,
         opportunities: agentResult.opportunities,
         payments: agentResult.payments,
+        inferenceCost: agentResult.inferenceCost,
       };
     } catch (error) {
       const message = safeErrorMessage(error);
