@@ -4,9 +4,9 @@
 
 An autonomous community treasury backend for Algorand. Once per day it reads
 liquid balances and Canix402 DeFi positions, researches personalized and global
-opportunities, asks OpenAI for a diversified portfolio plan, validates that plan
-against deterministic limits, and — when signing is enabled — obtains unsigned
-execution groups for local signing.
+opportunities, asks a ZeroSignal model (via zs-proxy) for a diversified
+portfolio plan, validates that plan against deterministic limits, and — when
+signing is enabled — obtains unsigned execution groups for local signing.
 
 Transaction signing is disabled by default. In dry-run mode the bot reports the
 validated plan and does not call execution quote, swap, or opt-in endpoints.
@@ -15,7 +15,7 @@ transactions locally, and submits unchanged atomic groups through its own Algod
 client. Canix402 never receives the mnemonic.
 
 **New here?** Start with **[QUICKSTART.md](./QUICKSTART.md)** (minimum setup +
-expected Canix402 / OpenAI costs), then return to this README for full
+expected Canix402 / ZeroSignal costs), then return to this README for full
 configuration and ops detail. Want to change the code? See
 **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 
@@ -23,8 +23,11 @@ configuration and ops detail. Want to change the code? See
 
 - Node.js 22 or newer
 - An Algorand mainnet wallet with USDC ASA `31566704` opt-in and enough USDC/ALGO
-  for x402 (see [QUICKSTART.md — Expected costs](./QUICKSTART.md#expected-costs))
-- An OpenAI API key
+  for Canix402 x402 and ZeroSignal (see
+  [QUICKSTART.md — Expected costs](./QUICKSTART.md#expected-costs))
+- ZeroSignal via zs-proxy using the same mnemonic (Docker image bundles the
+  binary; local Node needs a host install — see
+  [QUICKSTART.md](./QUICKSTART.md))
 - Optional: Telegram (otherwise reports print to the terminal)
 - Optional: DigitalOcean Spaces (otherwise accounting JSON under
   `data/accounting/`)
@@ -32,14 +35,14 @@ configuration and ops detail. Want to change the code? See
 ## Quick start
 
 See **[QUICKSTART.md](./QUICKSTART.md)** for the dry-run checklist and cost
-table. Short version:
+table. Short version (DigitalOcean / Docker):
 
 ```bash
-npm install
 cp .env.example .env
-# set BOT_WALLET, WALLET_MNEMONIC, OPEN_AI_API_KEY
-npm run canix:wallet-scan
-npm run run-once
+# set BOT_WALLET, WALLET_MNEMONIC, ZEROSIGNAL_KEYSTORE_PASSPHRASE
+# fund the wallet on-chain once (see QUICKSTART)
+docker build -t brownie-bot .
+docker run --env-file .env -p 3000:3000 brownie-bot
 ```
 
 ## Setup
@@ -50,8 +53,8 @@ cp .env.example .env
 npm run dev
 ```
 
-Configure the treasury address used for personalization and the separate funded
-account that pays x402 access fees:
+Configure the treasury address used for personalization and the funded account
+that pays Canix402 x402 (import the same mnemonic into zs-proxy for inference):
 
 ```dotenv
 BOT_WALLET="58-character Algorand address"
@@ -60,31 +63,42 @@ WALLET_MNEMONIC="word1 word2 ... word25"
 
 In dry-run mode, `BOT_WALLET` does not need to match the account derived from
 `WALLET_MNEMONIC`: Canix402 personalizes results to `BOT_WALLET`, while the
-mnemonic account funds x402 payments. Enabling transaction signing requires
+mnemonic account funds x402 and ZeroSignal. Enabling transaction signing requires
 them to match because the same local key then authorizes treasury actions. The
 mnemonic is never sent to MCP, Telegram, logs, or API responses.
 
-Configure OpenAI separately:
+Configure the OpenAI-compatible ZeroSignal proxy (defaults target host-local
+zs-proxy):
 
 ```dotenv
-OPEN_AI_API_KEY=
-OPENAI_MODEL="gpt-5.6-luna"
+OPENAI_BASE_URL="http://127.0.0.1:8080/v1"
+OPEN_AI_API_KEY="zerosignal"
+OPENAI_MODEL="Qwen/Qwen3-Coder-480B-A35B-Instruct"
 OPENAI_REASONING_EFFORT="medium"
+AI_MODE=full
 AI_MAX_TOOL_CALLS=16
 ENABLE_TRANSACTION_SIGNING=false
 ```
 
-The model receives discovered Canix402 data and quote-generation tools but
+`AI_MODE=full` lets the model call Canix research tools in a multi-turn loop.
+`AI_MODE=lite` has the host prefetch research (personalized + list) and makes a
+single decide-only LLM call — lower ZeroSignal spend; prefer
+`OPENAI_REASONING_EFFORT=high` for lite. `AI_MAX_TOOL_CALLS` only applies in full
+mode.
+
+`OPEN_AI_API_KEY` is a non-empty placeholder for the OpenAI SDK; zs-proxy ignores
+it. The model receives discovered Canix402 data and quote-generation tools but
 cannot access the mnemonic, payment signature, local signing, or Algod
-submission. The host injects `BOT_WALLET` and planning guidance (position /
-protocol caps, liquid reserve, TVL and freshness floors). Concentration and
-reserve limits are soft notes in the plan report. With signing disabled, dry
-runs always surface the plan and do not call execution quote endpoints;
-incomplete snapshot caveats and structural issues are reported as policy notes.
-With signing enabled, incomplete portfolio data and malformed actions still fail
-closed. Opportunities include enter `executionShapes` (and `requiredAssetIds`);
-positions include `compatibleExitShapeKeys` / `compatibleManageShapeKeys`. The
-host validates plan shape keys against those catalogs and, when signing, calls
+submission. The host injects `BOT_WALLET`, `inferenceProvider: "zerosignal"`, and
+planning guidance (position / protocol caps, liquid reserve, TVL and freshness
+floors). Concentration and reserve limits are soft notes in the plan report.
+With signing disabled, dry runs always surface the plan and do not call
+execution quote endpoints; incomplete snapshot caveats and structural issues are
+reported as policy notes. With signing enabled, incomplete portfolio data and
+malformed actions still fail closed. Opportunities include enter
+`executionShapes` (and `requiredAssetIds`); positions include
+`compatibleExitShapeKeys` / `compatibleManageShapeKeys`. The host validates plan
+shape keys against those catalogs and, when signing, calls
 `canix_get_execution_quote` with a `quotes` array (flat ~0.10 USDC per request),
 then signs each returned group in order.
 
@@ -287,9 +301,39 @@ RUN_LIVE_SMOKE=true npm run test:smoke
 Paid end-to-end testing must be performed deliberately with the configured,
 funded wallet.
 
-## Container
+## Container (DigitalOcean)
+
+The image bundles `zs-proxy` and starts it beside Brownie on loopback. Set the
+usual bot env vars plus a keystore passphrase (file backend — no OS keychain in
+containers):
 
 ```bash
 docker build -t brownie-bot .
-docker run --env-file .env -p 3000:3000 brownie-bot
+docker run --env-file .env \
+  -e ZEROSIGNAL_KEYSTORE_PASSPHRASE='long-random-secret' \
+  -p 3000:3000 brownie-bot
 ```
+
+`docker/entrypoint.sh` imports `WALLET_MNEMONIC` into zs-proxy, waits for
+`/healthz`, then runs `node dist/index.js`. Spend caps default from
+`config/zs-proxy.yaml` (override with `PROXY_SPEND_*`). Fund the wallet on-chain
+before the first review (`zs-proxy fund` from any machine with the same
+mnemonic, or transfer USDC/ALGO to the address).
+
+On-demand review (no `MANUAL_TRIGGER_TOKEN`): stop the long-running container if
+needed, rebuild if the entrypoint changed, then:
+
+```bash
+# Safe connectivity smoke (LLM + one Canix research call; never signs)
+docker run --rm --env-file .ENV brownie-bot smoke
+
+# Full one-shot treasury review — set ENABLE_TRANSACTION_SIGNING=false first
+docker run --rm --env-file .ENV brownie-bot once
+```
+
+`smoke` starts zs-proxy, runs `dist/smoke-llm.js` (ZeroSignal +
+`canix_list_opportunities` only), prints JSON, and exits. `once` runs a full
+review plan; with signing enabled it can move treasury assets.
+
+For local non-Docker runs, install zs-proxy on the host instead — see
+[QUICKSTART.md](./QUICKSTART.md).

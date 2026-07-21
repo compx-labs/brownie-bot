@@ -35,43 +35,65 @@ describe("position token reprice", () => {
       positionNeedsTokenReprice(position({ assetId: null, assetSymbol: "USDC" })),
     ).toBe(true);
     expect(
-      positionNeedsTokenReprice(position({ assetId: null, assetSymbol: null })),
-    ).toBe(false);
+      positionNeedsTokenReprice(
+        position({ assetId: null, assetSymbol: null }),
+      ),
+    ).toBe(true);
   });
 
-  it("reprices USDC at $1 when CompX has no quote", () => {
+  it("treats Canix microscopic Folks usdValue as unpriced", () => {
+    // Live Canix bug: amount ~34 USDC but usdValue ~3.4e-9
+    expect(
+      positionNeedsTokenReprice(position({ usdValue: 3.39986e-9 })),
+    ).toBe(true);
     const { positions, notes } = repricePositionsFromTokenPrices(
-      [
-        position({ assetId: null, assetSymbol: "USDC" }),
-        position({
-          protocol: "tinyman",
-          positionType: "lp",
-          positionId: "tinyman:lp:1",
-          assetId: 1_002_590_888,
-          amount: "2.11",
-          usdValue: 2,
-        }),
-      ],
+      [position({ usdValue: 3.39986e-9 })],
+      [],
+    );
+    expect(positions[0]?.usdValue).toBe(34);
+    expect(notes[0]).toContain("unit-usd-peg");
+  });
+
+  it("reprices Folks USDC at $1 when CompX returns null or zero", () => {
+    for (const priceUsd of [null, "0"] as const) {
+      const { positions, notes } = repricePositionsFromTokenPrices(
+        [position({ assetId: null, assetSymbol: "USDC" })],
+        [
+          {
+            assetId: 31_566_704,
+            priceUsd,
+            source: "compx",
+            fetchedAt: new Date().toISOString(),
+            stale: false,
+          },
+        ],
+      );
+      expect(positions[0]?.usdValue).toBe(34);
+      expect(notes[0]).toContain("unit-usd-peg");
+    }
+  });
+
+  it("ignores unusable CompX quotes on non-stable asset ids and pegs Folks supply", () => {
+    const { positions, notes } = repricePositionsFromTokenPrices(
+      [position({ assetId: 9_999_999_999, assetSymbol: null })],
       [
         {
-          assetId: 1_002_590_888,
-          priceUsd: null,
+          assetId: 9_999_999_999,
+          priceUsd: "0",
           source: "compx",
           fetchedAt: new Date().toISOString(),
           stale: false,
         },
       ],
     );
-
     expect(positions[0]?.usdValue).toBe(34);
-    expect(positions[1]?.usdValue).toBe(2);
     expect(notes[0]).toContain("unit-usd-peg");
     expect(collectRepriceAssetIds([position({ assetId: null })])).toEqual([
       31_566_704,
     ]);
   });
 
-  it("prefers CompX price when available", () => {
+  it("prefers positive CompX price when available", () => {
     const { positions, notes } = repricePositionsFromTokenPrices(
       [position({})],
       [

@@ -242,6 +242,15 @@ export interface ReviewRun {
   policy?: PolicyResult;
   executions?: ExecutionOutcome[];
   payments?: PaymentReceipt[];
+  /** ZeroSignal / zs-proxy inference spend for this run (from response headers). */
+  inferenceCost?: {
+    totalUsdc: string;
+    requestCount: number;
+    charges: Array<{
+      amountUsdc: string;
+      headers: Record<string, string>;
+    }>;
+  };
   opportunities: Opportunity[];
   error?: string;
   notificationError?: string;

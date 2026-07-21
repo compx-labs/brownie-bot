@@ -1,0 +1,15 @@
+# ZeroSignal zs-proxy defaults for the Brownie container sidecar.
+# Override via PROXY_* env vars on DigitalOcean if needed.
+algod:
+  network: "mainnet"
+
+server:
+  listen: "127.0.0.1:8080"
+
+spend:
+  daily_cap_usdc: 5.00
+  per_request_cap_usdc: 1.00
+
+logging:
+  level: info
+  format: text

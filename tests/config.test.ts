@@ -15,15 +15,17 @@ describe("loadConfig", () => {
   };
   const requiredEnvironment = {
     ...walletEnvironment,
-    OPEN_AI_API_KEY: "test-openai-key",
   };
 
-  it("uses fixed Canix402 infrastructure defaults", () => {
+  it("uses fixed Canix402 and ZeroSignal defaults", () => {
     const config = loadConfig(requiredEnvironment);
     expect(config.CANIX402_MCP_URL).toBe("https://canix402-mcp.compx.io/mcp");
     expect(config.X402_ALGOD_URL).toBe("https://mainnet-api.algonode.cloud");
-    expect(config.OPENAI_MODEL).toBe("gpt-5.6-luna");
+    expect(config.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
+    expect(config.OPEN_AI_API_KEY).toBe("zerosignal");
+    expect(config.OPENAI_MODEL).toBe("Qwen/Qwen3-Coder-480B-A35B-Instruct");
     expect(config.OPENAI_REASONING_EFFORT).toBe("medium");
+    expect(config.AI_MODE).toBe("full");
     expect(config.AI_MAX_TOOL_CALLS).toBe(16);
     expect(config.ENABLE_TRANSACTION_SIGNING).toBe(false);
     expect(config.DO_SPACES_PREFIX).toBe("brownie-bot");
@@ -33,23 +35,33 @@ describe("loadConfig", () => {
     expect(config.DO_SPACES_BUCKET).toBeUndefined();
   });
 
-  it("requires an OpenAI API key", () => {
-    expect(() => loadConfig({ ...walletEnvironment })).toThrow(
-      /OPEN_AI_API_KEY/,
-    );
+  it("does not require an OpenAI API key when using zs-proxy defaults", () => {
+    const config = loadConfig({ ...walletEnvironment });
+    expect(config.OPEN_AI_API_KEY).toBe("zerosignal");
+    expect(config.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
+  });
+
+  it("accepts an explicit ZeroSignal base URL and model", () => {
+    const config = loadConfig({
+      ...walletEnvironment,
+      OPENAI_BASE_URL: "http://127.0.0.1:9090/v1",
+      OPENAI_MODEL: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      OPEN_AI_API_KEY: "not-checked",
+    });
+    expect(config.OPENAI_BASE_URL).toBe("http://127.0.0.1:9090/v1");
+    expect(config.OPEN_AI_API_KEY).toBe("not-checked");
+    expect(config.OPENAI_MODEL).toBe("Qwen/Qwen3-Coder-480B-A35B-Instruct");
   });
 
   it("requires both wallet identity and signer", () => {
     expect(() =>
       loadConfig({
         WALLET_MNEMONIC: "test mnemonic",
-        OPEN_AI_API_KEY: "test-openai-key",
       }),
     ).toThrow(/BOT_WALLET/);
     expect(() =>
       loadConfig({
         BOT_WALLET: walletEnvironment.BOT_WALLET,
-        OPEN_AI_API_KEY: "test-openai-key",
       }),
     ).toThrow(/WALLET_MNEMONIC/);
   });

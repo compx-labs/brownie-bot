@@ -11,6 +11,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "run-once": "tsx src/run-once.ts",
+    "smoke:llm": "tsx src/smoke-llm.ts",
     "accounting-once": "tsx src/accounting-once.ts",
     "canix:opportunities": "tsx src/cli/opportunities.ts",
     "canix:personalized": "tsx src/cli/personalized-opportunities.ts",

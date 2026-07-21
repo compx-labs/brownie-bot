@@ -11,7 +11,6 @@ describe("backend routes", () => {
     NODE_ENV: "test",
     BOT_WALLET: account.addr.toString(),
     WALLET_MNEMONIC: algosdk.secretKeyToMnemonic(account.sk),
-    OPEN_AI_API_KEY: "test-openai-key",
   };
 
   afterEach(async () => {
@@ -35,6 +34,7 @@ describe("backend routes", () => {
       telegramConfigured: false,
       accountingEnabled: true,
       accountingStorage: "local",
+      folksEscrowStorage: "local",
     });
   });
 

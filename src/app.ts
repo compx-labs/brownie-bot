@@ -120,11 +120,13 @@ export function createApp(config: AppConfig): AppContext {
     {
       model: config.OPENAI_MODEL,
       reasoningEffort: config.OPENAI_REASONING_EFFORT,
+      aiMode: config.AI_MODE,
       maxToolCalls: config.AI_MAX_TOOL_CALLS,
       walletAddress: config.BOT_WALLET,
       hostGuidance,
       signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
     },
+    config.OPENAI_BASE_URL,
   );
   const policy = new PortfolioPolicy({
     ...hostGuidance,

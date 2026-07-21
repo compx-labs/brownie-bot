@@ -21,7 +21,8 @@ code. To **run** the bot as an operator, start with
 nvm use   # Node 22+
 npm install
 cp .env.example .env
-# fill BOT_WALLET, WALLET_MNEMONIC, OPEN_AI_API_KEY for local dry-runs
+# fill BOT_WALLET, WALLET_MNEMONIC for local dry-runs
+# local: host zs-proxy with the same mnemonic; Docker: see QUICKSTART §2a
 ```
 
 Optional: Telegram and DigitalOcean Spaces. Without them, reports go to the
