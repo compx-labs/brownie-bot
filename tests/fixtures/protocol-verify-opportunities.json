@@ -1,0 +1,428 @@
+{
+  "fetchedAt": "2026-07-23T11:46:41.452Z",
+  "walletAddress": "7F3C3BUPN3WICWMFZTQVBRIFIDWUP4OICUQ3IHT6BP27JG7TPDPV27XHTU",
+  "cases": {
+    "folks-usdc-deposit": {
+      "caseId": "folks-usdc-deposit",
+      "opportunityId": "folks-lending-971372237",
+      "protocol": "folks-finance",
+      "opportunityType": "lending",
+      "assetPair": "USDC",
+      "assetIds": [
+        31566704
+      ],
+      "enterShapeKey": "mainnet:folks-finance:v2:deposit:escrow",
+      "exitShapeKey": "mainnet:folks-finance:v2:withdraw:escrow",
+      "shapes": [
+        {
+          "shapeKey": "mainnet:folks-finance:v2:setup:depositEscrow",
+          "action": "setup",
+          "variant": "depositEscrow",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress"
+          ],
+          "requiredAssetIds": [
+            31566704
+          ],
+          "inputHints": {
+            "assetId": 31566704,
+            "poolAppId": 971372237
+          }
+        },
+        {
+          "shapeKey": "mainnet:folks-finance:v2:setup:optEscrowAsset",
+          "action": "setup",
+          "variant": "optEscrowAsset",
+          "order": 1,
+          "requiredInputs": [
+            "userAddress",
+            "escrowAddress"
+          ],
+          "requiredAssetIds": [
+            31566704
+          ],
+          "inputHints": {
+            "assetId": 31566704,
+            "poolAppId": 971372237
+          }
+        },
+        {
+          "shapeKey": "mainnet:folks-finance:v2:deposit:escrow",
+          "action": "deposit",
+          "variant": "escrow",
+          "order": 2,
+          "requiredInputs": [
+            "userAddress",
+            "assetAmount"
+          ],
+          "requiredAssetIds": [
+            31566704
+          ],
+          "inputHints": {
+            "assetId": 31566704,
+            "poolAppId": 971372237
+          }
+        }
+      ],
+      "notes": "Folks lending enter is sequential escrow; exit quotes withdraw:escrow by key"
+    },
+    "folks-algo-stake": {
+      "caseId": "folks-algo-stake",
+      "opportunityId": "folks-staking-xalgo",
+      "protocol": "folks-finance",
+      "opportunityType": "staking",
+      "assetPair": "ALGO/xALGO",
+      "assetIds": [
+        0,
+        1134696561
+      ],
+      "enterShapeKey": "mainnet:folks-finance:xalgo-v1:stake:immediate",
+      "exitShapeKey": "mainnet:folks-finance:xalgo-v1:unstake:immediate",
+      "receiptAssetId": 1134696561,
+      "shapes": [
+        {
+          "shapeKey": "mainnet:folks-finance:xalgo-v1:stake:immediate",
+          "action": "stake",
+          "variant": "immediate",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "amount"
+          ],
+          "requiredAssetIds": [
+            0
+          ],
+          "inputHints": {
+            "assetId": 0,
+            "depositAssetId": 0
+          }
+        },
+        {
+          "shapeKey": "mainnet:folks-finance:xalgo-v1:unstake:immediate",
+          "action": "unstake",
+          "variant": "immediate",
+          "order": 1,
+          "requiredInputs": [
+            "userAddress",
+            "amount"
+          ],
+          "requiredAssetIds": [
+            1134696561
+          ],
+          "inputHints": {
+            "assetId": 1134696561
+          }
+        }
+      ],
+      "notes": "LST stake: holding xALGO is the receipt; Canix opportunity attaches stake only — unstake is registry exit shape mainnet:folks-finance:xalgo-v1:unstake:immediate"
+    },
+    "tinyman-lp": {
+      "caseId": "tinyman-lp",
+      "opportunityId": "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM:lp",
+      "protocol": "tinyman",
+      "opportunityType": "lp",
+      "assetPair": "USDC/ALGO",
+      "assetIds": [
+        31566704,
+        0
+      ],
+      "enterShapeKey": "mainnet:tinyman:v2:addLiquidity:flexible",
+      "exitShapeKey": null,
+      "shapes": [
+        {
+          "shapeKey": "mainnet:tinyman:v2:addLiquidity:flexible",
+          "action": "addLiquidity",
+          "variant": "flexible",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "assetAId",
+            "assetAAmount",
+            "assetBId",
+            "assetBAmount",
+            "maxSlippageBps"
+          ],
+          "requiredAssetIds": [
+            31566704,
+            0
+          ],
+          "inputHints": {
+            "assetAId": 31566704,
+            "assetBId": 0,
+            "poolId": "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM"
+          }
+        },
+        {
+          "shapeKey": "mainnet:tinyman:v2:addLiquidity:initial",
+          "action": "addLiquidity",
+          "variant": "initial",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "assetAId",
+            "assetAAmount",
+            "assetBId",
+            "assetBAmount",
+            "maxSlippageBps"
+          ],
+          "requiredAssetIds": [
+            31566704,
+            0
+          ],
+          "inputHints": {
+            "assetAId": 31566704,
+            "assetBId": 0,
+            "poolId": "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM"
+          }
+        },
+        {
+          "shapeKey": "mainnet:tinyman:v2:addLiquidity:singleAsset",
+          "action": "addLiquidity",
+          "variant": "singleAsset",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "assetAId",
+            "assetBId",
+            "depositAssetId",
+            "depositAmount",
+            "maxSlippageBps"
+          ],
+          "requiredAssetIds": [
+            31566704,
+            0
+          ],
+          "inputHints": {
+            "assetAId": 31566704,
+            "assetBId": 0,
+            "poolId": "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM"
+          }
+        }
+      ]
+    },
+    "compx-lending": {
+      "caseId": "compx-lending",
+      "opportunityId": "compx-lending-3491050310",
+      "protocol": "compx",
+      "opportunityType": "lending",
+      "assetPair": "USDC",
+      "assetIds": [
+        31566704,
+        3491050538
+      ],
+      "enterShapeKey": "mainnet:compx:v1:deposit:asa",
+      "exitShapeKey": null,
+      "shapes": [
+        {
+          "shapeKey": "mainnet:compx:v1:deposit:asa",
+          "action": "deposit",
+          "variant": "asa",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "marketAppId",
+            "amount"
+          ],
+          "requiredAssetIds": [
+            31566704
+          ],
+          "inputHints": {
+            "assetId": 31566704,
+            "marketAppId": 3491050310
+          }
+        }
+      ]
+    },
+    "dorkfi-usdc-lending": {
+      "caseId": "dorkfi-usdc-lending",
+      "opportunityId": "dorkfi:algorand:3333688282:31566704:lending",
+      "protocol": "dorkfi",
+      "opportunityType": "lending",
+      "assetPair": "USDC",
+      "assetIds": [
+        31566704
+      ],
+      "enterShapeKey": "mainnet:dorkfi:v1:deposit:asa",
+      "exitShapeKey": null,
+      "shapes": [
+        {
+          "shapeKey": "mainnet:dorkfi:v1:deposit:asa",
+          "action": "deposit",
+          "variant": "asa",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "poolAppId",
+            "marketAppId",
+            "assetId",
+            "amount"
+          ],
+          "requiredAssetIds": [
+            31566704
+          ],
+          "inputHints": {
+            "assetId": 31566704,
+            "poolAppId": 3333688282,
+            "marketAppId": 3210682240
+          }
+        }
+      ]
+    },
+    "pact-lp": {
+      "caseId": "pact-lp",
+      "opportunityId": "3585364727:farm",
+      "protocol": "pact",
+      "opportunityType": "farm",
+      "assetPair": "ALGO/USDC",
+      "assetIds": [],
+      "enterShapeKey": "mainnet:pact:v1:addLiquidityAndFarm:twoSided",
+      "exitShapeKey": null,
+      "shapes": [
+        {
+          "shapeKey": "mainnet:pact:v1:farm:deployEscrow",
+          "action": "farm",
+          "variant": "deployEscrow",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "farmAppId"
+          ],
+          "requiredAssetIds": [],
+          "inputHints": {
+            "poolAppId": 2966876920,
+            "farmAppId": 3585364727
+          }
+        },
+        {
+          "shapeKey": "mainnet:pact:v1:addLiquidityAndFarm:twoSided",
+          "action": "addLiquidityAndFarm",
+          "variant": "twoSided",
+          "order": 1,
+          "requiredInputs": [
+            "userAddress",
+            "farmAppId",
+            "poolAppId",
+            "assetAId",
+            "assetAAmount",
+            "assetBId",
+            "assetBAmount",
+            "maxSlippageBps"
+          ],
+          "requiredAssetIds": [],
+          "inputHints": {
+            "poolAppId": 2966876920,
+            "farmAppId": 3585364727
+          }
+        },
+        {
+          "shapeKey": "mainnet:pact:v1:farm:stake",
+          "action": "farm",
+          "variant": "stake",
+          "order": 1,
+          "requiredInputs": [
+            "userAddress",
+            "farmAppId",
+            "amount"
+          ],
+          "requiredAssetIds": [],
+          "inputHints": {
+            "poolAppId": 2966876920,
+            "farmAppId": 3585364727
+          }
+        }
+      ]
+    },
+    "haystack-swap": {
+      "caseId": "haystack-swap",
+      "opportunityId": null,
+      "protocol": "haystack",
+      "opportunityType": "swap",
+      "assetPair": "ALGO/USDC",
+      "assetIds": [
+        0,
+        31566704
+      ],
+      "enterShapeKey": null,
+      "exitShapeKey": null,
+      "fromAssetId": 0,
+      "toAssetId": 31566704,
+      "shapes": [],
+      "notes": "Haystack swap path via canix_get_quote / canix_swap"
+    },
+    "reti-pooling": {
+      "caseId": "reti-pooling",
+      "opportunityId": "reti-staking-220",
+      "protocol": "reti",
+      "opportunityType": "staking",
+      "assetPair": "ALGO",
+      "assetIds": [
+        0
+      ],
+      "enterShapeKey": "mainnet:reti:v1:stake:algo",
+      "exitShapeKey": "mainnet:reti:v1:unstake:algo",
+      "shapes": [
+        {
+          "shapeKey": "mainnet:reti:v1:stake:algo",
+          "action": "stake",
+          "variant": "algo",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "validatorId",
+            "amount"
+          ],
+          "requiredAssetIds": [
+            0
+          ],
+          "inputHints": {
+            "assetId": 0,
+            "depositAssetId": 0,
+            "validatorId": 220
+          }
+        }
+      ],
+      "notes": "Réti consensus staking (no LST); exit via Canix position unstake shape; minEntryStake=1000000 µALGO; ungated"
+    },
+    "myth-dualstake": {
+      "caseId": "myth-dualstake",
+      "opportunityId": "myth-staking-2933534328",
+      "protocol": "myth-finance",
+      "opportunityType": "staking",
+      "assetPair": "ALGO/ORA→oraALGO",
+      "assetIds": [
+        0,
+        1284444444,
+        2933559000
+      ],
+      "enterShapeKey": "mainnet:myth-finance:dualstake-v1:mint:lst",
+      "exitShapeKey": "mainnet:myth-finance:dualstake-v1:redeem:lst",
+      "receiptAssetId": 2933559000,
+      "shapes": [
+        {
+          "shapeKey": "mainnet:myth-finance:dualstake-v1:mint:lst",
+          "action": "mint",
+          "variant": "lst",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "amount",
+            "appId"
+          ],
+          "requiredAssetIds": [
+            0,
+            1284444444
+          ],
+          "inputHints": {
+            "assetId": 0,
+            "assetAId": 0,
+            "assetBId": 1284444444,
+            "depositAssetId": 0,
+            "poolAppId": 2933534328
+          }
+        }
+      ],
+      "notes": "Myth dualSTAKE mint deposits ALGO+ORA; LST receipt is assetIds[2]; redeem is registry exit shape"
+    }
+  }
+}

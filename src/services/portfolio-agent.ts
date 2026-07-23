@@ -206,7 +206,8 @@ REQUIRED WORKFLOW
    Use a realistic horizon (often 30–90 days) so genuine yield on surplus capital is not understated into a false no-op.
    For lending/deposit yields, use the opportunity's base supply/deposit APY (or APR when yieldBasis says so) from tool facts. Do not inflate projected returns with reward multipliers, boost badges, or unclear blended figures—if tools expose both a base rate and a boosted/reward rate, prefer the base lending APY for allocations and projectedNetBenefitUsd and note any rewards separately in evidence.
 7. Execution wiring from Canix facts only:
-   - open/increase: emit ONE action per opportunity entry. Set executionShapeKey to a capital-deploying enter shapeKey from that opportunity's executionShapes (e.g. deposit/addLiquidity—never invent). Merge that shape's inputHints into executionInput and supply base-unit amounts for requiredInputs. Put the full treasury asset transfer in that action's authorizedSpends. The host expands multi-step enter shapes (setup/escrow prerequisites ordered by executionShapes.order) at quote time—do NOT emit separate plan actions for create-escrow, setup, market opt-in, or other prerequisite shapes, and do NOT put shapeKey strings in dependencies.
+   - open/increase: emit ONE action per opportunity entry. Set executionShapeKey to a capital-deploying enter shapeKey from that opportunity's executionShapes (e.g. deposit/addLiquidity—never invent). Put the full treasury asset transfer in that action's authorizedSpends and set amountRaw/fromAssetId. executionInput may be null or partial—the host completes requiredInputs from shape inputHints and spends. The host expands multi-step enter shapes (setup/escrow prerequisites ordered by executionShapes.order) at quote time—do NOT emit separate plan actions for create-escrow, setup, market opt-in, or other prerequisite shapes, and do NOT put shapeKey strings in dependencies.
+   - close/reduce: set executionShapeKey from the position's compatibleExitShapeKeys (never invent), positionId, amountRaw, and opportunityId when known. executionInput may be null or partial—the host completes requiredInputs (pair ids, poolTokenAmount, Folks withdraw denomination, etc.).
    - If liquid balances lack any requiredAssetIds for the chosen enter shape(s), emit prior Haystack swap action(s) (fromAssetId/toAssetId/amountRaw), list those action ids in dependencies, and size the open's authorizedSpends to the intended deposit (existing liquid of that asset plus expected swap proceeds). The host handles ASA opt-in for swap outputs during swap execution—do NOT emit a separate opt-in plan action.
    - dependencies may ONLY list other action id strings from this plan (e.g. "swap-algo-to-usdc"). Never list executionShapeKey values, opportunityIds, or protocol setup step names.
    - reduce/close/claim: set executionShapeKey from the position's compatibleExitShapeKeys or compatibleManageShapeKeys.
@@ -256,7 +257,8 @@ REQUIRED WORKFLOW
    Use a realistic horizon (often 30–90 days) so genuine yield on surplus capital is not understated into a false no-op.
    For lending/deposit yields, use the opportunity's base supply/deposit APY (or APR when yieldBasis says so) from research facts. Do not inflate projected returns with reward multipliers, boost badges, or unclear blended figures—if research exposes both a base rate and a boosted/reward rate, prefer the base lending APY for allocations and projectedNetBenefitUsd and note any rewards separately in evidence.
 7. Execution wiring from Canix facts only:
-   - open/increase: emit ONE action per opportunity entry. Set executionShapeKey to a capital-deploying enter shapeKey from that opportunity's executionShapes (e.g. deposit/addLiquidity—never invent). Merge that shape's inputHints into executionInput and supply base-unit amounts for requiredInputs. Put the full treasury asset transfer in that action's authorizedSpends. The host expands multi-step enter shapes (setup/escrow prerequisites ordered by executionShapes.order) at quote time—do NOT emit separate plan actions for create-escrow, setup, market opt-in, or other prerequisite shapes, and do NOT put shapeKey strings in dependencies.
+   - open/increase: emit ONE action per opportunity entry. Set executionShapeKey to a capital-deploying enter shapeKey from that opportunity's executionShapes (e.g. deposit/addLiquidity—never invent). Put the full treasury asset transfer in that action's authorizedSpends and set amountRaw/fromAssetId. executionInput may be null or partial—the host completes requiredInputs from shape inputHints and spends. The host expands multi-step enter shapes (setup/escrow prerequisites ordered by executionShapes.order) at quote time—do NOT emit separate plan actions for create-escrow, setup, market opt-in, or other prerequisite shapes, and do NOT put shapeKey strings in dependencies.
+   - close/reduce: set executionShapeKey from the position's compatibleExitShapeKeys (never invent), positionId, amountRaw, and opportunityId when known. executionInput may be null or partial—the host completes requiredInputs (pair ids, poolTokenAmount, Folks withdraw denomination, etc.).
    - If liquid balances lack any requiredAssetIds for the chosen enter shape(s), emit prior Haystack swap action(s) (fromAssetId/toAssetId/amountRaw), list those action ids in dependencies, and size the open's authorizedSpends to the intended deposit (existing liquid of that asset plus expected swap proceeds). The host handles ASA opt-in for swap outputs during swap execution—do NOT emit a separate opt-in plan action.
    - dependencies may ONLY list other action id strings from this plan (e.g. "swap-algo-to-usdc"). Never list executionShapeKey values, opportunityIds, or protocol setup step names.
    - reduce/close/claim: set executionShapeKey from the position's compatibleExitShapeKeys or compatibleManageShapeKeys.
@@ -461,6 +463,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       plan: normalizePortfolioPlan(
         parsePlan(response.output_text),
         research.opportunities,
+        snapshot,
       ),
       opportunities: research.opportunities,
       payments,
@@ -529,6 +532,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
           plan: normalizePortfolioPlan(
             parsePlan(response.output_text),
             opportunities,
+            snapshot,
           ),
           opportunities,
           payments,

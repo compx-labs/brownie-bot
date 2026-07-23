@@ -44,9 +44,11 @@ The same checks run on GitHub Actions for pushes and pull requests to `main`
 - `npm test` mocks paid Canix402 behavior and should **not** spend funds.
 - `RUN_LIVE_SMOKE=true npm run test:smoke` hits the free health tool only — still
   network-dependent; run it manually when needed, never as required PR CI.
-- CLI scripts (`canix:opportunities`, `canix:personalized`, `canix:wallet-scan`)
-  and `npm run run-once` **do** spend USDC. Use them intentionally on a funded
-  test wallet.
+- `RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify` is a deliberate mainnet
+  round-trip suite on `TEST_WALLET` — never enable in CI.
+- CLI scripts (`canix:opportunities`, `canix:personalized`, `canix:wallet-scan`,
+  `canix:discover-verify`) and `npm run run-once` **do** spend USDC. Use them
+  intentionally on a funded wallet.
 
 ## Project map (short)
 

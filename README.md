@@ -298,8 +298,45 @@ smoke test calls only the free Canix402 health tool:
 RUN_LIVE_SMOKE=true npm run test:smoke
 ```
 
-Paid end-to-end testing must be performed deliberately with the configured,
-funded wallet.
+### Protocol verify (live round-trips)
+
+Before shipping signing-enabled deploys, prove each protocol path with a
+**dedicated** wallet (`TEST_WALLET` / `TEST_MNEMONIC` — do not reuse
+`BOT_WALLET`):
+
+1. Fund `TEST_WALLET` with ALGO (fees, stake, LP, swap), USDC (lending, LP,
+   x402), and **ORA** (`1284444444`) for Myth dualSTAKE. Defaults size each leg
+   at 1 ALGO / 1 USDC / 1 ORA (`PROTOCOL_VERIFY_AMOUNT_*`). Réti verify stakes at
+   least **2 ALGO** (pool MBR can make a 1 ALGO first deposit fail on-chain).
+   Validators may also require a higher `PROTOCOL_VERIFY_AMOUNT_ALGO` than their
+   `minEntryStake`.
+2. Pin opportunity IDs (paid Canix research):
+
+```bash
+npm run canix:discover-verify
+```
+
+   Writes `tests/fixtures/protocol-verify-opportunities.json`.
+3. Run full enter→exit (and Haystack swap both ways) on the **same host path
+   production uses**: agent-minimal plan actions (shape key + spends/amount only)
+   → `normalizePortfolioPlan` shape completion → policy →
+   `AlgorandExecutionService` (quotes + local sign + submit). A green suite
+   means those pinned venues work when the live agent emits the same minimal
+   fields (shape key, amounts, position id)—not a parallel verify-only builder.
+
+```bash
+RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify
+# Single case (also: test:protocol-verify:reti / :myth)
+# RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify:reti
+```
+
+Stops after the first failing case (`--bail=1`) so later protocols do not keep
+spending. This suite is **not** CI. It spends real mainnet USDC/ALGO/ORA and
+Canix x402 fees.
+
+Cases: Folks USDC deposit, Folks ALGO stake, Tinyman LP, CompX lending, Dorkfi
+USDC lending, PAct LP, Haystack ALGO↔USDC swap, **Réti pooling**, **Myth
+dualSTAKE (ORA)**. (Tinyman LP+farm deferred.)
 
 ## Container (DigitalOcean)
 

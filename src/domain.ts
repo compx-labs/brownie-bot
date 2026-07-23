@@ -9,10 +9,13 @@ export const opportunityExecutionInputHintsSchema = z
     poolAppId: z.number().int().positive().optional(),
     marketAppId: z.number().int().positive().optional(),
     farmAppId: z.number().int().positive().optional(),
+    appId: z.number().int().positive().optional(),
+    validatorId: z.number().int().positive().optional(),
     poolId: z.string().min(1).optional(),
     programId: z.number().int().positive().optional(),
     liquidityAssetId: z.number().int().nonnegative().optional(),
     escrowAddress: z.string().min(58).max(58).optional(),
+    valueToVerify: z.union([z.number().int().nonnegative(), z.string()]).optional(),
   })
   .passthrough();
 
@@ -35,6 +38,45 @@ export type OpportunityExecutionShape = z.infer<
   typeof opportunityExecutionShapeSchema
 >;
 
+const opportunityAmountRequirementSchema = z
+  .object({
+    assetId: z.number().int().nonnegative(),
+    amount: z.string().regex(/^[0-9]+$/),
+  })
+  .passthrough();
+
+const opportunityEntryGateSchema = z
+  .object({
+    kind: z.enum([
+      "asa",
+      "asa-creator",
+      "nfd-linked-creators",
+      "nfd-root-segment",
+    ]),
+  })
+  .passthrough();
+
+export const opportunityEntryRequirementsSchema = z
+  .object({
+    minAmount: opportunityAmountRequirementSchema.optional(),
+    gates: z.array(opportunityEntryGateSchema).optional(),
+    gateMatch: z.enum(["any", "all"]).optional(),
+    eligibilityFullyCheckable: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const opportunityCapacitySchema = z
+  .object({
+    stakerSlotsRemaining: z.number().int().nonnegative().nullable().optional(),
+    algoRoomMicroAlgos: z
+      .string()
+      .regex(/^[0-9]+$/)
+      .nullable()
+      .optional(),
+    acceptingStake: z.boolean().optional(),
+  })
+  .passthrough();
+
 export const opportunitySchema = z.object({
   protocol: z.string().min(1),
   opportunityType: z.string().min(1),
@@ -48,11 +90,17 @@ export const opportunitySchema = z.object({
   sourceTimestamp: z.iso.datetime(),
   fetchedAt: z.iso.datetime(),
   notes: z.string().optional(),
+  entryRequirements: opportunityEntryRequirementsSchema.optional(),
+  capacity: opportunityCapacitySchema.optional(),
   executionReady: z.boolean(),
   executionShapes: z.array(opportunityExecutionShapeSchema),
 });
 
 export type Opportunity = z.infer<typeof opportunitySchema>;
+export type OpportunityEntryRequirements = z.infer<
+  typeof opportunityEntryRequirementsSchema
+>;
+export type OpportunityCapacity = z.infer<typeof opportunityCapacitySchema>;
 
 export const positionSchema = z.object({
   protocol: z.string().min(1),
@@ -68,6 +116,7 @@ export const positionSchema = z.object({
   sourceTimestamp: z.iso.datetime().optional(),
   caveats: z.array(z.string()).optional(),
   notes: z.string().optional(),
+  inputHints: opportunityExecutionInputHintsSchema.optional(),
   compatibleExitShapeKeys: z.array(z.string().min(1)).default([]),
   compatibleManageShapeKeys: z.array(z.string().min(1)).default([]),
 });
