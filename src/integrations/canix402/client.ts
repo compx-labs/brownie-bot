@@ -127,7 +127,10 @@ export class Canix402Client {
     walletAddress: string,
   ): Promise<ManagedToolResult> {
     const args = injectManagedWallet(name, rawArgs, walletAddress);
-    const preflight = parseToolPayload(await this.caller.callTool(name, args));
+    const preflight = parseToolPayload(
+      await this.caller.callTool(name, args),
+      name,
+    );
     const parsedPreflight = preflightSchema.safeParse(preflight);
     if (!parsedPreflight.success) {
       if (isToolError(preflight)) {
@@ -154,6 +157,7 @@ export class Canix402Client {
         ...args,
         paymentSignature: builtPayment.paymentSignature,
       }),
+      name,
     );
     if (isToolError(paidPayload)) {
       throw new Error(formatToolError(paidPayload));
@@ -222,6 +226,7 @@ export class Canix402Client {
   ): Promise<OpportunityResult> {
     const preflight = parseToolPayload(
       await this.caller.callTool(toolName, args),
+      toolName,
     );
 
     const parsedPreflight = preflightSchema.safeParse(preflight);
@@ -248,6 +253,7 @@ export class Canix402Client {
         ...args,
         paymentSignature: builtPayment.paymentSignature,
       }),
+      toolName,
     );
     if (isToolError(paidPayload)) {
       throw new Error(formatToolError(paidPayload));
@@ -264,7 +270,10 @@ export class Canix402Client {
   }
 
   async health(): Promise<unknown> {
-    return parseToolPayload(await this.caller.callTool("canix_health", {}));
+    return parseToolPayload(
+      await this.caller.callTool("canix_health", {}),
+      "canix_health",
+    );
   }
 
   async getTokenPrices(assetIds: number[]): Promise<AssetPrice[]> {
@@ -279,6 +288,7 @@ export class Canix402Client {
         await this.caller.callTool("canix_get_token_prices", {
           assetIds: batch,
         }),
+        "canix_get_token_prices",
       );
       if (isToolError(payload)) {
         throw new Error(formatToolError(payload));
@@ -370,29 +380,44 @@ export function prepareAgentTools(
   }));
 }
 
-function parseToolPayload(result: unknown): unknown {
+function parseToolPayload(result: unknown, toolName?: string): unknown {
+  const label = toolName ? `Canix402 ${toolName}` : "Canix402 MCP";
   if (!result || typeof result !== "object") {
-    throw new Error("Canix402 MCP returned an invalid tool result");
+    throw new Error(`${label} returned an invalid tool result`);
   }
-  const content = (result as Record<string, unknown>).content;
+  const record = result as Record<string, unknown>;
+  const content = record.content;
   if (!Array.isArray(content)) {
-    throw new Error("Canix402 MCP tool result has no content");
+    throw new Error(`${label} tool result has no content`);
   }
-  const textItem = content.find((item) => {
+  const textParts = content.flatMap((item) => {
     if (!item || typeof item !== "object") {
-      return false;
+      return [];
     }
-    const record = item as Record<string, unknown>;
-    return record.type === "text" && typeof record.text === "string";
-  }) as Record<string, unknown> | undefined;
-  if (!textItem) {
-    throw new Error("Canix402 MCP tool result has no text payload");
+    const entry = item as Record<string, unknown>;
+    return entry.type === "text" && typeof entry.text === "string"
+      ? [entry.text]
+      : [];
+  });
+  if (textParts.length === 0) {
+    // Some MCP transports put JSON in structuredContent instead of text.
+    if (record.structuredContent !== undefined) {
+      return record.structuredContent;
+    }
+    throw new Error(`${label} tool result has no text payload`);
   }
-  const text = textItem.text as string;
+  const text = textParts.join("");
+  const trimmed = text.trim();
+  if (trimmed.startsWith("MCP error")) {
+    throw new Error(`${label}: ${truncateErrorDetail(trimmed)}`);
+  }
   try {
     return JSON.parse(text) as unknown;
-  } catch {
-    throw new Error("Canix402 MCP returned invalid JSON");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `${label} returned invalid JSON (${reason}; length=${text.length}; preview=${truncateErrorDetail(text)})`,
+    );
   }
 }
 

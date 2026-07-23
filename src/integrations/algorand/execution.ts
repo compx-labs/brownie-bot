@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
+
 import algosdk from "algosdk";
 import { z } from "zod";
 
 import type {
   ExecutionOutcome,
   Opportunity,
+  OpportunityExecutionShape,
   PaymentReceipt,
   PortfolioAction,
 } from "../../domain.js";
@@ -173,6 +176,7 @@ export class AlgorandExecutionService {
       : undefined;
     if (
       opportunity &&
+      ["open", "increase"].includes(action.type) &&
       needsSequentialEscrowExecution(opportunity.executionShapes)
     ) {
       return this.executeSequentialEscrowShapes(action, opportunity);
@@ -187,22 +191,125 @@ export class AlgorandExecutionService {
     outcome: ExecutionOutcome;
     payments: PaymentReceipt[];
   }> {
+    const opportunity = action.opportunityId
+      ? opportunities.find(
+          (candidate) => candidate.opportunityId === action.opportunityId,
+        )
+      : undefined;
+    const enrichedAction: PortfolioAction = {
+      ...action,
+      executionInput: await this.enrichShapeExecutionInput(action, opportunity),
+    };
     const quotes = buildQuoteRequests(
-      action,
+      enrichedAction,
       opportunities,
       this.policy.maxSlippageBps,
     );
-    const { batch, payments } = await this.requestQuotes(action.id, quotes);
+    const receiveAssetIds = collectPotentialReceiveAssetIds(
+      enrichedAction,
+      opportunity,
+    );
+    const extraSigners = await this.folksExitExtraSigners(
+      enrichedAction,
+      opportunity,
+    );
+
+    // Pact farm:deployEscrow (and similar) must confirm before the capital
+    // enter shape can be quoted — batch quoting would fail hasEscrow checks.
+    if (quotesNeedSequentialConfirm(quotes)) {
+      return this.executeSequentialQuoteSteps(
+        enrichedAction,
+        quotes,
+        receiveAssetIds,
+        extraSigners,
+      );
+    }
+
+    const { batch, payments } = await this.requestQuotes(
+      enrichedAction.id,
+      quotes,
+    );
+    let lastOutcome: ExecutionOutcome = {
+      actionId: enrichedAction.id,
+      status: "failed",
+      error: "No execution quotes returned",
+    };
+
+    for (const [index, quote] of batch.data.entries()) {
+      assertFresh(quote.expiresAt);
+      const encoded = await this.withLeadingAssetOptIns(
+        quote.encodedTransactions,
+        [
+          ...receiveAssetIds,
+          ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
+        ],
+      );
+      const submit = await this.signAndSubmitEncoded(
+        batch.data.length === 1
+          ? enrichedAction.id
+          : `${enrichedAction.id}:${index}`,
+        encoded,
+        extraSigners,
+      );
+      lastOutcome = {
+        ...submit.outcome,
+        actionId: enrichedAction.id,
+        toolName: "canix_get_execution_quote",
+      };
+      if (submit.outcome.status !== "confirmed") {
+        return { outcome: lastOutcome, payments };
+      }
+    }
+    return { outcome: lastOutcome, payments };
+  }
+
+  /**
+   * Quote and submit one shape at a time so post-confirm prerequisites
+   * (deployEscrow) are visible to the next quote.
+   */
+  private async executeSequentialQuoteSteps(
+    action: PortfolioAction,
+    quotes: Array<{ shapeKey: string; input: Record<string, unknown> }>,
+    receiveAssetIds: number[],
+    extraSigners: Map<string, Uint8Array>,
+  ): Promise<{
+    outcome: ExecutionOutcome;
+    payments: PaymentReceipt[];
+  }> {
+    const payments: PaymentReceipt[] = [];
     let lastOutcome: ExecutionOutcome = {
       actionId: action.id,
       status: "failed",
       error: "No execution quotes returned",
     };
-    for (const [index, quote] of batch.data.entries()) {
+
+    for (const [index, quoteRequest] of quotes.entries()) {
+      const stepLabel =
+        quotes.length === 1 ? action.id : `${action.id}:${index}`;
+      let batch: z.infer<typeof executionQuoteBatchSchema>;
+      try {
+        const result = await this.requestQuotes(stepLabel, [quoteRequest]);
+        batch = result.batch;
+        payments.push(...result.payments);
+      } catch (error) {
+        if (isSkippablePrerequisiteQuoteError(quoteRequest.shapeKey, error)) {
+          console.error(
+            `[execution] Skipping already-complete prerequisite ${quoteRequest.shapeKey} for ${action.id}`,
+          );
+          continue;
+        }
+        throw error;
+      }
+
+      const quote = batch.data[0]!;
       assertFresh(quote.expiresAt);
       const submit = await this.signAndSubmitEncoded(
-        batch.data.length === 1 ? action.id : `${action.id}:${index}`,
-        quote.encodedTransactions,
+        stepLabel,
+        await this.withLeadingAssetOptIns(quote.encodedTransactions, [
+          ...receiveAssetIds,
+          ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
+        ]),
+        extraSigners,
       );
       lastOutcome = {
         ...submit.outcome,
@@ -214,6 +321,97 @@ export class AlgorandExecutionService {
       }
     }
     return { outcome: lastOutcome, payments };
+  }
+
+  /**
+   * Folks withdraw/exit quotes need escrowAddress + amount fields; deposit-style
+   * assetAmount alone is not enough. Pull escrow from the local store when known.
+   */
+  private async enrichShapeExecutionInput(
+    action: PortfolioAction,
+    opportunity: Opportunity | undefined,
+  ): Promise<Record<string, unknown>> {
+    const input: Record<string, unknown> = { ...(action.executionInput ?? {}) };
+    const shapeKey = action.executionShapeKey ?? "";
+    const isFolksWithdraw =
+      /folks/i.test(shapeKey) && /withdraw/i.test(shapeKey);
+
+    if (
+      ["reduce", "close"].includes(action.type) &&
+      isFolksWithdraw
+    ) {
+      if (input.amount === undefined && action.amountRaw) {
+        input.amount = action.amountRaw;
+      }
+      if (input.amountDenomination === undefined) {
+        // Match Canix Folks live round-trip: withdraw in underlying asset units.
+        input.amountDenomination = "asset";
+      }
+      // Withdraw shape only accepts amount / amountDenomination (not deposit fields).
+      delete input.assetAmount;
+      delete input.liquidityAssetAmount;
+      if (input.poolAppId === undefined && opportunity) {
+        const poolAppId = resolvePoolAppId(
+          opportunity.executionShapes,
+          input,
+        );
+        if (poolAppId !== undefined) {
+          input.poolAppId = poolAppId;
+        }
+      }
+      // Canix withdraw rejects poolAppId + assetId together; prefer poolAppId.
+      if (input.poolAppId !== undefined) {
+        delete input.assetId;
+      }
+      if (
+        typeof input.escrowAddress !== "string" &&
+        this.folksEscrowStore &&
+        typeof input.poolAppId === "number"
+      ) {
+        const escrow = await this.folksEscrowStore.get(
+          this.managedAddress,
+          input.poolAppId,
+        );
+        if (escrow) {
+          input.escrowAddress = escrow.escrowAddress;
+        }
+      }
+    }
+
+    return input;
+  }
+
+  private async folksExitExtraSigners(
+    action: PortfolioAction,
+    opportunity: Opportunity | undefined,
+  ): Promise<Map<string, Uint8Array>> {
+    const signers = new Map<string, Uint8Array>();
+    const shapeKey = action.executionShapeKey ?? "";
+    if (
+      !this.folksEscrowStore ||
+      !["reduce", "close"].includes(action.type) ||
+      !/folks/i.test(shapeKey)
+    ) {
+      return signers;
+    }
+    const poolAppId = resolvePoolAppId(
+      opportunity?.executionShapes ?? [],
+      action.executionInput ?? {},
+    );
+    if (poolAppId === undefined) {
+      return signers;
+    }
+    const escrow = await this.folksEscrowStore.get(
+      this.managedAddress,
+      poolAppId,
+    );
+    if (escrow) {
+      signers.set(
+        escrow.escrowAddress,
+        secretKeyFromBase64(escrow.escrowPrivateKeyBase64),
+      );
+    }
+    return signers;
   }
 
   private async executeSequentialEscrowShapes(
@@ -309,7 +507,10 @@ export class AlgorandExecutionService {
 
       const submit = await this.signAndSubmitEncoded(
         `${action.id}:${classifyFolksShape(shape)}`,
-        quote.encodedTransactions,
+        await this.withLeadingAssetOptIns(quote.encodedTransactions, [
+          ...collectPotentialReceiveAssetIds(action, opportunity),
+          ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
+        ]),
         extraSigners,
       );
       lastOutcome = {
@@ -403,6 +604,37 @@ export class AlgorandExecutionService {
       }
       throw error;
     }
+  }
+
+  /**
+   * If the treasury is missing ASA opt-ins for assets the action may receive
+   * (e.g. xALGO from Folks stake), prepend self opt-in transfers as the leading
+   * transactions in the atomic group before payment/app calls.
+   */
+  private async withLeadingAssetOptIns(
+    encodedTransactions: string[],
+    assetIds: number[],
+  ): Promise<string[]> {
+    const missing: number[] = [];
+    for (const assetId of assetIds) {
+      if (assetId <= 0) {
+        continue;
+      }
+      if (!(await this.isAssetOptedIn(this.managedAddress, assetId))) {
+        missing.push(assetId);
+      }
+    }
+    if (missing.length === 0) {
+      return encodedTransactions;
+    }
+    console.error(
+      `[execution] Prepending ASA opt-in(s) for asset(s) ${missing.join(", ")} before execution group`,
+    );
+    return prependAssetOptInTransactions(
+      encodedTransactions,
+      this.managedAddress,
+      missing,
+    );
   }
 
   private async executeSwap(action: PortfolioAction): Promise<{
@@ -508,7 +740,13 @@ export class AlgorandExecutionService {
     if (!this.policy.signingEnabled) {
       return { outcome: { actionId, status: "validated-dry-run" } };
     }
-    const signed = encodedTransactions.map((encoded) => {
+    // Canix quotes are deterministic within a validity window; unique notes
+    // keep retries/re-runs from colliding with already-confirmed txids.
+    const uniqueEncoded = applyUniqueTransactionNotes(
+      encodedTransactions,
+      actionId,
+    );
+    const signed = uniqueEncoded.map((encoded) => {
       const transaction = algosdk.decodeUnsignedTransaction(
         Buffer.from(encoded, "base64"),
       );
@@ -557,9 +795,21 @@ export class AlgorandExecutionService {
         outcome: { actionId, status: "validated-dry-run" },
       };
     }
-    const signed = members.map((member) => {
+    // Only rewrite notes when every member is user-signed (e.g. opt-in groups).
+    // Haystack co-signed groups cannot be regrouped without invalidating provider signatures.
+    const allUserSigned = members.every((member) => member.signer === "user");
+    const uniqueEncoded = allUserSigned
+      ? applyUniqueTransactionNotes(
+          members.map((member) => member.encoded),
+          actionId,
+        )
+      : null;
+    const signed = members.map((member, index) => {
       if (member.signer === "user") {
-        return signEncodedTransaction(member.encoded, this.wallet.secretKey);
+        return signEncodedTransaction(
+          uniqueEncoded?.[index] ?? member.encoded,
+          this.wallet.secretKey,
+        );
       }
       if (!member.signed) {
         throw new Error(
@@ -587,6 +837,61 @@ export class AlgorandExecutionService {
   }
 }
 
+/**
+ * Exit / redeem shapes must never be batched into an open/increase enter path.
+ * (e.g. Folks xALGO unstake attached beside stake for later exit quoting.)
+ */
+export function isExitOrRedeemShape(shape: OpportunityExecutionShape): boolean {
+  const key =
+    `${shape.shapeKey}:${shape.action}:${shape.variant}`.toLowerCase();
+  return /unstake|redeem|removeLiquidity|withdraw|burn|claim/.test(key);
+}
+
+/** Setup / opt-in / escrow-deploy prerequisites that may precede a capital-enter shape. */
+export function isSetupOrPrerequisiteShape(
+  shape: OpportunityExecutionShape,
+): boolean {
+  const action = shape.action.toLowerCase();
+  const variant = shape.variant.toLowerCase();
+  const key = shape.shapeKey.toLowerCase();
+  return (
+    /setup|optin|create|deployescrow/i.test(action) ||
+    /setup|opt|deployescrow/i.test(variant) ||
+    key.includes(":setup:") ||
+    key.includes("deployescrow") ||
+    /:opt(?:in|escrow)?(?::|$)/i.test(key)
+  );
+}
+
+/**
+ * Prerequisites that must confirm on-chain before the next shape can be quoted
+ * (e.g. Pact farm:deployEscrow — escrow app id is only known post-confirm).
+ */
+export function isPostConfirmPrerequisiteShape(
+  shape: Pick<OpportunityExecutionShape, "shapeKey" | "action" | "variant">,
+): boolean {
+  const key = `${shape.shapeKey}:${shape.action}:${shape.variant}`.toLowerCase();
+  return /deployescrow/.test(key);
+}
+
+export function quotesNeedSequentialConfirm(
+  quotes: Array<{ shapeKey: string }>,
+): boolean {
+  return quotes.some((quote) => /deployescrow/i.test(quote.shapeKey));
+}
+
+/** deployEscrow quote fails when escrow already exists — safe to skip. */
+export function isSkippablePrerequisiteQuoteError(
+  shapeKey: string,
+  error: unknown,
+): boolean {
+  if (!/deployescrow/i.test(shapeKey)) {
+    return false;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /already has .*escrow|escrow already/i.test(message);
+}
+
 export function buildQuoteRequests(
   action: PortfolioAction,
   opportunities: Opportunity[],
@@ -605,7 +910,49 @@ export function buildQuoteRequests(
     !needsSequentialEscrowExecution(opportunity.executionShapes)
   ) {
     const shapes = sortExecutionShapes(opportunity.executionShapes);
-    return shapes.map((shape) => ({
+    const targetKey = action.executionShapeKey!;
+    const target = shapes.find((shape) => shape.shapeKey === targetKey);
+
+    // LST unstake (and similar) may be modeled as open against an exit shape —
+    // quote only that shape, never the paired stake/deposit enter shapes.
+    if (target && isExitOrRedeemShape(target)) {
+      return [
+        {
+          shapeKey: target.shapeKey,
+          input: buildShapeInput(target, executionInput, maxSlippageBps),
+        },
+      ];
+    }
+
+    // Enter path: the chosen capital-enter shape plus any setup prerequisites.
+    // Do NOT batch sibling enter variants (e.g. Tinyman initial/singleAsset
+    // when the action targets flexible).
+    const selected = shapes.filter((shape) => {
+      if (isExitOrRedeemShape(shape)) {
+        return false;
+      }
+      if (shape.shapeKey === targetKey) {
+        return true;
+      }
+      if (!target) {
+        return false;
+      }
+      return (
+        isSetupOrPrerequisiteShape(shape) && shape.order <= target.order
+      );
+    });
+    if (selected.length === 0) {
+      return [
+        {
+          shapeKey: targetKey,
+          input: {
+            ...executionInput,
+            maxSlippageBps,
+          },
+        },
+      ];
+    }
+    return selected.map((shape) => ({
       shapeKey: shape.shapeKey,
       input: buildShapeInput(shape, executionInput, maxSlippageBps),
     }));
@@ -619,6 +966,208 @@ export function buildQuoteRequests(
       },
     },
   ];
+}
+
+/**
+ * ASA IDs the wallet may receive from an enter/exit (excludes native ALGO).
+ * Used to decide whether a leading self opt-in is required in the group.
+ */
+export function collectPotentialReceiveAssetIds(
+  action: PortfolioAction,
+  opportunity: Opportunity | undefined,
+): number[] {
+  const ids = new Set<number>();
+  for (const assetId of opportunity?.assetIds ?? []) {
+    if (assetId > 0) {
+      ids.add(assetId);
+    }
+  }
+  for (const shape of opportunity?.executionShapes ?? []) {
+    for (const assetId of shape.requiredAssetIds) {
+      if (assetId > 0) {
+        ids.add(assetId);
+      }
+    }
+    const hints = shape.inputHints;
+    if (!hints) {
+      continue;
+    }
+    for (const key of [
+      "liquidityAssetId",
+      "assetId",
+      "assetAId",
+      "assetBId",
+      "depositAssetId",
+    ] as const) {
+      const value = hints[key];
+      if (typeof value === "number" && value > 0) {
+        ids.add(value);
+      }
+    }
+  }
+  if (action.toAssetId !== null && action.toAssetId > 0) {
+    ids.add(action.toAssetId);
+  }
+  return [...ids].sort((left, right) => left - right);
+}
+
+/**
+ * LP / receipt ASAs exposed on Canix quote metadata (Tinyman poolTokenId,
+ * Pact liquidityAssetId, etc.) that opportunity.assetIds often omit.
+ */
+export function collectReceiveAssetIdsFromQuoteMetadata(
+  metadata: Record<string, unknown> | undefined,
+): number[] {
+  if (!metadata) {
+    return [];
+  }
+  const ids = new Set<number>();
+  for (const key of [
+    "poolTokenId",
+    "liquidityAssetId",
+    "liquidityAssetID",
+  ] as const) {
+    const value = metadata[key];
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      ids.add(value);
+      continue;
+    }
+    if (typeof value === "string" && /^\d+$/.test(value)) {
+      const parsed = Number(value);
+      if (Number.isSafeInteger(parsed) && parsed > 0) {
+        ids.add(parsed);
+      }
+    }
+  }
+  return [...ids].sort((left, right) => left - right);
+}
+
+const MAX_NOTE_BYTES = 1_024;
+const NOTE_ENCODER = new TextEncoder();
+
+/**
+ * Stamp a per-submit nonce onto each transaction note and rebuild the group.
+ * Canix execution quotes are deterministic for identical inputs within a validity
+ * window; without unique notes, retries collide with already-confirmed txids
+ * ("transaction already in ledger").
+ *
+ * Existing notes are preserved as a prefix (protocol-required note prefixes keep
+ * working) and a `|brownie|<actionId>|<nonce>|<index>` suffix is appended.
+ */
+export function applyUniqueTransactionNotes(
+  encodedTransactions: string[],
+  actionId: string,
+  nonce: string = randomUUID(),
+): string[] {
+  if (encodedTransactions.length === 0) {
+    return encodedTransactions;
+  }
+  const transactions = encodedTransactions.map((encoded, index) => {
+    const transaction = algosdk.decodeUnsignedTransaction(
+      Buffer.from(encoded, "base64"),
+    );
+    // decodeUnsignedTransaction returns a mutable wire object; note/group are
+    // typed readonly on Transaction but must be rewritten before re-signing.
+    const mutable = transaction as algosdk.Transaction & {
+      group?: Uint8Array;
+      note?: Uint8Array;
+    };
+    mutable.group = undefined;
+    mutable.note = buildUniqueNote(transaction.note, actionId, nonce, index);
+    return transaction;
+  });
+  const grouped =
+    transactions.length === 1
+      ? transactions
+      : algosdk.assignGroupID(transactions);
+  return grouped.map((transaction) =>
+    Buffer.from(algosdk.encodeUnsignedTransaction(transaction)).toString(
+      "base64",
+    ),
+  );
+}
+
+function buildUniqueNote(
+  existingNote: Uint8Array | undefined,
+  actionId: string,
+  nonce: string,
+  index: number,
+): Uint8Array {
+  const uniqueSuffix = NOTE_ENCODER.encode(
+    `|brownie|${actionId}|${nonce}|${index}`,
+  );
+  if (!existingNote || existingNote.length === 0) {
+    // Drop the leading "|" when there is no protocol note to preserve.
+    return NOTE_ENCODER.encode(`brownie|${actionId}|${nonce}|${index}`);
+  }
+  if (existingNote.length + uniqueSuffix.length <= MAX_NOTE_BYTES) {
+    const combined = new Uint8Array(existingNote.length + uniqueSuffix.length);
+    combined.set(existingNote, 0);
+    combined.set(uniqueSuffix, existingNote.length);
+    return combined;
+  }
+  // Prefer uniqueness over preserving an oversized protocol note.
+  return NOTE_ENCODER.encode(`brownie|${actionId}|${nonce}|${index}`);
+}
+
+/**
+ * Rebuild an atomic group with missing ASA opt-ins as the leading transactions.
+ * Clears any existing group ID and reassigns so the opt-ins share the group.
+ */
+export function prependAssetOptInTransactions(
+  encodedTransactions: string[],
+  senderAddress: string,
+  assetIds: number[],
+): string[] {
+  const uniqueAssetIds = [
+    ...new Set(assetIds.filter((assetId) => assetId > 0)),
+  ].sort((left, right) => left - right);
+  if (uniqueAssetIds.length === 0 || encodedTransactions.length === 0) {
+    return encodedTransactions;
+  }
+
+  const existing = encodedTransactions.map((encoded) =>
+    algosdk.decodeUnsignedTransaction(Buffer.from(encoded, "base64")),
+  );
+  for (const transaction of existing) {
+    transaction.group = undefined;
+  }
+
+  const template = existing[0]!;
+  const suggestedParams = {
+    fee: 1_000n,
+    flatFee: true as const,
+    firstValid: template.firstValid,
+    lastValid: template.lastValid,
+    genesisHash: template.genesisHash!,
+    genesisID: template.genesisID ?? "",
+    minFee: 1_000n,
+  };
+
+  const optIns = uniqueAssetIds.map((assetId) =>
+    algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: senderAddress,
+      receiver: senderAddress,
+      amount: 0n,
+      assetIndex: BigInt(assetId),
+      suggestedParams,
+    }),
+  );
+
+  const grouped = algosdk.assignGroupID([...optIns, ...existing]);
+  if (grouped.length !== optIns.length + existing.length) {
+    throw new Error("Failed to rebuild execution group with ASA opt-ins");
+  }
+  if (grouped.length > 16) {
+    throw new Error(
+      `Execution group with ASA opt-ins exceeds Algorand limit (${grouped.length} > 16)`,
+    );
+  }
+  return grouped.map((transaction) =>
+    Buffer.from(algosdk.encodeUnsignedTransaction(transaction)).toString(
+      "base64",
+    ),
+  );
 }
 
 /** Per-shape inputs only: hints + required fields from the action, not the full deposit blob. */
@@ -650,6 +1199,7 @@ export function buildShapeInput(
 /**
  * Folks shapes reject sending both poolAppId and assetId. Prefer poolAppId
  * because USDC maps to multiple Folks pools and the gateway requires it.
+ * Must not run for other protocols (e.g. Dork.fi requires both).
  */
 export function sanitizeFolksIdentifierFields(
   shape: {
@@ -659,8 +1209,12 @@ export function sanitizeFolksIdentifierFields(
   },
   input: Record<string, unknown>,
 ): Record<string, unknown> {
+  const shapeKey = shape.shapeKey ?? "";
+  if (!/folks/i.test(shapeKey)) {
+    return input;
+  }
   const role = classifyFolksShape({
-    shapeKey: shape.shapeKey ?? "",
+    shapeKey,
     protocol: "folks-finance",
     protocolVersion: "v2",
     action: shape.action ?? "unknown",

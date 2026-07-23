@@ -160,6 +160,39 @@ Only after several clean dry runs:
 Signing adds execution-quote payments (~0.10 USDC ceiling per quote request)
 plus on-chain ALGO fees for submitted groups.
 
+## 7. Protocol verify (optional, before going live)
+
+Use a **separate** funded wallet so production treasury is untouched:
+
+```dotenv
+TEST_WALLET=
+TEST_MNEMONIC=
+# PROTOCOL_VERIFY_AMOUNT_USDC=1
+# PROTOCOL_VERIFY_AMOUNT_ALGO=1
+# PROTOCOL_VERIFY_AMOUNT_ORA=1
+```
+
+Fund ALGO, USDC, and ORA (`1284444444`) on `TEST_WALLET`. Réti stakes at least
+2 ALGO (first deposit can fail at exactly 1 ALGO due to pool MBR). Some
+validators also need a higher amount than the default when `minEntryStake` is
+larger.
+
+```bash
+# Pin stable opportunity IDs for each protocol case
+npm run canix:discover-verify
+
+# Full mainnet enter→exit (and Haystack swap round-trip); spends real funds
+RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify
+
+# Or one case only:
+# RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify:reti
+# RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify:myth
+```
+
+Cases covered: Folks USDC deposit, Folks ALGO stake, Tinyman LP, CompX lending,
+Dorkfi USDC lending, PAct LP, Haystack ALGO↔USDC swap, Réti pooling, Myth
+dualSTAKE (ORA). (Tinyman LP+farm deferred.)
+
 ---
 
 ## Expected costs

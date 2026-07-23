@@ -115,6 +115,49 @@ describe("PortfolioPolicy", () => {
     );
   });
 
+  it("allows incomplete snapshots when blockIncompleteSnapshot is false", () => {
+    const verifyLikePolicy = new PortfolioPolicy({
+      ...policyConfig,
+      blockIncompleteSnapshot: false,
+    });
+    const candidate = opportunity({
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+    });
+    const result = verifyLikePolicy.validate(
+      portfolioSnapshot({
+        complete: false,
+        caveats: [
+          "pact positions are partial: Pact farm reward USD pricing is unavailable.",
+          "At least one aggregate position valuation is incomplete",
+        ],
+      }),
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [
+          { ...liquid, weightPct: 60 },
+          {
+            key: "opportunity:tinyman:pool:1",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: candidate.assetIds ?? [],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [openAction()],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.warnings.join("\n")).toMatch(
+      /Pact farm reward USD pricing is unavailable.*continuing despite incomplete snapshot/,
+    );
+  });
+
   it("approves incomplete snapshots when signing is disabled and reports caveats", () => {
     const candidate = opportunity({
       sourceTimestamp: new Date().toISOString(),

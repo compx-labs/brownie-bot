@@ -6,6 +6,7 @@ import type {
   PortfolioPlan,
   PortfolioSnapshot,
 } from "../domain.js";
+import { completeActionExecutionInput } from "./shape-execution-input.js";
 
 export interface PortfolioPolicyConfig {
   maxPositionPct: number;
@@ -16,6 +17,12 @@ export interface PortfolioPolicyConfig {
   minProjectedNetImprovementUsd: number;
   /** When false, structural and data-quality issues become warnings so planning/dry-run can pass. */
   signingEnabled: boolean;
+  /**
+   * When false, incomplete snapshots warn instead of hard-blocking non-hold plans.
+   * Defaults to `signingEnabled`. Protocol-verify disables this so unpriced farm
+   * rewards / partial valuations do not stall enter→exit round-trips.
+   */
+  blockIncompleteSnapshot?: boolean;
 }
 
 /** Host expands these at quote time; standalone plan actions are redundant. */
@@ -29,12 +36,14 @@ const PREREQUISITE_SHAPE_ACTIONS = new Set([
 /**
  * Drop standalone setup/opt-in enter actions when a capital-deploying open/increase
  * for the same opportunity remains (host expands prerequisites at quote time),
- * fill missing executionInput from shape inputHints, and drop dependency entries
- * that are not action ids in this plan (models often stuff shapeKeys there).
+ * complete missing executionInput from Canix shape requiredInputs/inputHints
+ * (same path for production agent plans and protocol-verify), and drop dependency
+ * entries that are not action ids in this plan.
  */
 export function normalizePortfolioPlan(
   plan: PortfolioPlan,
   opportunities: Opportunity[],
+  snapshot?: PortfolioSnapshot,
 ): PortfolioPlan {
   const shapesByKey = new Map<string, OpportunityExecutionShape>();
   for (const opportunity of opportunities) {
@@ -59,22 +68,25 @@ export function normalizePortfolioPlan(
   const droppedIds = new Set<string>();
   let changed = false;
   const actions = plan.actions.flatMap((action) => {
-    if (!isEnterAction(action) || !action.opportunityId) {
-      return [action];
+    if (isEnterAction(action) && action.opportunityId) {
+      const shape = action.executionShapeKey
+        ? shapesByKey.get(action.executionShapeKey)
+        : undefined;
+      if (
+        shape &&
+        isPrerequisiteShape(shape) &&
+        capitalOpportunityIds.has(action.opportunityId)
+      ) {
+        droppedIds.add(action.id);
+        changed = true;
+        return [];
+      }
     }
-    const shape = action.executionShapeKey
-      ? shapesByKey.get(action.executionShapeKey)
-      : undefined;
-    if (
-      shape &&
-      isPrerequisiteShape(shape) &&
-      capitalOpportunityIds.has(action.opportunityId)
-    ) {
-      droppedIds.add(action.id);
-      changed = true;
-      return [];
-    }
-    const filled = fillExecutionInputFromHints(action, shape);
+    const filled = completeActionExecutionInput(
+      action,
+      opportunities,
+      snapshot,
+    );
     if (filled !== action) {
       changed = true;
     }
@@ -123,19 +135,6 @@ function isEnterAction(action: PortfolioAction): boolean {
 
 function isPrerequisiteShape(shape: OpportunityExecutionShape): boolean {
   return PREREQUISITE_SHAPE_ACTIONS.has(shape.action.toLowerCase());
-}
-
-function fillExecutionInputFromHints(
-  action: PortfolioAction,
-  shape: OpportunityExecutionShape | undefined,
-): PortfolioAction {
-  if (action.executionInput || !shape?.inputHints) {
-    return action;
-  }
-  return {
-    ...action,
-    executionInput: { ...shape.inputHints },
-  };
 }
 
 export class PortfolioPolicy {
@@ -236,11 +235,17 @@ export class PortfolioPolicy {
           ? snapshot.caveats.join("; ")
           : "no caveats were recorded";
       const incompleteMessage = `Portfolio snapshot is incomplete (${causes})`;
-      if (this.config.signingEnabled) {
+      const blockIncomplete =
+        this.config.blockIncompleteSnapshot ?? this.config.signingEnabled;
+      if (blockIncomplete) {
         hard.push(`${incompleteMessage}; only hold is permitted while signing`);
-      } else {
+      } else if (!this.config.signingEnabled) {
         soft.push(
           `${incompleteMessage}; signing is disabled so the plan is still reported`,
+        );
+      } else {
+        soft.push(
+          `${incompleteMessage}; continuing despite incomplete snapshot`,
         );
       }
     }
