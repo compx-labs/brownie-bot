@@ -284,6 +284,20 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 ```
 
+When Telegram is configured, the **long-lived server** (`npm start` / Docker
+default `dist/index.js`) also long-polls for operator slash commands from
+`TELEGRAM_CHAT_ID` only:
+
+| Command | Behavior |
+|---|---|
+| `/help` | List commands |
+| `/status` | Health / busy / signing / last-run ages |
+| `/run` | Force a treasury review (same as `POST /runs`) |
+| `/accounting` | Force an accounting snapshot (same as `POST /accounting/run`) |
+
+One-shot entrypoints (`once`, smoke) do not start the command loop. On boot,
+pending updates are drained so a redeploy does not replay stale `/run`s.
+
 When Telegram is configured, review and accounting digests are sent as Telegram
 **rich messages** (`sendRichMessage`: `###` section headings, tables, collapsible
 details, Allo links). If rich delivery fails, the bot falls back to HTML

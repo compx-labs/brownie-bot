@@ -404,6 +404,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       model: this.options.model,
       instructions: PORTFOLIO_AGENT_PROMPT_LITE,
       input: initialInput,
+      store: false,
       reasoning: { effort: this.options.reasoningEffort },
       text: { format: planFormat },
     });
@@ -478,12 +479,13 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       hostGuidance: this.options.hostGuidance,
       portfolioSnapshot: compactSnapshotForModel(snapshot),
     });
-    /** When the provider omits response ids, replay the conversation explicitly. */
+    /** Explicit client-side transcript; never use previous_response_id (ZS/privacy). */
     let conversationItems: unknown[] = [];
     const first = await createAgentResponse(this.openai, {
       model: this.options.model,
       instructions: PORTFOLIO_AGENT_PROMPT_V1,
       input: initialInput,
+      store: false,
       reasoning: { effort: this.options.reasoningEffort },
       tools,
       tool_choice: "auto",
@@ -625,31 +627,19 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       }
 
       conversationItems = [...conversationItems, ...response.output, ...outputs];
-      const followUp =
-        response.id !== undefined
-          ? {
-              model: this.options.model,
-              previous_response_id: response.id,
-              input: outputs,
-              reasoning: { effort: this.options.reasoningEffort },
-              tools,
-              tool_choice: "auto" as const,
-              text: { format: planFormat },
-            }
-          : {
-              model: this.options.model,
-              instructions: PORTFOLIO_AGENT_PROMPT_V1,
-              input: [
-                { role: "user", content: initialInput },
-                ...conversationItems,
-              ],
-              reasoning: { effort: this.options.reasoningEffort },
-              tools,
-              tool_choice: "auto" as const,
-              text: { format: planFormat },
-            };
-
-      const next = await createAgentResponse(this.openai, followUp);
+      const next = await createAgentResponse(this.openai, {
+        model: this.options.model,
+        instructions: PORTFOLIO_AGENT_PROMPT_V1,
+        input: [
+          { role: "user", content: initialInput },
+          ...conversationItems,
+        ],
+        store: false,
+        reasoning: { effort: this.options.reasoningEffort },
+        tools,
+        tool_choice: "auto" as const,
+        text: { format: planFormat },
+      });
       recordInferenceCharge(inferenceCharges, next.headers);
       response = normalizeAgentResponse(next.data);
     }
@@ -675,39 +665,23 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       console.error(
         `[portfolio-agent] Plan JSON invalid; requesting one repair turn: ${safeErrorMessage(firstError)}`,
       );
-      const repairFollowUp =
-        response.id !== undefined
-          ? {
-              model: this.options.model,
-              previous_response_id: response.id,
-              input: [
-                {
-                  role: "user",
-                  content: PLAN_JSON_REPAIR_USER_MESSAGE,
-                },
-              ],
-              reasoning: { effort: this.options.reasoningEffort },
-              tools: [],
-              text: { format: planFormat },
-            }
-          : {
-              model: this.options.model,
-              instructions: context.instructions,
-              input: [
-                { role: "user", content: context.initialInput },
-                ...context.conversationItems,
-                ...response.output,
-                {
-                  role: "user",
-                  content: PLAN_JSON_REPAIR_USER_MESSAGE,
-                },
-              ],
-              reasoning: { effort: this.options.reasoningEffort },
-              tools: [],
-              text: { format: planFormat },
-            };
-
-      const repaired = await createAgentResponse(this.openai, repairFollowUp);
+      const repaired = await createAgentResponse(this.openai, {
+        model: this.options.model,
+        instructions: context.instructions,
+        input: [
+          { role: "user", content: context.initialInput },
+          ...context.conversationItems,
+          ...response.output,
+          {
+            role: "user",
+            content: PLAN_JSON_REPAIR_USER_MESSAGE,
+          },
+        ],
+        store: false,
+        reasoning: { effort: this.options.reasoningEffort },
+        tools: [],
+        text: { format: planFormat },
+      });
       recordInferenceCharge(context.inferenceCharges, repaired.headers);
       const repairedResponse = normalizeAgentResponse(repaired.data);
       try {

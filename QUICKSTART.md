@@ -58,6 +58,9 @@ DO with `PROXY_SPEND_DAILY_CAP_USDC` / `PROXY_SPEND_PER_REQUEST_CAP_USDC`.
 Transport privacy defaults to **off** (`zs.privacy: false`) so multi-turn reviews
 talk straight to the model operator and skip flaky relay hops. To re-enable
 relays: set `zs.privacy: true` in that file or `PROXY_ZS_PRIVACY=true`.
+Multi-turn Brownie **replays** the conversation client-side (`store: false`) and
+does not use `previous_response_id` (ZeroSignal-compatible; nodes do not keep
+prompt history).
 
 Then skip to [§4](#4-sanity-checks) / run a review via the container HTTP API or
 logs. For one-shot local Node reviews without Docker, use §2b.
@@ -102,6 +105,9 @@ Notes:
 - `OPEN_AI_API_KEY` is only a placeholder for the OpenAI SDK; zs-proxy ignores
   it. Admission is the wallet imported into the proxy.
 - Leave Telegram and Spaces unset for the lightest setup.
+- With Telegram set, the long-lived server (`npm run dev` / Docker default) also
+  accepts `/help`, `/status`, `/run`, and `/accounting` from `TELEGRAM_CHAT_ID`.
+  One-shot `run-once` does not poll for commands.
 
 ## 4. Sanity checks
 

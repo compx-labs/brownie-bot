@@ -197,9 +197,9 @@ describe("OpenAiPortfolioAgent", () => {
     expect(toolNames).not.toContain("canix_get_positions");
     const modelToolOutput = (
       create.mock.calls[1]?.[0] as {
-        input: Array<{ output?: string }>;
+        input: Array<{ type?: string; output?: string }>;
       }
-    ).input[0]?.output;
+    ).input.find((item) => item.type === "function_call_output")?.output;
     expect(modelToolOutput).toBeDefined();
     const parsedOutput = JSON.parse(modelToolOutput!) as {
       data: Array<{ shapeKeys: string[]; executionShapes?: unknown }>;
@@ -326,9 +326,9 @@ describe("OpenAiPortfolioAgent", () => {
 
     const firstOutput = (
       create.mock.calls[1]?.[0] as {
-        input: Array<{ output?: string }>;
+        input: Array<{ type?: string; output?: string }>;
       }
-    ).input[0]?.output;
+    ).input.find((item) => item.type === "function_call_output")?.output;
     expect(firstOutput).toContain("EXECUTION_HOST_ONLY");
     expect(callManagedTool).toHaveBeenCalledTimes(1);
     expect(callManagedTool).toHaveBeenCalledWith(
@@ -579,8 +579,12 @@ describe("OpenAiPortfolioAgent", () => {
     expect(create).toHaveBeenCalledTimes(3);
     const repairRequest = create.mock.calls[2]?.[0] as {
       tools: unknown[];
-      input: Array<{ role?: string; content?: string }>;
+      previous_response_id?: string;
+      store?: boolean;
+      input: Array<{ role?: string; content?: string; type?: string }>;
     };
+    expect(repairRequest.previous_response_id).toBeUndefined();
+    expect(repairRequest.store).toBe(false);
     expect(repairRequest.tools).toEqual([]);
     expect(
       repairRequest.input.some(
@@ -589,6 +593,9 @@ describe("OpenAiPortfolioAgent", () => {
           item.content.includes("valid portfolio_plan JSON"),
       ),
     ).toBe(true);
+    expect(repairRequest.input.some((item) => item.type === "function_call")).toBe(
+      true,
+    );
     errorSpy.mockRestore();
   });
 
@@ -642,11 +649,14 @@ describe("OpenAiPortfolioAgent", () => {
     expect(create).toHaveBeenCalledTimes(3);
     const secondInput = (
       create.mock.calls[1]?.[0] as {
-        input: Array<{ call_id?: string; output?: string }>;
+        input: Array<{ type?: string; call_id?: string; output?: string }>;
       }
     ).input;
-    expect(secondInput[0]?.call_id).toBe("call-1");
-    expect(secondInput[0]?.output).toContain("TOOL_UNAVAILABLE");
+    const skippedOutput = secondInput.find(
+      (item) => item.type === "function_call_output",
+    );
+    expect(skippedOutput?.call_id).toBe("call-1");
+    expect(skippedOutput?.output).toContain("TOOL_UNAVAILABLE");
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("canix_get_protocol_opportunities"),
     );
@@ -836,7 +846,65 @@ describe("OpenAiPortfolioAgent", () => {
     errorSpy.mockRestore();
   });
 
-  it("continues tool loops without previous_response_id when id is empty", async () => {
+  it("replays conversation client-side and never sends previous_response_id", async () => {
+    const finalPlan = portfolioPlan();
+    const { agent, create } = setup([
+      {
+        id: "response-1",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-1",
+            name: "canix_get_personalized_opportunities",
+            arguments: JSON.stringify({ limit: 10 }),
+          },
+        ],
+      },
+      {
+        id: "response-2",
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify(finalPlan),
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const result = await agent.run();
+    expect(result.plan).toEqual(finalPlan);
+    expect(create).toHaveBeenCalledTimes(2);
+
+    const first = create.mock.calls[0]?.[0] as {
+      store?: boolean;
+      previous_response_id?: string;
+    };
+    expect(first.store).toBe(false);
+    expect(first.previous_response_id).toBeUndefined();
+
+    const followUp = create.mock.calls[1]?.[0] as {
+      previous_response_id?: string;
+      store?: boolean;
+      input: unknown;
+    };
+    expect(followUp.previous_response_id).toBeUndefined();
+    expect(followUp.store).toBe(false);
+    expect(Array.isArray(followUp.input)).toBe(true);
+    const input = followUp.input as Array<Record<string, unknown>>;
+    expect(input[0]).toMatchObject({ role: "user" });
+    expect(input.some((item) => item.type === "function_call")).toBe(true);
+    expect(input.some((item) => item.type === "function_call_output")).toBe(
+      true,
+    );
+  });
+
+  it("replays conversation when response id is empty", async () => {
     const finalPlan = portfolioPlan();
     const { agent, create } = setup([
       {
@@ -872,9 +940,11 @@ describe("OpenAiPortfolioAgent", () => {
     expect(create).toHaveBeenCalledTimes(2);
     const followUp = create.mock.calls[1]?.[0] as {
       previous_response_id?: string;
+      store?: boolean;
       input: unknown;
     };
     expect(followUp.previous_response_id).toBeUndefined();
+    expect(followUp.store).toBe(false);
     expect(Array.isArray(followUp.input)).toBe(true);
     const input = followUp.input as Array<Record<string, unknown>>;
     expect(input[0]).toMatchObject({ role: "user" });

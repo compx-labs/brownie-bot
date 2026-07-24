@@ -51,6 +51,12 @@ import {
   type AccountingNotifier,
   type RunNotifier,
 } from "./services/telegram.js";
+import { TelegramBotClient } from "./services/telegram-bot.js";
+import {
+  createCommandDispatcher,
+  createOperatorCommandHandlers,
+  TelegramCommandLoop,
+} from "./services/telegram-commands.js";
 import {
   algodHealthUrl,
   buildHealthReport,
@@ -67,6 +73,8 @@ export interface AppContext {
   state: ReviewState;
   accountingState: AccountingState;
   coordinator: RunCoordinator;
+  /** Present when Telegram is configured; start from the long-lived server only. */
+  telegramCommandLoop?: TelegramCommandLoop;
 }
 
 const cashflowBodySchema = z.object({
@@ -373,6 +381,35 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     await canix.close();
   });
 
+  let telegramCommandLoop: TelegramCommandLoop | undefined;
+  if (isTelegramConfigured(config)) {
+    const telegram = requireTelegramCredentials(config);
+    const storage = isSpacesConfigured(config) ? "spaces" : "local";
+    const handlers = createOperatorCommandHandlers({
+      reviewService,
+      accountingService,
+      getHealthInput: () => ({
+        signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+        telegramConfigured: true,
+        accountingStorage: storage,
+        folksEscrowStorage: storage,
+        busy: coordinator.isBusy,
+        latestReview: state.latest,
+        latestAccounting: accountingState.latest,
+      }),
+    });
+    telegramCommandLoop = new TelegramCommandLoop({
+      client: new TelegramBotClient(telegram.botToken),
+      allowedChatId: telegram.chatId,
+      dispatch: createCommandDispatcher(handlers),
+      logger: {
+        info: (obj, msg) => app.log.info(obj, msg),
+        warn: (obj, msg) => app.log.warn(obj, msg),
+        error: (obj, msg) => app.log.error(obj, msg),
+      },
+    });
+  }
+
   return {
     app,
     reviewService,
@@ -381,5 +418,6 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     state,
     accountingState,
     coordinator,
+    telegramCommandLoop,
   };
 }
