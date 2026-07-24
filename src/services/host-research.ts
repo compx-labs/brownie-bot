@@ -5,7 +5,7 @@ import type {
 import type { Canix402Client } from "../integrations/canix402/client.js";
 
 /** Align with portfolio-agent opportunity tool cap. */
-export const HOST_RESEARCH_OPPORTUNITY_LIMIT = 25;
+export const HOST_RESEARCH_OPPORTUNITY_LIMIT = 10;
 
 export interface HostResearchOptions {
   walletAddress: string;

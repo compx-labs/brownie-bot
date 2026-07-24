@@ -50,7 +50,7 @@ const configSchema = z
     ),
     OPENAI_MODEL: z.preprocess(
       (value) => (value === "" ? undefined : value),
-      z.string().min(1).default("Qwen/Qwen3-Coder-480B-A35B-Instruct"),
+      z.string().min(1).default("glm-5.2"),
     ),
     OPENAI_REASONING_EFFORT: z
       .enum(["low", "medium", "high"])

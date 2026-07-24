@@ -11,6 +11,7 @@ import {
   type WalletPositions,
 } from "../../domain.js";
 import { formatMoney, moneyOrNull } from "../../services/money.js";
+import { sanitizeErrorText } from "../../util/errors.js";
 import type { PaymentBuilder } from "./payment.js";
 
 export interface McpToolDefinition {
@@ -491,10 +492,7 @@ function formatToolError(payload: {
 }
 
 function truncateErrorDetail(text: string, maxLength = 500): string {
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return `${text.slice(0, maxLength)}…`;
+  return sanitizeErrorText(text, { maxLength });
 }
 
 interface PaymentResourceExpectation {

@@ -55,6 +55,10 @@ zs-proxy status        # MBR pool should show ~1.15 ALGO deposited
 Spend caps ship in [`config/zs-proxy.yaml`](./config/zs-proxy.yaml). Override on
 DO with `PROXY_SPEND_DAILY_CAP_USDC` / `PROXY_SPEND_PER_REQUEST_CAP_USDC`.
 
+Transport privacy defaults to **off** (`zs.privacy: false`) so multi-turn reviews
+talk straight to the model operator and skip flaky relay hops. To re-enable
+relays: set `zs.privacy: true` in that file or `PROXY_ZS_PRIVACY=true`.
+
 Then skip to [§4](#4-sanity-checks) / run a review via the container HTTP API or
 logs. For one-shot local Node reviews without Docker, use §2b.
 
@@ -88,7 +92,7 @@ ENABLE_TRANSACTION_SIGNING=false
 # Defaults (usually fine to omit):
 # OPENAI_BASE_URL=http://127.0.0.1:8080/v1
 # OPEN_AI_API_KEY=zerosignal
-# OPENAI_MODEL=Qwen/Qwen3-Coder-480B-A35B-Instruct
+# OPENAI_MODEL=glm-5.2
 ```
 
 Notes:
@@ -106,9 +110,12 @@ Notes:
 npm run dev
 # In another terminal:
 curl -s localhost:3000/health
+# Optional dependency probes (zs-proxy, Algod, free canix_health):
+curl -s 'localhost:3000/health?deps=1'
 ```
 
-Expect `telegramConfigured` / `accountingStorage` to reflect what you set
+Expect `status` (`ok` | `degraded`), `latestReview` age/status when a run
+exists, and `telegramConfigured` / `accountingStorage` to reflect what you set
 (`local` when Spaces is omitted).
 
 Cheap portfolio probe (pays the positions fee only; does not need the LLM):
@@ -125,7 +132,7 @@ LLM connectivity smoke (ZeroSignal via zs-proxy + one paid
 npm run smoke:llm
 
 # Docker (starts zs-proxy in-image, then smoke):
-docker run --rm --env-file .ENV brownie-bot smoke
+docker run --rm --env-file .env brownie-bot smoke
 ```
 
 ## 5. First dry-run review
@@ -221,15 +228,16 @@ accounting).
 
 ### Ballpark per dry-run review
 
-**`AI_MODE=full` (default):** a typical dry-run pays for **positions + personalized + a few list/search/protocol
-calls**, plus **ZeroSignal** usage for the multi-turn planning model loop. Recent Canix
+**`AI_MODE=full` (default):** a typical dry-run pays for **positions + personalized + one
+list/search** (model-facing rows capped at 10 with `shapeKeys` only), plus **ZeroSignal**
+for the multi-turn planning loop. Recent Canix
 x402 spend often lands around **~0.05–0.15 USDC**, depending on how many research
 tools the model calls (`AI_MAX_TOOL_CALLS`, default 16). Inference cost depends
 on the live ZeroSignal catalog price for `OPENAI_MODEL` (default
-`Qwen/Qwen3-Coder-480B-A35B-Instruct`) and how many tool-follow-up turns run;
+`glm-5.2`) and how many tool-follow-up turns run;
 see [ZeroSignal pricing](https://txnlab.gitbook.io/zerosignal/for-users/pricing.md).
 
-**`AI_MODE=lite`:** the host prefetches research (personalized + list; no
+**`AI_MODE=lite`:** the host prefetches research (personalized + list, ≤10 rows each; no
 protocol favoritism), then makes **one**
 decide-only ZeroSignal call with tools disabled. Canix x402 is similar; ZeroSignal spend
 is usually much lower because there is no multi-turn tool loop. Prefer

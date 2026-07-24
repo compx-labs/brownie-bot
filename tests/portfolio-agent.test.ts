@@ -2,13 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Canix402Client } from "../src/integrations/canix402/client.js";
 import type { PortfolioReader } from "../src/integrations/algorand/portfolio.js";
+import { portfolioPlanSchema } from "../src/domain.js";
 import {
   OpenAiPortfolioAgent,
   MAX_OPPORTUNITY_TOOL_LIMIT,
   PORTFOLIO_AGENT_PROMPT_LITE,
   clampOpportunityToolArgs,
+  coercePortfolioPlanValue,
   compactToolResultForModel,
   extractOutputText,
+  extractStructuredPlanText,
   normalizeAgentResponse,
   selectAgentTools,
   type ResponsesClient,
@@ -161,7 +164,7 @@ describe("OpenAiPortfolioAgent", () => {
             type: "function_call",
             call_id: "call-1",
             name: "canix_get_personalized_opportunities",
-            arguments: JSON.stringify({ limit: 25 }),
+            arguments: JSON.stringify({ limit: MAX_OPPORTUNITY_TOOL_LIMIT }),
           },
         ],
       },
@@ -179,7 +182,7 @@ describe("OpenAiPortfolioAgent", () => {
     expect(result.toolCalls).toContain("canix_get_personalized_opportunities");
     expect(callManagedTool).toHaveBeenCalledWith(
       "canix_get_personalized_opportunities",
-      { limit: 25 },
+      { limit: MAX_OPPORTUNITY_TOOL_LIMIT },
       managedWallet,
     );
     expect(create).toHaveBeenCalledTimes(2);
@@ -199,14 +202,12 @@ describe("OpenAiPortfolioAgent", () => {
     ).input[0]?.output;
     expect(modelToolOutput).toBeDefined();
     const parsedOutput = JSON.parse(modelToolOutput!) as {
-      data: Array<{ executionShapes: Array<Record<string, unknown>> }>;
+      data: Array<{ shapeKeys: string[]; executionShapes?: unknown }>;
       meta: { returnedCount: number };
     };
     expect(parsedOutput.meta.returnedCount).toBe(1);
-    expect(parsedOutput.data[0]?.executionShapes[0]).not.toHaveProperty(
-      "title",
-    );
-    expect(parsedOutput.data[0]?.executionShapes[0]).toHaveProperty("shapeKey");
+    expect(parsedOutput.data[0]).not.toHaveProperty("executionShapes");
+    expect(parsedOutput.data[0]?.shapeKeys?.length).toBeGreaterThan(0);
   });
 
   it("lite mode prefetches host research and makes a single decide-only LLM call", async () => {
@@ -239,8 +240,11 @@ describe("OpenAiPortfolioAgent", () => {
       "canix_get_personalized_opportunities",
       "canix_list_opportunities",
     ]);
-    expect(getPersonalizedOpportunities).toHaveBeenCalledWith(managedWallet, 25);
-    expect(getOpportunities).toHaveBeenCalledWith(25);
+    expect(getPersonalizedOpportunities).toHaveBeenCalledWith(
+      managedWallet,
+      MAX_OPPORTUNITY_TOOL_LIMIT,
+    );
+    expect(getOpportunities).toHaveBeenCalledWith(MAX_OPPORTUNITY_TOOL_LIMIT);
     expect(callManagedTool).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledTimes(1);
     const request = create.mock.calls[0]?.[0] as {
@@ -390,27 +394,25 @@ describe("OpenAiPortfolioAgent", () => {
     const compacted = compactToolResultForModel(
       "canix_list_opportunities",
       { data: bulky },
-      { minTvlUsd: 100_000, maxRows: 10 },
+      { minTvlUsd: 100_000, maxRows: MAX_OPPORTUNITY_TOOL_LIMIT },
     ) as {
-      data: Array<{ opportunityId: string; executionShapes: unknown[] }>;
+      data: Array<{
+        opportunityId: string;
+        shapeKeys: string[];
+        executionShapes?: unknown;
+      }>;
       meta: { sourceCount: number; returnedCount: number; truncated: boolean };
     };
 
     expect(compacted.meta).toMatchObject({
       sourceCount: 40,
-      returnedCount: 10,
+      returnedCount: MAX_OPPORTUNITY_TOOL_LIMIT,
       truncated: true,
     });
-    expect(compacted.data).toHaveLength(10);
+    expect(compacted.data).toHaveLength(MAX_OPPORTUNITY_TOOL_LIMIT);
     expect(compacted.data[0]?.opportunityId).toBe("tinyman:pool:0");
-    expect(compacted.data[0]?.executionShapes[0]).toEqual({
-      shapeKey: "shape:0",
-      action: "addLiquidity",
-      order: 0,
-      requiredInputs: ["assetAAmount"],
-      requiredAssetIds: [0],
-      inputHints: { assetAId: 0 },
-    });
+    expect(compacted.data[0]).not.toHaveProperty("executionShapes");
+    expect(compacted.data[0]?.shapeKeys).toEqual(["shape:0"]);
   });
 
   it("selects only allowlisted research tools", () => {
@@ -443,7 +445,7 @@ describe("OpenAiPortfolioAgent", () => {
             type: "function_call",
             call_id: "call-1",
             name: "canix_get_personalized_opportunities",
-            arguments: JSON.stringify({ limit: 25 }),
+            arguments: JSON.stringify({ limit: MAX_OPPORTUNITY_TOOL_LIMIT }),
           },
         ],
       },
@@ -493,18 +495,32 @@ describe("OpenAiPortfolioAgent", () => {
       expect.arrayContaining([
         expect.objectContaining({
           assetId: 31_566_704,
-          amountRaw: "30000000",
           amount: "30",
           spendableAmount: "30",
+          amountRaw: "30000000",
         }),
         expect.objectContaining({
           assetId: 0,
-          amountRaw: "1500000",
           amount: "1.5",
           spendableAmount: "0.5",
+          amountRaw: "1500000",
         }),
       ]),
     );
+    const algo = input.portfolioSnapshot.liquidBalances.find(
+      (row) => row.assetId === 0,
+    );
+    expect(Object.keys(algo ?? {})).toEqual(
+      expect.arrayContaining([
+        "amount",
+        "spendableAmount",
+        "usdValue",
+        "amountRaw",
+      ]),
+    );
+    // Human fields should appear before amountRaw in the compact payload.
+    const keys = Object.keys(algo ?? {});
+    expect(keys.indexOf("amount")).toBeLessThan(keys.indexOf("amountRaw"));
   });
 
   it("fails closed when the model skips opportunity research", async () => {
@@ -521,6 +537,61 @@ describe("OpenAiPortfolioAgent", () => {
     );
   });
 
+  it("repairs once when the final plan is markdown instead of JSON", async () => {
+    const finalPlan = portfolioPlan();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { agent, create } = setup([
+      {
+        id: "response-1",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-1",
+            name: "canix_list_opportunities",
+            arguments: JSON.stringify({ limit: MAX_OPPORTUNITY_TOOL_LIMIT }),
+          },
+        ],
+      },
+      {
+        id: "response-2",
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: "# PORTFOLIO PLAN\n\nMarkdown is not JSON.",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "response-3",
+        output: [],
+        output_text: JSON.stringify(finalPlan),
+      },
+    ]);
+
+    const result = await agent.run();
+
+    expect(result.plan).toEqual(finalPlan);
+    expect(create).toHaveBeenCalledTimes(3);
+    const repairRequest = create.mock.calls[2]?.[0] as {
+      tools: unknown[];
+      input: Array<{ role?: string; content?: string }>;
+    };
+    expect(repairRequest.tools).toEqual([]);
+    expect(
+      repairRequest.input.some(
+        (item) =>
+          typeof item.content === "string" &&
+          item.content.includes("valid portfolio_plan JSON"),
+      ),
+    ).toBe(true);
+    errorSpy.mockRestore();
+  });
+
   it("skips failed protocol opportunity research and continues", async () => {
     const finalPlan = portfolioPlan();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -532,7 +603,10 @@ describe("OpenAiPortfolioAgent", () => {
             type: "function_call",
             call_id: "call-1",
             name: "canix_get_protocol_opportunities",
-            arguments: JSON.stringify({ protocol: "compx", limit: 25 }),
+            arguments: JSON.stringify({
+              protocol: "compx",
+              limit: MAX_OPPORTUNITY_TOOL_LIMIT,
+            }),
           },
         ],
       },
@@ -543,7 +617,7 @@ describe("OpenAiPortfolioAgent", () => {
             type: "function_call",
             call_id: "call-2",
             name: "canix_list_opportunities",
-            arguments: JSON.stringify({ limit: 25 }),
+            arguments: JSON.stringify({ limit: MAX_OPPORTUNITY_TOOL_LIMIT }),
           },
         ],
       },
@@ -620,6 +694,146 @@ describe("OpenAiPortfolioAgent", () => {
         },
       ]),
     ).toBe("hello");
+  });
+
+  it("extracts JSON objects from markdown fences and prose", () => {
+    expect(extractStructuredPlanText('{"summary":"direct"}')).toBe(
+      '{"summary":"direct"}',
+    );
+    expect(
+      extractStructuredPlanText(
+        'Here you go:\n```json\n{"summary":"fenced"}\n```\n',
+      ),
+    ).toBe('{"summary":"fenced"}');
+    expect(
+      extractStructuredPlanText(
+        '# Plan\n\n{"summary":"embedded","confidence":0.5}\n',
+      ),
+    ).toBe('{"summary":"embedded","confidence":0.5}');
+  });
+
+  it("coerces common glm-5 portfolio_plan drift into schema-valid JSON", () => {
+    const drifted = {
+      portfolio_plan: {
+        actions: [
+          {
+            actionId: "open-folks-1",
+            type: "open",
+            reason: "High TVL supply with ready shape",
+            executionShapeKey: "folks.supply",
+            authorizedSpends: [
+              { fromAssetId: 31_566_704, amountRaw: "1000000" },
+            ],
+          },
+        ],
+        noActionPositions: [
+          { positionId: "pos-liquid", reason: "Keep reserve" },
+        ],
+        rejectedCandidates: [
+          { opportunityId: "opp-x", reason: "TVL too low" },
+        ],
+        summary: {
+          narrative: "Deploy idle USDC into Folks",
+          totalProjectedNetBenefitUsd: 12.5,
+        },
+      },
+    };
+
+    const coerced = coercePortfolioPlanValue(drifted);
+    const parsed = portfolioPlanSchema.safeParse(coerced);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      return;
+    }
+    expect(parsed.data.actions[0]?.id).toBe("open-folks-1");
+    expect(parsed.data.actions[0]?.rationale).toBe(
+      "High TVL supply with ready shape",
+    );
+    expect(parsed.data.actions[0]?.authorizedSpends[0]).toEqual({
+      assetId: 31_566_704,
+      amountRaw: "1000000",
+    });
+    expect(parsed.data.holdDecisions[0]).toContain("pos-liquid");
+    expect(parsed.data.projectedNetBenefitUsd).toBe(12.5);
+    expect(typeof parsed.data.summary).toBe("string");
+    expect(parsed.data.summary).toContain("Deploy idle USDC");
+  });
+
+  it("coerces allocation label/usdValue drift into key-based allocations", () => {
+    const drifted = {
+      currentAllocations: [
+        {
+          label: "Folks Finance xALGO Staking",
+          usdValue: 107.8,
+          weightPct: 34.6,
+        },
+        { label: "Liquid USDC", usdValue: 22.54, weightPct: 7.2 },
+      ],
+      targetAllocations: [
+        {
+          label: "Haystack HAY Staking",
+          usdValue: 38.21,
+          weightPct: 12.3,
+        },
+      ],
+      actions: [],
+      holdDecisions: ["Keep Folks xALGO"],
+      projectedNetBenefitUsd: 1.2,
+      summary: "Rotate into HAY staking.",
+    };
+
+    const coerced = coercePortfolioPlanValue(drifted);
+    const parsed = portfolioPlanSchema.safeParse(coerced);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      return;
+    }
+    expect(parsed.data.currentAllocations[0]).toMatchObject({
+      key: "Folks Finance xALGO Staking",
+      protocol: null,
+      opportunityId: null,
+      assetIds: [],
+      weightPct: 34.6,
+      expectedApyPct: null,
+    });
+    expect(parsed.data.targetAllocations[0]?.key).toBe("Haystack HAY Staking");
+  });
+
+  it("soft-succeeds with planRawText when repair still cannot parse", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const rawReport = "Still not valid portfolio plan JSON after repair.";
+    const { agent, create } = setup([
+      {
+        id: "response-1",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-1",
+            name: "canix_list_opportunities",
+            arguments: JSON.stringify({ limit: MAX_OPPORTUNITY_TOOL_LIMIT }),
+          },
+        ],
+      },
+      {
+        id: "response-2",
+        output: [],
+        output_text: "# PORTFOLIO PLAN\n\nMarkdown is not JSON.",
+      },
+      {
+        id: "response-3",
+        output: [],
+        output_text: rawReport,
+      },
+    ]);
+
+    const result = await agent.run();
+
+    expect(result.plan).toBeUndefined();
+    expect(result.planRawText).toBe(rawReport);
+    expect(result.planParseError).toMatch(/invalid structured plan/);
+    expect(result.opportunities).toHaveLength(1);
+    expect(create).toHaveBeenCalledTimes(3);
+    errorSpy.mockRestore();
   });
 
   it("continues tool loops without previous_response_id when id is empty", async () => {

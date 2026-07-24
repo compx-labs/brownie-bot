@@ -61,3 +61,20 @@ export function subtractMoney(
   }
   return left.minus(right);
 }
+
+/** Format integer on-chain base units with asset decimals (no float rounding). */
+export function formatBaseUnits(amountRaw: string, decimals: number): string {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) {
+    throw new Error(`Invalid decimals: ${decimals}`);
+  }
+  if (!/^[0-9]+$/.test(amountRaw)) {
+    throw new Error(`Invalid amountRaw: ${amountRaw}`);
+  }
+  if (decimals === 0) {
+    return amountRaw.replace(/^0+(?=\d)/, "") || "0";
+  }
+  const padded = amountRaw.padStart(decimals + 1, "0");
+  const whole = padded.slice(0, -decimals).replace(/^0+(?=\d)/, "") || "0";
+  const fraction = padded.slice(-decimals).replace(/0+$/, "");
+  return fraction.length > 0 ? `${whole}.${fraction}` : whole;
+}

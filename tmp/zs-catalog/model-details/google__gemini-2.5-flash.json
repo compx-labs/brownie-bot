@@ -1,0 +1,1 @@
+{"id":"google/gemini-2.5-flash","object":"model","created":0,"owned_by":"zerosignal","architecture":{"input_modalities":["file","image","text","audio","video"],"output_modalities":["text"]}}

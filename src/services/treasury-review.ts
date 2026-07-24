@@ -10,6 +10,8 @@ import type {
   PolicyResult,
   ReviewRun,
 } from "../domain.js";
+import type { ReviewRunStore } from "../integrations/storage/review-run-store.js";
+import { sanitizeErrorMessage } from "../util/errors.js";
 import type { PortfolioAgent } from "./portfolio-agent.js";
 import type { CoordinatorMode, RunCoordinator } from "./run-coordinator.js";
 import { RunCoordinatorBusyError } from "./run-coordinator.js";
@@ -64,6 +66,7 @@ export class TreasuryReviewService {
     private readonly signingEnabled: boolean,
     private readonly portfolioReader?: SnapshotReader,
     private readonly coordinator?: RunCoordinator,
+    private readonly reviewStore?: ReviewRunStore,
   ) {}
 
   async run(mode: CoordinatorMode = "wait"): Promise<ReviewRun> {
@@ -103,94 +106,112 @@ export class TreasuryReviewService {
         );
       }
       const agentResult = await this.agent.run();
-      const policy = this.policy.validate(
-        agentResult.snapshot,
-        agentResult.plan,
-        agentResult.opportunities,
-      );
-      const actionable = agentResult.plan.actions.filter(
-        (action) => action.type !== "hold",
-      );
-      const executions: ExecutionOutcome[] = [];
-      if (policy.approved && !this.signingEnabled) {
-        for (const action of agentResult.plan.actions) {
-          executions.push(
-            action.type === "hold"
-              ? { actionId: action.id, status: "skipped" }
-              : { actionId: action.id, status: "validated-dry-run" },
-          );
-        }
-      } else if (policy.approved) {
-        for (const action of orderActions(agentResult.plan.actions)) {
-          if (action.type === "hold") {
-            executions.push({ actionId: action.id, status: "skipped" });
-            continue;
+      if (!agentResult.plan) {
+        result = {
+          id,
+          startedAt,
+          completedAt: new Date().toISOString(),
+          status: "reported",
+          mode: "autonomous",
+          signingEnabled: this.signingEnabled,
+          walletAddress: this.walletAddress,
+          snapshot: agentResult.snapshot,
+          planRawText: agentResult.planRawText,
+          planParseError: agentResult.planParseError,
+          opportunities: agentResult.opportunities,
+          payments: agentResult.payments,
+          inferenceCost: agentResult.inferenceCost,
+        };
+      } else {
+        const policy = this.policy.validate(
+          agentResult.snapshot,
+          agentResult.plan,
+          agentResult.opportunities,
+        );
+        const actionable = agentResult.plan.actions.filter(
+          (action) => action.type !== "hold",
+        );
+        const executions: ExecutionOutcome[] = [];
+        if (policy.approved && !this.signingEnabled) {
+          for (const action of agentResult.plan.actions) {
+            executions.push(
+              action.type === "hold"
+                ? { actionId: action.id, status: "skipped" }
+                : { actionId: action.id, status: "validated-dry-run" },
+            );
           }
-          if (
-            action.dependencies.some((dependency) => {
-              const outcome = executions.find(
-                (candidate) => candidate.actionId === dependency,
-              );
-              return (
-                outcome &&
-                outcome.status !== "confirmed" &&
-                outcome.status !== "validated-dry-run"
-              );
-            })
-          ) {
-            executions.push({
-              actionId: action.id,
-              status: "skipped",
-              error: "A dependency did not complete",
+        } else if (policy.approved) {
+          for (const action of orderActions(agentResult.plan.actions)) {
+            if (action.type === "hold") {
+              executions.push({ actionId: action.id, status: "skipped" });
+              continue;
+            }
+            if (
+              action.dependencies.some((dependency) => {
+                const outcome = executions.find(
+                  (candidate) => candidate.actionId === dependency,
+                );
+                return (
+                  outcome &&
+                  outcome.status !== "confirmed" &&
+                  outcome.status !== "validated-dry-run"
+                );
+              })
+            ) {
+              executions.push({
+                actionId: action.id,
+                status: "skipped",
+                error: "A dependency did not complete",
+              });
+              continue;
+            }
+            const execution = await this.executor.executeAction(action, {
+              opportunities: agentResult.opportunities,
             });
-            continue;
+            executions.push(execution.outcome);
+            agentResult.payments.push(...execution.payments);
           }
-          const execution = await this.executor.executeAction(action, {
-            opportunities: agentResult.opportunities,
-          });
-          executions.push(execution.outcome);
-          agentResult.payments.push(...execution.payments);
         }
-      }
-      const status = determineStatus(
-        actionable.length,
-        policy.approved,
-        executions,
-        this.signingEnabled,
-      );
-      let reconciledSnapshot: PortfolioSnapshot | undefined;
-      let reconciliationError: string | undefined;
-      if (
-        this.signingEnabled &&
-        executions.some((outcome) => outcome.status === "confirmed") &&
-        this.portfolioReader
-      ) {
-        try {
-          const reconciliation = await this.portfolioReader.read();
-          reconciledSnapshot = reconciliation.snapshot;
-          agentResult.payments.push(...reconciliation.payments);
-        } catch (error) {
-          reconciliationError = safeErrorMessage(error);
+        const status = determineStatus(
+          actionable.length,
+          policy.approved,
+          executions,
+          this.signingEnabled,
+        );
+        let reconciledSnapshot: PortfolioSnapshot | undefined;
+        let reconciliationError: string | undefined;
+        if (
+          this.signingEnabled &&
+          executions.some((outcome) => outcome.status === "confirmed") &&
+          this.portfolioReader
+        ) {
+          try {
+            const reconciliation = await this.portfolioReader.read();
+            reconciledSnapshot = reconciliation.snapshot;
+            agentResult.payments.push(...reconciliation.payments);
+          } catch (error) {
+            reconciliationError = safeErrorMessage(error);
+          }
         }
+        result = {
+          id,
+          startedAt,
+          completedAt: new Date().toISOString(),
+          status,
+          mode: "autonomous",
+          signingEnabled: this.signingEnabled,
+          walletAddress: this.walletAddress,
+          snapshot: agentResult.snapshot,
+          reconciledSnapshot,
+          reconciliationError,
+          plan: agentResult.plan,
+          policy,
+          executions,
+          opportunities: agentResult.opportunities,
+          payments: agentResult.payments,
+          inferenceCost: agentResult.inferenceCost,
+        };
       }
-      result = {
-        id,
-        startedAt,
-        completedAt: new Date().toISOString(),
-        status,
-        mode: "autonomous",
-        signingEnabled: this.signingEnabled,
-        walletAddress: this.walletAddress,
-        snapshot: agentResult.snapshot,
-        reconciledSnapshot,
-        reconciliationError,
-        plan: agentResult.plan,
-        policy,
-        executions,
-        opportunities: agentResult.opportunities,
-        payments: agentResult.payments,
-        inferenceCost: agentResult.inferenceCost,
-      };
     } catch (error) {
       const message = safeErrorMessage(error);
       console.error(`[treasury-review] Run failed: ${message}`);
@@ -216,6 +237,15 @@ export class TreasuryReviewService {
       result.notificationError = safeErrorMessage(error);
     }
     this.state.latest = result;
+    if (this.reviewStore) {
+      try {
+        await this.reviewStore.putLatest(result);
+      } catch (error) {
+        console.error(
+          `[treasury-review] Failed to persist latest run: ${safeErrorMessage(error)}`,
+        );
+      }
+    }
     return result;
   }
 }
@@ -293,5 +323,5 @@ export function rankOpportunities(opportunities: Opportunity[]): Opportunity[] {
 }
 
 function safeErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unknown error";
+  return sanitizeErrorMessage(error);
 }

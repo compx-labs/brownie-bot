@@ -4,6 +4,7 @@ import type { Position } from "../src/domain.js";
 import {
   collectRepriceAssetIds,
   positionNeedsTokenReprice,
+  priceLiquidBalances,
   recomputeWalletPositionTotals,
   repricePositionsFromTokenPrices,
 } from "../src/services/position-pricing.js";
@@ -126,5 +127,44 @@ describe("position token reprice", () => {
       rewardsUsd: 0,
       netUsd: 36,
     });
+  });
+
+  it("prices liquid balances from human amounts, not raw base units", () => {
+    const priced = priceLiquidBalances(
+      [
+        {
+          assetId: 0,
+          amountRaw: "582796855",
+          spendableAmountRaw: "579469855",
+          decimals: 6,
+          symbol: "ALGO",
+        },
+        {
+          assetId: 31_566_704,
+          amountRaw: "23949596",
+          decimals: 6,
+          symbol: "USDC",
+        },
+      ],
+      [
+        {
+          assetId: 0,
+          priceUsd: "1.09",
+          source: "compx",
+          fetchedAt: new Date().toISOString(),
+          stale: false,
+        },
+        {
+          assetId: 31_566_704,
+          priceUsd: "1",
+          source: "compx",
+          fetchedAt: new Date().toISOString(),
+          stale: false,
+        },
+      ],
+    );
+    // 582.796855 ALGO × $1.09 ≈ $635.25 — not 582796855 × 1.09
+    expect(priced[0]?.usdValue).toBe(635.25);
+    expect(priced[1]?.usdValue).toBe(23.95);
   });
 });

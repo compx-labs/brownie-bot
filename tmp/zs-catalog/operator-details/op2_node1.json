@@ -1,0 +1,56 @@
+{
+  "operator_id": 2,
+  "node_id": 1,
+  "owner_addr": "BELTAI5SNXQON5YXN5TBJ6OHZ3YFOJ7VG6QMVG32AVGBWT4IKXFTUDBE3Q",
+  "signing_addr": "BELTAI5SNXQON5YXN5TBJ6OHZ3YFOJ7VG6QMVG32AVGBWT4IKXFTUDBE3Q",
+  "ephemeral_age_pubkey": "age1qfp4a26qmefj7zuzwf42k4mnvdhem3swqhuygz9fv54vkjyfae5qgks0zs",
+  "ephemeral_expiry": 1784899430,
+  "ephemeral_issued_at": 1784897930,
+  "ephemeral_sig": "rrsyXS5QpQTW9t/Z2W6FCww7PbeoFYA/NUJsDxwVAwmcz51e1RygjC8bg+F5TExWUgiyyEWEUAfE8lV1nkXVAg==",
+  "models": [
+    {
+      "id": "poolside/Laguna-S-2.1-NVFP4",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 0,
+      "context_window": 262144,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "tags": [
+        "x-slow",
+        "\ud83c\uddfa\ud83c\uddf8",
+        "laguna-s-2.1"
+      ],
+      "source": "hf:poolside/Laguna-S-2.1-NVFP4",
+      "weights_unverifiable": true
+    }
+  ],
+  "oracle_source": "coingecko",
+  "oracle_healthy": true,
+  "algo_usd_price": 0.081954,
+  "algo_usd_at": "2026-07-24T13:05:50.692731163Z",
+  "min_charge_output_tokens": 1000,
+  "builtin_tools": [
+    {
+      "type": "zs_get_time"
+    },
+    {
+      "type": "zs_web_read"
+    },
+    {
+      "type": "zs_web_search"
+    }
+  ],
+  "max_tool_iterations": 5,
+  "tool_headroom_per_iteration": 4000,
+  "version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+  "proto_version": "9.0",
+  "config_hash": "sha256:c0cfa724aadfbaa5172e261f4dc681713b71fac06166a44d2c9c184441a248b9"
+}

@@ -1,0 +1,2739 @@
+{
+  "fetched_at": "2026-07-24T13:06:11Z",
+  "nodes": [
+    {
+      "operator_id": 1,
+      "node_id": 1,
+      "base_url": "https://zai.haynode.dev.haystack.fun",
+      "reachable_proxy": true,
+      "proto_version": "9.0",
+      "node_version": "66f1eea [2026-07-24T07:22:02Z]",
+      "proxy_max_tool_iterations": 20,
+      "proxy_min_charge_output_tokens": 1000,
+      "details_ok": true,
+      "max_tool_iterations": 20,
+      "tool_headroom_per_iteration": 4000,
+      "min_charge_output_tokens": 1000,
+      "builtin_tools": [
+        {
+          "type": "zs_get_time"
+        },
+        {
+          "type": "zs_image_edit"
+        },
+        {
+          "type": "zs_image_generation"
+        },
+        {
+          "type": "zs_web_read"
+        },
+        {
+          "type": "zs_web_search"
+        }
+      ],
+      "model_count": 8,
+      "version": "66f1eea [2026-07-24T07:22:02Z]",
+      "proto_version_details": "9.0",
+      "builtin_tool_names": [
+        "zs_get_time",
+        "zs_image_edit",
+        "zs_image_generation",
+        "zs_web_read",
+        "zs_web_search"
+      ]
+    },
+    {
+      "operator_id": 1,
+      "node_id": 2,
+      "base_url": "https://kimi.haynode.dev.haystack.fun",
+      "reachable_proxy": true,
+      "proto_version": "9.0",
+      "node_version": "66f1eea [2026-07-24T07:22:02Z]",
+      "proxy_max_tool_iterations": 20,
+      "proxy_min_charge_output_tokens": 1000,
+      "details_ok": true,
+      "max_tool_iterations": 20,
+      "tool_headroom_per_iteration": 4000,
+      "min_charge_output_tokens": 1000,
+      "builtin_tools": [
+        {
+          "type": "zs_get_time"
+        },
+        {
+          "type": "zs_image_edit"
+        },
+        {
+          "type": "zs_image_generation"
+        },
+        {
+          "type": "zs_web_read"
+        },
+        {
+          "type": "zs_web_search"
+        }
+      ],
+      "model_count": 3,
+      "version": "66f1eea [2026-07-24T07:22:02Z]",
+      "proto_version_details": "9.0",
+      "builtin_tool_names": [
+        "zs_get_time",
+        "zs_image_edit",
+        "zs_image_generation",
+        "zs_web_read",
+        "zs_web_search"
+      ]
+    },
+    {
+      "operator_id": 1,
+      "node_id": 3,
+      "base_url": "https://grok.haynode.dev.haystack.fun",
+      "reachable_proxy": true,
+      "proto_version": "9.0",
+      "node_version": "66f1eea [2026-07-24T07:22:02Z]",
+      "proxy_max_tool_iterations": 20,
+      "proxy_min_charge_output_tokens": 1000,
+      "details_ok": true,
+      "max_tool_iterations": 20,
+      "tool_headroom_per_iteration": 4000,
+      "min_charge_output_tokens": 1000,
+      "builtin_tools": [
+        {
+          "type": "zs_get_time"
+        },
+        {
+          "type": "zs_image_edit"
+        },
+        {
+          "type": "zs_image_generation"
+        },
+        {
+          "type": "zs_web_read"
+        },
+        {
+          "type": "zs_web_search"
+        }
+      ],
+      "model_count": 2,
+      "version": "66f1eea [2026-07-24T07:22:02Z]",
+      "proto_version_details": "9.0",
+      "builtin_tool_names": [
+        "zs_get_time",
+        "zs_image_edit",
+        "zs_image_generation",
+        "zs_web_read",
+        "zs_web_search"
+      ]
+    },
+    {
+      "operator_id": 2,
+      "node_id": 1,
+      "base_url": "https://ashford.belt.algo.xyz",
+      "reachable_proxy": true,
+      "proto_version": "9.0",
+      "node_version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+      "proxy_max_tool_iterations": 5,
+      "proxy_min_charge_output_tokens": 1000,
+      "details_ok": true,
+      "max_tool_iterations": 5,
+      "tool_headroom_per_iteration": 4000,
+      "min_charge_output_tokens": 1000,
+      "builtin_tools": [
+        {
+          "type": "zs_get_time"
+        },
+        {
+          "type": "zs_web_read"
+        },
+        {
+          "type": "zs_web_search"
+        }
+      ],
+      "model_count": 1,
+      "version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+      "proto_version_details": "9.0",
+      "builtin_tool_names": [
+        "zs_get_time",
+        "zs_web_read",
+        "zs_web_search"
+      ]
+    },
+    {
+      "operator_id": 2,
+      "node_id": 2,
+      "base_url": "https://espinoza.belt.algo.xyz",
+      "reachable_proxy": true,
+      "proto_version": "9.0",
+      "node_version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+      "proxy_max_tool_iterations": 5,
+      "proxy_min_charge_output_tokens": 1000,
+      "details_ok": true,
+      "max_tool_iterations": 5,
+      "tool_headroom_per_iteration": 4000,
+      "min_charge_output_tokens": 1000,
+      "builtin_tools": [
+        {
+          "type": "zs_get_time"
+        },
+        {
+          "type": "zs_image_generation"
+        },
+        {
+          "type": "zs_web_read"
+        },
+        {
+          "type": "zs_web_search"
+        }
+      ],
+      "model_count": 2,
+      "version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+      "proto_version_details": "9.0",
+      "builtin_tool_names": [
+        "zs_get_time",
+        "zs_image_generation",
+        "zs_web_read",
+        "zs_web_search"
+      ]
+    },
+    {
+      "operator_id": 2,
+      "node_id": 3,
+      "base_url": "https://nauvoo.belt.algo.xyz",
+      "reachable_proxy": true,
+      "proto_version": "9.0",
+      "node_version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+      "proxy_max_tool_iterations": 5,
+      "proxy_min_charge_output_tokens": 1000,
+      "details_ok": true,
+      "max_tool_iterations": 5,
+      "tool_headroom_per_iteration": 4000,
+      "min_charge_output_tokens": 1000,
+      "builtin_tools": [
+        {
+          "type": "zs_get_time"
+        },
+        {
+          "type": "zs_web_read"
+        },
+        {
+          "type": "zs_web_search"
+        }
+      ],
+      "model_count": 21,
+      "version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+      "proto_version_details": "9.0",
+      "builtin_tool_names": [
+        "zs_get_time",
+        "zs_web_read",
+        "zs_web_search"
+      ]
+    },
+    {
+      "operator_id": 2,
+      "node_id": 4,
+      "base_url": "https://prax.belt.algo.xyz",
+      "reachable_proxy": true,
+      "proto_version": "9.0",
+      "node_version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+      "proxy_max_tool_iterations": null,
+      "proxy_min_charge_output_tokens": 1000,
+      "details_ok": true,
+      "max_tool_iterations": null,
+      "tool_headroom_per_iteration": null,
+      "min_charge_output_tokens": 1000,
+      "builtin_tools": null,
+      "model_count": 1,
+      "version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+      "proto_version_details": "9.0",
+      "builtin_tool_names": []
+    },
+    {
+      "operator_id": 3,
+      "node_id": 1,
+      "base_url": "https://zerosignal.haystacknode.win",
+      "reachable_proxy": true,
+      "proto_version": "9.0",
+      "node_version": "0.10.1",
+      "proxy_max_tool_iterations": 20,
+      "proxy_min_charge_output_tokens": 1000,
+      "details_ok": true,
+      "max_tool_iterations": 20,
+      "tool_headroom_per_iteration": 4000,
+      "min_charge_output_tokens": 1000,
+      "builtin_tools": [
+        {
+          "type": "zs_get_time"
+        },
+        {
+          "type": "zs_web_read"
+        },
+        {
+          "type": "zs_web_search"
+        }
+      ],
+      "model_count": 1,
+      "version": "0.10.1",
+      "proto_version_details": "9.0",
+      "builtin_tool_names": [
+        "zs_get_time",
+        "zs_web_read",
+        "zs_web_search"
+      ]
+    }
+  ],
+  "proxy_model_ids": [
+    "AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4",
+    "MiniMaxAI/Minimax-M3",
+    "Qwen/Qwen3-4B-Instruct-2507",
+    "XiaomiMiMo/MiMo-V2.5",
+    "XiaomiMiMo/MiMo-V2.5-Pro",
+    "anthropic/claude-fable-5",
+    "anthropic/claude-opus-4.7",
+    "anthropic/claude-opus-4.8",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-sonnet-5",
+    "deepseek-ai/DeepSeek-V4-Flash",
+    "deepseek-ai/DeepSeek-V4-Pro",
+    "flux-edit",
+    "glm-4.5-flash",
+    "glm-4.7",
+    "glm-4.7-flash",
+    "glm-5",
+    "glm-5-turbo",
+    "glm-5.2",
+    "google/gemini-2.5-flash",
+    "google/gemini-2.5-flash-lite",
+    "google/gemini-3-flash-preview",
+    "google/gemini-3.1-flash-lite",
+    "grok-4.5",
+    "grok-imagine-image-quality",
+    "ig1/medgemma-27b-it-FP8-Dynamic",
+    "kimi-k3",
+    "moonshotai/kimi-k3",
+    "openai/gpt-5.5",
+    "openai/gpt-5.6-sol",
+    "openai/gpt-oss-120b",
+    "poolside/Laguna-S-2.1-NVFP4",
+    "stepfun-ai/Step-3.7-Flash",
+    "tencent/Hy3",
+    "z-image-turbo-20-NSFW-adult",
+    "zai-org/GLM-5.2",
+    "zimage"
+  ],
+  "proxy_models": {
+    "glm-5": [
+      {
+        "operator_id": 1,
+        "node_id": 1,
+        "base_url": "https://zai.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "context_window": 200000,
+        "input_usd_per_1m": 1.1,
+        "output_usd_per_1m": 3.52,
+        "cache_read_usd_per_1m": 0.22,
+        "image_tool_rate_micro_usdc": 200000,
+        "image_edit_tool_rate_micro_usdc": 320000,
+        "weights_unverifiable": true
+      }
+    ],
+    "glm-5-turbo": [
+      {
+        "operator_id": 1,
+        "node_id": 1,
+        "base_url": "https://zai.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "context_window": 200000,
+        "input_usd_per_1m": 1.32,
+        "output_usd_per_1m": 4.4,
+        "cache_read_usd_per_1m": 0.264,
+        "image_tool_rate_micro_usdc": 200000,
+        "image_edit_tool_rate_micro_usdc": 320000,
+        "weights_unverifiable": true
+      }
+    ],
+    "zimage": [
+      {
+        "operator_id": 1,
+        "node_id": 1,
+        "base_url": "https://zai.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "image"
+        ],
+        "image_rate_micro_usdc": 50000,
+        "serves_image_gen": true,
+        "weights_unverifiable": true
+      },
+      {
+        "operator_id": 1,
+        "node_id": 2,
+        "base_url": "https://kimi.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "image"
+        ],
+        "image_rate_micro_usdc": 50000,
+        "serves_image_gen": true,
+        "weights_unverifiable": true
+      }
+    ],
+    "glm-4.7": [
+      {
+        "operator_id": 1,
+        "node_id": 1,
+        "base_url": "https://zai.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "context_window": 200000,
+        "input_usd_per_1m": 0.66,
+        "output_usd_per_1m": 2.42,
+        "cache_read_usd_per_1m": 0.121,
+        "image_tool_rate_micro_usdc": 200000,
+        "image_edit_tool_rate_micro_usdc": 320000,
+        "weights_unverifiable": true
+      }
+    ],
+    "glm-4.7-flash": [
+      {
+        "operator_id": 1,
+        "node_id": 1,
+        "base_url": "https://zai.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "context_window": 200000,
+        "weights_unverifiable": true
+      }
+    ],
+    "glm-5.2": [
+      {
+        "operator_id": 1,
+        "node_id": 1,
+        "base_url": "https://zai.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "context_window": 1000000,
+        "input_usd_per_1m": 1.54,
+        "output_usd_per_1m": 4.84,
+        "cache_read_usd_per_1m": 0.286,
+        "image_tool_rate_micro_usdc": 200000,
+        "image_edit_tool_rate_micro_usdc": 320000,
+        "weights_unverifiable": true
+      }
+    ],
+    "flux-edit": [
+      {
+        "operator_id": 1,
+        "node_id": 1,
+        "base_url": "https://zai.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "image"
+        ],
+        "image_edit_rate_micro_usdc": 80000,
+        "serves_image_edit": true,
+        "weights_unverifiable": true
+      },
+      {
+        "operator_id": 1,
+        "node_id": 2,
+        "base_url": "https://kimi.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "image"
+        ],
+        "image_edit_rate_micro_usdc": 80000,
+        "serves_image_edit": true,
+        "weights_unverifiable": true
+      }
+    ],
+    "glm-4.5-flash": [
+      {
+        "operator_id": 1,
+        "node_id": 1,
+        "base_url": "https://zai.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "context_window": 128000,
+        "weights_unverifiable": true
+      }
+    ],
+    "kimi-k3": [
+      {
+        "operator_id": 1,
+        "node_id": 2,
+        "base_url": "https://kimi.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "context_window": 1048576,
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "input_usd_per_1m": 3.12,
+        "output_usd_per_1m": 15.6,
+        "cache_read_usd_per_1m": 0.312,
+        "image_tool_rate_micro_usdc": 200000,
+        "image_edit_tool_rate_micro_usdc": 320000,
+        "weights_unverifiable": true
+      }
+    ],
+    "grok-4.5": [
+      {
+        "operator_id": 1,
+        "node_id": 3,
+        "base_url": "https://grok.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "context_window": 200000,
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 2.2,
+        "output_usd_per_1m": 6.6,
+        "cache_read_usd_per_1m": 0.33,
+        "image_tool_rate_micro_usdc": 60000,
+        "image_edit_tool_rate_micro_usdc": 60000,
+        "weights_unverifiable": true
+      }
+    ],
+    "grok-imagine-image-quality": [
+      {
+        "operator_id": 1,
+        "node_id": 3,
+        "base_url": "https://grok.haynode.dev.haystack.fun",
+        "max_tool_iterations": 20,
+        "context_window": 8000,
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "image"
+        ],
+        "image_rate_micro_usdc": 15000,
+        "image_edit_rate_micro_usdc": 15000,
+        "serves_image_gen": true,
+        "serves_image_edit": true,
+        "weights_unverifiable": true
+      }
+    ],
+    "poolside/Laguna-S-2.1-NVFP4": [
+      {
+        "operator_id": 2,
+        "node_id": 1,
+        "base_url": "https://ashford.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 262144,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "weights_unverifiable": true
+      }
+    ],
+    "z-image-turbo-20-NSFW-adult": [
+      {
+        "operator_id": 2,
+        "node_id": 2,
+        "base_url": "https://espinoza.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "image"
+        ],
+        "output_usd_per_1m": 5,
+        "image_rate_micro_usdc": 50000,
+        "serves_image_gen": true,
+        "weights_unverifiable": true
+      }
+    ],
+    "AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4": [
+      {
+        "operator_id": 2,
+        "node_id": 2,
+        "base_url": "https://espinoza.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 262144,
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.5,
+        "output_usd_per_1m": 5,
+        "cache_read_usd_per_1m": 0.1,
+        "image_tool_rate_micro_usdc": 50000,
+        "weights_unverifiable": true
+      }
+    ],
+    "google/gemini-2.5-flash": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1048576,
+        "input_modalities": [
+          "file",
+          "image",
+          "text",
+          "audio",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.2475,
+        "output_usd_per_1m": 2.0625,
+        "weights_unverifiable": true
+      }
+    ],
+    "openai/gpt-5.6-sol": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1050000,
+        "input_modalities": [
+          "file",
+          "image",
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 4.125,
+        "output_usd_per_1m": 24.75,
+        "weights_unverifiable": true
+      }
+    ],
+    "anthropic/claude-fable-5": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1000000,
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 12.1,
+        "output_usd_per_1m": 60.5,
+        "weights_unverifiable": true
+      }
+    ],
+    "XiaomiMiMo/MiMo-V2.5": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1000000,
+        "input_modalities": [
+          "text",
+          "audio",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.1694,
+        "output_usd_per_1m": 0.3388,
+        "weights_unverifiable": true
+      }
+    ],
+    "anthropic/claude-sonnet-5": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1000000,
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 2.42,
+        "output_usd_per_1m": 12.1,
+        "weights_unverifiable": true
+      }
+    ],
+    "zai-org/GLM-5.2": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1024000,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.9926,
+        "output_usd_per_1m": 3.1198,
+        "weights_unverifiable": true
+      }
+    ],
+    "tencent/Hy3": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 262144,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.1559,
+        "output_usd_per_1m": 0.6457,
+        "weights_unverifiable": true
+      }
+    ],
+    "XiaomiMiMo/MiMo-V2.5-Pro": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1024000,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.5263,
+        "output_usd_per_1m": 1.0527,
+        "weights_unverifiable": true
+      }
+    ],
+    "google/gemini-3.1-flash-lite": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1048576,
+        "input_modalities": [
+          "text",
+          "image",
+          "video",
+          "file",
+          "audio"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.2063,
+        "output_usd_per_1m": 1.2375,
+        "weights_unverifiable": true
+      }
+    ],
+    "anthropic/claude-opus-4.8": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1000000,
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 6.05,
+        "output_usd_per_1m": 30.25,
+        "weights_unverifiable": true
+      }
+    ],
+    "deepseek-ai/DeepSeek-V4-Flash": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1024000,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.1089,
+        "output_usd_per_1m": 0.2178,
+        "weights_unverifiable": true
+      }
+    ],
+    "moonshotai/kimi-k3": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1048576,
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 3.63,
+        "output_usd_per_1m": 18.15,
+        "weights_unverifiable": true
+      }
+    ],
+    "google/gemini-2.5-flash-lite": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1048576,
+        "input_modalities": [
+          "text",
+          "image",
+          "file",
+          "audio",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.0825,
+        "output_usd_per_1m": 0.33,
+        "weights_unverifiable": true
+      }
+    ],
+    "MiniMaxAI/Minimax-M3": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 524288,
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.363,
+        "output_usd_per_1m": 1.452,
+        "weights_unverifiable": true
+      }
+    ],
+    "deepseek-ai/DeepSeek-V4-Pro": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1048576,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.7177,
+        "output_usd_per_1m": 1.4355,
+        "weights_unverifiable": true
+      }
+    ],
+    "openai/gpt-oss-120b": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 131072,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.0442,
+        "output_usd_per_1m": 0.2653,
+        "weights_unverifiable": true
+      }
+    ],
+    "anthropic/claude-sonnet-4.6": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1000000,
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 3.63,
+        "output_usd_per_1m": 18.15,
+        "weights_unverifiable": true
+      }
+    ],
+    "stepfun-ai/Step-3.7-Flash": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 256000,
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.242,
+        "output_usd_per_1m": 1.3915,
+        "weights_unverifiable": true
+      }
+    ],
+    "openai/gpt-5.5": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1050000,
+        "input_modalities": [
+          "file",
+          "image",
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 4.125,
+        "output_usd_per_1m": 24.75,
+        "weights_unverifiable": true
+      }
+    ],
+    "anthropic/claude-opus-4.7": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1000000,
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 6.05,
+        "output_usd_per_1m": 30.25,
+        "weights_unverifiable": true
+      }
+    ],
+    "google/gemini-3-flash-preview": [
+      {
+        "operator_id": 2,
+        "node_id": 3,
+        "base_url": "https://nauvoo.belt.algo.xyz",
+        "max_tool_iterations": 5,
+        "context_window": 1048576,
+        "input_modalities": [
+          "text",
+          "image",
+          "file",
+          "audio",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.3025,
+        "output_usd_per_1m": 1.815,
+        "weights_unverifiable": true
+      }
+    ],
+    "ig1/medgemma-27b-it-FP8-Dynamic": [
+      {
+        "operator_id": 2,
+        "node_id": 4,
+        "base_url": "https://prax.belt.algo.xyz",
+        "max_tool_iterations": null,
+        "context_window": 131072,
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "weights_unverifiable": true
+      }
+    ],
+    "Qwen/Qwen3-4B-Instruct-2507": [
+      {
+        "operator_id": 3,
+        "node_id": 1,
+        "base_url": "https://zerosignal.haystacknode.win",
+        "max_tool_iterations": 20,
+        "context_window": 4096,
+        "max_output_tokens": 1024,
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "input_usd_per_1m": 0.025,
+        "output_usd_per_1m": 0.045,
+        "weights_unverifiable": true
+      }
+    ]
+  },
+  "details_models": {
+    "glm-5": {
+      "id": "glm-5",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "base_url": "https://zai.haynode.dev.haystack.fun",
+          "tool_use": true,
+          "context_window": 200000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 1.1,
+          "output_rate_usd_per_1m": 3.52,
+          "cache_read_rate_usd_per_1m": 0.22,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": null,
+          "output_modalities": null,
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "in": 1.1,
+          "out": 3.52
+        }
+      ],
+      "context_windows": [
+        200000
+      ]
+    },
+    "glm-5-turbo": {
+      "id": "glm-5-turbo",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "base_url": "https://zai.haynode.dev.haystack.fun",
+          "tool_use": true,
+          "context_window": 200000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 1.32,
+          "output_rate_usd_per_1m": 4.4,
+          "cache_read_rate_usd_per_1m": 0.264,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": null,
+          "output_modalities": null,
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "in": 1.32,
+          "out": 4.4
+        }
+      ],
+      "context_windows": [
+        200000
+      ]
+    },
+    "zimage": {
+      "id": "zimage",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "base_url": "https://zai.haynode.dev.haystack.fun",
+          "tool_use": null,
+          "context_window": null,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 0,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": null,
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        },
+        {
+          "operator_id": 1,
+          "node_id": 2,
+          "base_url": "https://kimi.haynode.dev.haystack.fun",
+          "tool_use": null,
+          "context_window": null,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 0,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": null,
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": false,
+      "tool_use_all": false,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "in": 0,
+          "out": 0
+        },
+        {
+          "operator_id": 1,
+          "node_id": 2,
+          "in": 0,
+          "out": 0
+        }
+      ],
+      "context_windows": []
+    },
+    "glm-4.7": {
+      "id": "glm-4.7",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "base_url": "https://zai.haynode.dev.haystack.fun",
+          "tool_use": true,
+          "context_window": 200000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.66,
+          "output_rate_usd_per_1m": 2.42,
+          "cache_read_rate_usd_per_1m": 0.121,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": null,
+          "output_modalities": null,
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "in": 0.66,
+          "out": 2.42
+        }
+      ],
+      "context_windows": [
+        200000
+      ]
+    },
+    "glm-4.7-flash": {
+      "id": "glm-4.7-flash",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "base_url": "https://zai.haynode.dev.haystack.fun",
+          "tool_use": true,
+          "context_window": 200000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 0,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": null,
+          "output_modalities": null,
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "in": 0,
+          "out": 0
+        }
+      ],
+      "context_windows": [
+        200000
+      ]
+    },
+    "glm-5.2": {
+      "id": "glm-5.2",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "base_url": "https://zai.haynode.dev.haystack.fun",
+          "tool_use": true,
+          "context_window": 1000000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 1.54,
+          "output_rate_usd_per_1m": 4.84,
+          "cache_read_rate_usd_per_1m": 0.286,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": null,
+          "output_modalities": null,
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "in": 1.54,
+          "out": 4.84
+        }
+      ],
+      "context_windows": [
+        1000000
+      ]
+    },
+    "flux-edit": {
+      "id": "flux-edit",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "base_url": "https://zai.haynode.dev.haystack.fun",
+          "tool_use": null,
+          "context_window": null,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 0,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": null,
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        },
+        {
+          "operator_id": 1,
+          "node_id": 2,
+          "base_url": "https://kimi.haynode.dev.haystack.fun",
+          "tool_use": null,
+          "context_window": null,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 0,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": null,
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": false,
+      "tool_use_all": false,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "in": 0,
+          "out": 0
+        },
+        {
+          "operator_id": 1,
+          "node_id": 2,
+          "in": 0,
+          "out": 0
+        }
+      ],
+      "context_windows": []
+    },
+    "glm-4.5-flash": {
+      "id": "glm-4.5-flash",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "base_url": "https://zai.haynode.dev.haystack.fun",
+          "tool_use": true,
+          "context_window": 128000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 0,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": null,
+          "output_modalities": null,
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 1,
+          "in": 0,
+          "out": 0
+        }
+      ],
+      "context_windows": [
+        128000
+      ]
+    },
+    "kimi-k3": {
+      "id": "kimi-k3",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 2,
+          "base_url": "https://kimi.haynode.dev.haystack.fun",
+          "tool_use": true,
+          "context_window": 1048576,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 3.12,
+          "output_rate_usd_per_1m": 15.6,
+          "cache_read_rate_usd_per_1m": 0.312,
+          "reasoning": {
+            "supported": true,
+            "allowed_efforts": [
+              "low",
+              "high",
+              "max"
+            ],
+            "default_effort": "max"
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "output_modalities": null,
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 2,
+          "in": 3.12,
+          "out": 15.6
+        }
+      ],
+      "context_windows": [
+        1048576
+      ]
+    },
+    "grok-4.5": {
+      "id": "grok-4.5",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 3,
+          "base_url": "https://grok.haynode.dev.haystack.fun",
+          "tool_use": true,
+          "context_window": 200000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 2.2,
+          "output_rate_usd_per_1m": 6.6,
+          "cache_read_rate_usd_per_1m": 0.33,
+          "reasoning": {
+            "supported": true,
+            "allowed_efforts": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "default_effort": "high"
+          },
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 3,
+          "in": 2.2,
+          "out": 6.6
+        }
+      ],
+      "context_windows": [
+        200000
+      ]
+    },
+    "grok-imagine-image-quality": {
+      "id": "grok-imagine-image-quality",
+      "operators": [
+        {
+          "operator_id": 1,
+          "node_id": 3,
+          "base_url": "https://grok.haynode.dev.haystack.fun",
+          "tool_use": null,
+          "context_window": 8000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 0,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": null,
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": false,
+      "tool_use_all": false,
+      "pricing": [
+        {
+          "operator_id": 1,
+          "node_id": 3,
+          "in": 0,
+          "out": 0
+        }
+      ],
+      "context_windows": [
+        8000
+      ]
+    },
+    "poolside/Laguna-S-2.1-NVFP4": {
+      "id": "poolside/Laguna-S-2.1-NVFP4",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 1,
+          "base_url": "https://ashford.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 262144,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 0,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "x-slow",
+            "\ud83c\uddfa\ud83c\uddf8",
+            "laguna-s-2.1"
+          ],
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 1,
+          "in": 0,
+          "out": 0
+        }
+      ],
+      "context_windows": [
+        262144
+      ]
+    },
+    "z-image-turbo-20-NSFW-adult": {
+      "id": "z-image-turbo-20-NSFW-adult",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 2,
+          "base_url": "https://espinoza.belt.algo.xyz",
+          "tool_use": null,
+          "context_window": null,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 5,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": null,
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": false,
+      "tool_use_all": false,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 2,
+          "in": 0,
+          "out": 5
+        }
+      ],
+      "context_windows": []
+    },
+    "AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4": {
+      "id": "AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 2,
+          "base_url": "https://espinoza.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 262144,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.5,
+          "output_rate_usd_per_1m": 5,
+          "cache_read_rate_usd_per_1m": 0.1,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "x-fast",
+            "26b",
+            "4-bit",
+            "4b-active",
+            "aarch64",
+            "abliterated",
+            "aeon",
+            "aeon-7",
+            "agentic",
+            "arm64",
+            "blackwell",
+            "chat",
+            "chunked-prefill",
+            "coding",
+            "compressed-tensors",
+            "conversational",
+            "dflash",
+            "dgx-spark",
+            "edge",
+            "english",
+            "flashinfer-cutlass",
+            "fp4",
+            "fp8-kv-cache",
+            "function-calling",
+            "gb10",
+            "gemma",
+            "gemma-4",
+            "gemma4",
+            "google",
+            "gpu",
+            "grace-blackwell",
+            "image-text-to-text",
+            "instruct",
+            "llmcompressor",
+            "long-context",
+            "mixture-of-experts",
+            "moe",
+            "multimodal",
+            "native-fp4",
+            "nvfp4",
+            "nvidia",
+            "on-device",
+            "openai-api",
+            "openai-compatible",
+            "prefix-caching",
+            "production-ready",
+            "quantized",
+            "reasoning",
+            "refusal-removed",
+            "safetensors",
+            "sliding-window-attention",
+            "sm_121a",
+            "sparse-moe",
+            "speculative-decoding",
+            "text-generation",
+            "thinking",
+            "tool-calling",
+            "transformer",
+            "uncensored",
+            "unfiltered",
+            "vision",
+            "vision-language",
+            "vllm",
+            "weight-quantization"
+          ],
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 2,
+          "in": 0.5,
+          "out": 5
+        }
+      ],
+      "context_windows": [
+        262144
+      ]
+    },
+    "google/gemini-3-flash-preview": {
+      "id": "google/gemini-3-flash-preview",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1048576,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.3025,
+          "output_rate_usd_per_1m": 1.815,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "file",
+            "audio",
+            "video"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.3025,
+          "out": 1.815
+        }
+      ],
+      "context_windows": [
+        1048576
+      ]
+    },
+    "deepseek-ai/DeepSeek-V4-Pro": {
+      "id": "deepseek-ai/DeepSeek-V4-Pro",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1048576,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.7177,
+          "output_rate_usd_per_1m": 1.4355,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.7177,
+          "out": 1.4355
+        }
+      ],
+      "context_windows": [
+        1048576
+      ]
+    },
+    "anthropic/claude-opus-4.8": {
+      "id": "anthropic/claude-opus-4.8",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1000000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 6.05,
+          "output_rate_usd_per_1m": 30.25,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 6.05,
+          "out": 30.25
+        }
+      ],
+      "context_windows": [
+        1000000
+      ]
+    },
+    "openai/gpt-oss-120b": {
+      "id": "openai/gpt-oss-120b",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 131072,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.0442,
+          "output_rate_usd_per_1m": 0.2653,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "vllm"
+          ],
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.0442,
+          "out": 0.2653
+        }
+      ],
+      "context_windows": [
+        131072
+      ]
+    },
+    "anthropic/claude-sonnet-5": {
+      "id": "anthropic/claude-sonnet-5",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1000000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 2.42,
+          "output_rate_usd_per_1m": 12.1,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 2.42,
+          "out": 12.1
+        }
+      ],
+      "context_windows": [
+        1000000
+      ]
+    },
+    "moonshotai/kimi-k3": {
+      "id": "moonshotai/kimi-k3",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1048576,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 3.63,
+          "output_rate_usd_per_1m": 18.15,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 3.63,
+          "out": 18.15
+        }
+      ],
+      "context_windows": [
+        1048576
+      ]
+    },
+    "stepfun-ai/Step-3.7-Flash": {
+      "id": "stepfun-ai/Step-3.7-Flash",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 256000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.242,
+          "output_rate_usd_per_1m": 1.3915,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "vision-language",
+            "multimodal",
+            "moe"
+          ],
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.242,
+          "out": 1.3915
+        }
+      ],
+      "context_windows": [
+        256000
+      ]
+    },
+    "google/gemini-2.5-flash": {
+      "id": "google/gemini-2.5-flash",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1048576,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.2475,
+          "output_rate_usd_per_1m": 2.0625,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "file",
+            "image",
+            "text",
+            "audio",
+            "video"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.2475,
+          "out": 2.0625
+        }
+      ],
+      "context_windows": [
+        1048576
+      ]
+    },
+    "XiaomiMiMo/MiMo-V2.5-Pro": {
+      "id": "XiaomiMiMo/MiMo-V2.5-Pro",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1024000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.5263,
+          "output_rate_usd_per_1m": 1.0527,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "text-generation",
+            "agent",
+            "long-context",
+            "code",
+            "transformers"
+          ],
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.5263,
+          "out": 1.0527
+        }
+      ],
+      "context_windows": [
+        1024000
+      ]
+    },
+    "XiaomiMiMo/MiMo-V2.5": {
+      "id": "XiaomiMiMo/MiMo-V2.5",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1000000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.1694,
+          "output_rate_usd_per_1m": 0.3388,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "audio",
+            "image",
+            "video"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "multimodal",
+            "vision-language",
+            "audio",
+            "agent",
+            "video-understanding",
+            "long-context",
+            "transformers"
+          ],
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.1694,
+          "out": 0.3388
+        }
+      ],
+      "context_windows": [
+        1000000
+      ]
+    },
+    "anthropic/claude-sonnet-4.6": {
+      "id": "anthropic/claude-sonnet-4.6",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1000000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 3.63,
+          "output_rate_usd_per_1m": 18.15,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 3.63,
+          "out": 18.15
+        }
+      ],
+      "context_windows": [
+        1000000
+      ]
+    },
+    "tencent/Hy3": {
+      "id": "tencent/Hy3",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 262144,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.1559,
+          "output_rate_usd_per_1m": 0.6457,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "hunyuan",
+            "hy3",
+            "moe",
+            "text-generation"
+          ],
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.1559,
+          "out": 0.6457
+        }
+      ],
+      "context_windows": [
+        262144
+      ]
+    },
+    "google/gemini-2.5-flash-lite": {
+      "id": "google/gemini-2.5-flash-lite",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1048576,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.0825,
+          "output_rate_usd_per_1m": 0.33,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "file",
+            "audio",
+            "video"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.0825,
+          "out": 0.33
+        }
+      ],
+      "context_windows": [
+        1048576
+      ]
+    },
+    "openai/gpt-5.5": {
+      "id": "openai/gpt-5.5",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1050000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 4.125,
+          "output_rate_usd_per_1m": 24.75,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "file",
+            "image",
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 4.125,
+          "out": 24.75
+        }
+      ],
+      "context_windows": [
+        1050000
+      ]
+    },
+    "MiniMaxAI/Minimax-M3": {
+      "id": "MiniMaxAI/Minimax-M3",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 524288,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.363,
+          "output_rate_usd_per_1m": 1.452,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "multimodal",
+            "moe",
+            "agent",
+            "coding",
+            "video"
+          ],
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.363,
+          "out": 1.452
+        }
+      ],
+      "context_windows": [
+        524288
+      ]
+    },
+    "google/gemini-3.1-flash-lite": {
+      "id": "google/gemini-3.1-flash-lite",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1048576,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.2063,
+          "output_rate_usd_per_1m": 1.2375,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "video",
+            "file",
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.2063,
+          "out": 1.2375
+        }
+      ],
+      "context_windows": [
+        1048576
+      ]
+    },
+    "zai-org/GLM-5.2": {
+      "id": "zai-org/GLM-5.2",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1024000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.9926,
+          "output_rate_usd_per_1m": 3.1198,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.9926,
+          "out": 3.1198
+        }
+      ],
+      "context_windows": [
+        1024000
+      ]
+    },
+    "anthropic/claude-fable-5": {
+      "id": "anthropic/claude-fable-5",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1000000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 12.1,
+          "output_rate_usd_per_1m": 60.5,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 12.1,
+          "out": 60.5
+        }
+      ],
+      "context_windows": [
+        1000000
+      ]
+    },
+    "deepseek-ai/DeepSeek-V4-Flash": {
+      "id": "deepseek-ai/DeepSeek-V4-Flash",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1024000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0.1089,
+          "output_rate_usd_per_1m": 0.2178,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 0.1089,
+          "out": 0.2178
+        }
+      ],
+      "context_windows": [
+        1024000
+      ]
+    },
+    "openai/gpt-5.6-sol": {
+      "id": "openai/gpt-5.6-sol",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1050000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 4.125,
+          "output_rate_usd_per_1m": 24.75,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "file",
+            "image",
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 4.125,
+          "out": 24.75
+        }
+      ],
+      "context_windows": [
+        1050000
+      ]
+    },
+    "anthropic/claude-opus-4.7": {
+      "id": "anthropic/claude-opus-4.7",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "base_url": "https://nauvoo.belt.algo.xyz",
+          "tool_use": true,
+          "context_window": 1000000,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 6.05,
+          "output_rate_usd_per_1m": 30.25,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": true
+          },
+          "input_modalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 5,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": true,
+      "tool_use_all": true,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 3,
+          "in": 6.05,
+          "out": 30.25
+        }
+      ],
+      "context_windows": [
+        1000000
+      ]
+    },
+    "ig1/medgemma-27b-it-FP8-Dynamic": {
+      "id": "ig1/medgemma-27b-it-FP8-Dynamic",
+      "operators": [
+        {
+          "operator_id": 2,
+          "node_id": 4,
+          "base_url": "https://prax.belt.algo.xyz",
+          "tool_use": false,
+          "context_window": 131072,
+          "max_output_tokens": null,
+          "input_rate_usd_per_1m": 0,
+          "output_rate_usd_per_1m": 0,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": {
+            "supported": false
+          },
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "medical",
+            "x-ray",
+            "biomedical",
+            "multimodal",
+            "text-generation",
+            "fp8",
+            "quantization",
+            "vllm",
+            "medgemma"
+          ],
+          "node_max_tool_iterations": null,
+          "node_tool_headroom_per_iteration": null
+        }
+      ],
+      "tool_use_any": false,
+      "tool_use_all": false,
+      "pricing": [
+        {
+          "operator_id": 2,
+          "node_id": 4,
+          "in": 0,
+          "out": 0
+        }
+      ],
+      "context_windows": [
+        131072
+      ]
+    },
+    "Qwen/Qwen3-4B-Instruct-2507": {
+      "id": "Qwen/Qwen3-4B-Instruct-2507",
+      "operators": [
+        {
+          "operator_id": 3,
+          "node_id": 1,
+          "base_url": "https://zerosignal.haystacknode.win",
+          "tool_use": null,
+          "context_window": 4096,
+          "max_output_tokens": 1024,
+          "input_rate_usd_per_1m": 0.025,
+          "output_rate_usd_per_1m": 0.045,
+          "cache_read_rate_usd_per_1m": null,
+          "reasoning": null,
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tags": null,
+          "node_max_tool_iterations": 20,
+          "node_tool_headroom_per_iteration": 4000
+        }
+      ],
+      "tool_use_any": false,
+      "tool_use_all": false,
+      "pricing": [
+        {
+          "operator_id": 3,
+          "node_id": 1,
+          "in": 0.025,
+          "out": 0.045
+        }
+      ],
+      "context_windows": [
+        4096
+      ]
+    }
+  }
+}

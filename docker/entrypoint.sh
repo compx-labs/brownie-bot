@@ -37,6 +37,26 @@ printf '%s\n' "$WALLET_MNEMONIC" | "$PROXY_BIN" wallet import \
   --force \
   --network mainnet
 
+# zs-proxy auto-loads every *_MNEMONIC from the process env (e.g. TEST_MNEMONIC
+# from a shared .env). Live container runs must pay with WALLET_MNEMONIC only —
+# drop verify-suite creds before fund/proxy start so they never enter the
+# proxy keystore. Brownie itself does not need TEST_* for smoke/once/server.
+unset TEST_MNEMONIC TEST_WALLET
+
+# When multiple mnemonics remain loaded, zs-proxy requires an explicit payer.
+# Prefer an override, else the just-imported wallet address (not BOT_WALLET —
+# dry-run may personalize Canix to a different treasury while this mnemonic
+# still pays ZeroSignal / x402).
+if [[ -z "${PROXY_ZS_PROXY_PAYER_ADDR:-}" ]]; then
+  PROXY_ZS_PROXY_PAYER_ADDR="$("$PROXY_BIN" wallet address)"
+fi
+if [[ -z "${PROXY_ZS_PROXY_PAYER_ADDR:-}" ]]; then
+  echo "Could not resolve zs-proxy payer address after wallet import" >&2
+  exit 1
+fi
+export PROXY_ZS_PROXY_PAYER_ADDR
+echo "ZeroSignal proxy payer: $PROXY_ZS_PROXY_PAYER_ADDR"
+
 # Opt into the ZeroSignal escrow app and fund the prepaid ticket-MBR pool
 # (~1.15 ALGO for 10 slots). Without this, reserves fail with payer_not_opted_in
 # (often misreported as operators_busy / 503).
@@ -44,7 +64,16 @@ echo "Ensuring ZeroSignal prepaid MBR pool (zs-proxy fund)..."
 "$PROXY_BIN" fund --network mainnet
 
 echo "Starting zs-proxy (foreground child)..."
-"$PROXY_BIN" proxy start --foreground --config "$PROXY_CONFIG" --network mainnet &
+# Pipe proxy logs through a sanitizer so CDN HTML 502/504 bodies do not flood
+# the shared container stdout (brownie-bot already sanitizes its own errors).
+ZS_LOG_FILTER="${ZS_LOG_FILTER:-/app/docker/sanitize-zs-logs.mjs}"
+if [[ -f "$ZS_LOG_FILTER" ]]; then
+  "$PROXY_BIN" proxy start --foreground --config "$PROXY_CONFIG" --network mainnet \
+    > >(node "$ZS_LOG_FILTER") 2>&1 &
+else
+  echo "zs-proxy log filter missing at $ZS_LOG_FILTER; raw proxy logs enabled" >&2
+  "$PROXY_BIN" proxy start --foreground --config "$PROXY_CONFIG" --network mainnet &
+fi
 PROXY_PID=$!
 
 cleanup() {

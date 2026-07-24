@@ -121,6 +121,7 @@ describe("TreasuryReviewService", () => {
     const notifier: RunNotifier = {
       send: vi.fn().mockRejectedValue(new Error("Telegram unavailable")),
     };
+    const putLatest = vi.fn().mockResolvedValue("key");
     const deps = dependencies(agent);
     const instance = new TreasuryReviewService(
       deps.agent,
@@ -130,6 +131,9 @@ describe("TreasuryReviewService", () => {
       state,
       "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
       false,
+      undefined,
+      undefined,
+      { getLatest: vi.fn(), putLatest },
     );
 
     const result = await instance.run();
@@ -138,6 +142,45 @@ describe("TreasuryReviewService", () => {
       notificationError: "Telegram unavailable",
     });
     expect(state).toHaveProperty("latest", result);
+    expect(putLatest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notificationError: "Telegram unavailable",
+      }),
+    );
+  });
+
+  it("keeps the run successful when persistence fails", async () => {
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot(),
+        plan: portfolioPlan(),
+        opportunities: [],
+        payments: [],
+        toolCalls: [],
+      }),
+    };
+    const putLatest = vi
+      .fn()
+      .mockRejectedValue(new Error("Spaces unavailable"));
+    const deps = dependencies(agent);
+    const state = {};
+    const reviewService = new TreasuryReviewService(
+      deps.agent,
+      deps.policy,
+      deps.executor,
+      deps.notifier,
+      state,
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      false,
+      undefined,
+      undefined,
+      { getLatest: vi.fn(), putLatest },
+    );
+
+    const result = await reviewService.run();
+    expect(result.status).toBe("no-op");
+    expect(state).toHaveProperty("latest", result);
+    expect(putLatest).toHaveBeenCalledOnce();
   });
 
   it("fails closed when the portfolio agent fails", async () => {
@@ -149,6 +192,49 @@ describe("TreasuryReviewService", () => {
     await expect(instance.run()).resolves.toMatchObject({
       status: "failed",
       error: "Invalid AI plan",
+    });
+  });
+
+  it("reports unstructured agent output without failing the run", async () => {
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot(),
+        planRawText: "Useful narrative plan without schema.",
+        planParseError: "invalid structured plan: summary: Required",
+        opportunities: [],
+        payments: [],
+        toolCalls: ["canix_get_positions"],
+      }),
+    };
+    const { instance, deps } = service(agent);
+
+    await expect(instance.run()).resolves.toMatchObject({
+      status: "reported",
+      planRawText: "Useful narrative plan without schema.",
+      planParseError: "invalid structured plan: summary: Required",
+    });
+    expect(deps.notifier.send).toHaveBeenCalledOnce();
+    expect(deps.notifier.send).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "reported" }),
+    );
+    expect(deps.policy.validate).not.toHaveBeenCalled();
+    expect(deps.executor.executeAction).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes HTML gateway timeouts from the portfolio agent", async () => {
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockRejectedValue(
+        new Error(
+          `504 <!DOCTYPE html><html><title>504 Gateway Timeout</title><h3>We could not establish a connection to nauvoo.belt.algo.xyz</h3></html>`,
+        ),
+      ),
+    };
+    const { instance } = service(agent);
+
+    await expect(instance.run()).resolves.toMatchObject({
+      status: "failed",
+      error:
+        "ZeroSignal gateway timeout (504); could not reach nauvoo.belt.algo.xyz",
     });
   });
 

@@ -28,6 +28,11 @@ import {
   type AccountingStore,
 } from "./integrations/storage/accounting-store.js";
 import {
+  LocalFilesystemReviewRunStore,
+  SpacesReviewRunStore,
+  type ReviewRunStore,
+} from "./integrations/storage/review-run-store.js";
+import {
   AccountingRunInProgressError,
   AccountingService,
   type AccountingState,
@@ -46,6 +51,13 @@ import {
   type AccountingNotifier,
   type RunNotifier,
 } from "./services/telegram.js";
+import {
+  algodHealthUrl,
+  buildHealthReport,
+  probeCanixDependency,
+  probeHttpDependency,
+  zsProxyHealthzUrl,
+} from "./services/health.js";
 
 export interface AppContext {
   app: FastifyInstance;
@@ -67,7 +79,7 @@ const cashflowBodySchema = z.object({
   notes: z.string().optional(),
 });
 
-export function createApp(config: AppConfig): AppContext {
+export async function createApp(config: AppConfig): Promise<AppContext> {
   const app = Fastify({
     logger: {
       level: config.NODE_ENV === "test" ? "silent" : "info",
@@ -168,6 +180,26 @@ export function createApp(config: AppConfig): AppContext {
   const coordinator = new RunCoordinator();
   const state: ReviewState = {};
   const accountingState: AccountingState = {};
+  const reviewStore: ReviewRunStore = isSpacesConfigured(config)
+    ? (() => {
+        const spaces = requireSpacesCredentials(config);
+        return new SpacesReviewRunStore({
+          endpoint: spaces.endpoint,
+          region: config.DO_SPACES_REGION,
+          bucket: spaces.bucket,
+          accessKeyId: spaces.key,
+          secretAccessKey: spaces.secret,
+          prefix: config.DO_SPACES_PREFIX,
+        });
+      })()
+    : new LocalFilesystemReviewRunStore({
+        rootDir: config.ACCOUNTING_DATA_DIR,
+        prefix: config.DO_SPACES_PREFIX,
+      });
+  const persistedLatest = await reviewStore.getLatest(config.BOT_WALLET);
+  if (persistedLatest) {
+    state.latest = persistedLatest;
+  }
   const reviewService = new TreasuryReviewService(
     agent,
     policy,
@@ -178,6 +210,7 @@ export function createApp(config: AppConfig): AppContext {
     config.ENABLE_TRANSACTION_SIGNING,
     portfolioReader,
     coordinator,
+    reviewStore,
   );
   const store: AccountingStore = isSpacesConfigured(config)
     ? (() => {
@@ -208,16 +241,31 @@ export function createApp(config: AppConfig): AppContext {
     },
   );
 
-  app.get("/health", () => ({
-    status: "ok",
-    mode: "autonomous",
-    signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
-    walletConfigured: true,
-    telegramConfigured: isTelegramConfigured(config),
-    accountingEnabled: true,
-    accountingStorage: isSpacesConfigured(config) ? "spaces" : "local",
-    folksEscrowStorage: isSpacesConfigured(config) ? "spaces" : "local",
-  }));
+  app.get("/health", async (request) => {
+    const query = request.query as { deps?: string };
+    const includeDeps = query.deps === "1" || query.deps === "true";
+    const storage = isSpacesConfigured(config) ? "spaces" : "local";
+    let deps: ReturnType<typeof buildHealthReport>["deps"];
+    if (includeDeps) {
+      const [zsProxy, algod, canixCheck] = await Promise.all([
+        probeHttpDependency(zsProxyHealthzUrl(config.OPENAI_BASE_URL)),
+        probeHttpDependency(algodHealthUrl(config.X402_ALGOD_URL)),
+        probeCanixDependency(() => canix.health()),
+      ]);
+      deps = { zsProxy, algod, canix: canixCheck };
+    }
+
+    return buildHealthReport({
+      signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+      telegramConfigured: isTelegramConfigured(config),
+      accountingStorage: storage,
+      folksEscrowStorage: storage,
+      busy: coordinator.isBusy,
+      latestReview: state.latest,
+      latestAccounting: accountingState.latest,
+      deps,
+    });
+  });
 
   app.get("/runs/latest", async (_request, reply) => {
     if (!state.latest) {

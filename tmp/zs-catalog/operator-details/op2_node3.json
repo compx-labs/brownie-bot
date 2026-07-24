@@ -1,0 +1,486 @@
+{
+  "operator_id": 2,
+  "node_id": 3,
+  "owner_addr": "BELTAI5SNXQON5YXN5TBJ6OHZ3YFOJ7VG6QMVG32AVGBWT4IKXFTUDBE3Q",
+  "signing_addr": "BELTAI5SNXQON5YXN5TBJ6OHZ3YFOJ7VG6QMVG32AVGBWT4IKXFTUDBE3Q",
+  "ephemeral_age_pubkey": "age16nyfnm2sslfdwnfdfj5ws8lvt500fquh35lj9pyy3a8lajtuugssn75y6u",
+  "ephemeral_expiry": 1784898689,
+  "ephemeral_issued_at": 1784897189,
+  "ephemeral_sig": "Hl49EA7sqXfTmBawOHncQ85j0uvfZ2ty7fW0mV1NRxQDbicwYPFhg42/l2WuiS2fm4j1PN5cM4AJpnnVXIfuCw==",
+  "models": [
+    {
+      "id": "google/gemini-3-flash-preview",
+      "input_rate_usd_per_1m": 0.3025,
+      "output_rate_usd_per_1m": 1.815,
+      "context_window": 1048576,
+      "input_modalities": [
+        "text",
+        "image",
+        "file",
+        "audio",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:google/gemini-3-flash-preview",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V4-Pro",
+      "input_rate_usd_per_1m": 0.7177,
+      "output_rate_usd_per_1m": 1.4355,
+      "context_window": 1048576,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:deepseek-ai/DeepSeek-V4-Pro",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "anthropic/claude-opus-4.8",
+      "input_rate_usd_per_1m": 6.05,
+      "output_rate_usd_per_1m": 30.25,
+      "context_window": 1000000,
+      "input_modalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:anthropic/claude-opus-4.8",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "openai/gpt-oss-120b",
+      "input_rate_usd_per_1m": 0.0442,
+      "output_rate_usd_per_1m": 0.2653,
+      "context_window": 131072,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "tags": [
+        "vllm"
+      ],
+      "source": "hf:openai/gpt-oss-120b",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "anthropic/claude-sonnet-5",
+      "input_rate_usd_per_1m": 2.42,
+      "output_rate_usd_per_1m": 12.1,
+      "context_window": 1000000,
+      "input_modalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:anthropic/claude-sonnet-5",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "input_rate_usd_per_1m": 3.63,
+      "output_rate_usd_per_1m": 18.15,
+      "context_window": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:moonshotai/kimi-k3",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "stepfun-ai/Step-3.7-Flash",
+      "input_rate_usd_per_1m": 0.242,
+      "output_rate_usd_per_1m": 1.3915,
+      "context_window": 256000,
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "tags": [
+        "vision-language",
+        "multimodal",
+        "moe"
+      ],
+      "source": "hf:stepfun-ai/Step-3.7-Flash",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "google/gemini-2.5-flash",
+      "input_rate_usd_per_1m": 0.2475,
+      "output_rate_usd_per_1m": 2.0625,
+      "context_window": 1048576,
+      "input_modalities": [
+        "file",
+        "image",
+        "text",
+        "audio",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:google/gemini-2.5-flash",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "XiaomiMiMo/MiMo-V2.5-Pro",
+      "input_rate_usd_per_1m": 0.5263,
+      "output_rate_usd_per_1m": 1.0527,
+      "context_window": 1024000,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "tags": [
+        "text-generation",
+        "agent",
+        "long-context",
+        "code",
+        "transformers"
+      ],
+      "source": "hf:XiaomiMiMo/MiMo-V2.5-Pro",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "XiaomiMiMo/MiMo-V2.5",
+      "input_rate_usd_per_1m": 0.1694,
+      "output_rate_usd_per_1m": 0.3388,
+      "context_window": 1000000,
+      "input_modalities": [
+        "text",
+        "audio",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "tags": [
+        "multimodal",
+        "vision-language",
+        "audio",
+        "agent",
+        "video-understanding",
+        "long-context",
+        "transformers"
+      ],
+      "source": "hf:XiaomiMiMo/MiMo-V2.5",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "anthropic/claude-sonnet-4.6",
+      "input_rate_usd_per_1m": 3.63,
+      "output_rate_usd_per_1m": 18.15,
+      "context_window": 1000000,
+      "input_modalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:anthropic/claude-sonnet-4.6",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "tencent/Hy3",
+      "input_rate_usd_per_1m": 0.1559,
+      "output_rate_usd_per_1m": 0.6457,
+      "context_window": 262144,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "tags": [
+        "hunyuan",
+        "hy3",
+        "moe",
+        "text-generation"
+      ],
+      "source": "hf:tencent/Hy3",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "google/gemini-2.5-flash-lite",
+      "input_rate_usd_per_1m": 0.0825,
+      "output_rate_usd_per_1m": 0.33,
+      "context_window": 1048576,
+      "input_modalities": [
+        "text",
+        "image",
+        "file",
+        "audio",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:google/gemini-2.5-flash-lite",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "openai/gpt-5.5",
+      "input_rate_usd_per_1m": 4.125,
+      "output_rate_usd_per_1m": 24.75,
+      "context_window": 1050000,
+      "input_modalities": [
+        "file",
+        "image",
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:openai/gpt-5.5",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "MiniMaxAI/Minimax-M3",
+      "input_rate_usd_per_1m": 0.363,
+      "output_rate_usd_per_1m": 1.452,
+      "context_window": 524288,
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "tags": [
+        "multimodal",
+        "moe",
+        "agent",
+        "coding",
+        "video"
+      ],
+      "source": "hf:MiniMaxAI/Minimax-M3",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "google/gemini-3.1-flash-lite",
+      "input_rate_usd_per_1m": 0.2063,
+      "output_rate_usd_per_1m": 1.2375,
+      "context_window": 1048576,
+      "input_modalities": [
+        "text",
+        "image",
+        "video",
+        "file",
+        "audio"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:google/gemini-3.1-flash-lite",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "zai-org/GLM-5.2",
+      "input_rate_usd_per_1m": 0.9926,
+      "output_rate_usd_per_1m": 3.1198,
+      "context_window": 1024000,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:zai-org/GLM-5.2",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "anthropic/claude-fable-5",
+      "input_rate_usd_per_1m": 12.1,
+      "output_rate_usd_per_1m": 60.5,
+      "context_window": 1000000,
+      "input_modalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:anthropic/claude-fable-5",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V4-Flash",
+      "input_rate_usd_per_1m": 0.1089,
+      "output_rate_usd_per_1m": 0.2178,
+      "context_window": 1024000,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:deepseek-ai/DeepSeek-V4-Flash",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "openai/gpt-5.6-sol",
+      "input_rate_usd_per_1m": 4.125,
+      "output_rate_usd_per_1m": 24.75,
+      "context_window": 1050000,
+      "input_modalities": [
+        "file",
+        "image",
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:openai/gpt-5.6-sol",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "anthropic/claude-opus-4.7",
+      "input_rate_usd_per_1m": 6.05,
+      "output_rate_usd_per_1m": 30.25,
+      "context_window": 1000000,
+      "input_modalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:anthropic/claude-opus-4.7",
+      "weights_unverifiable": true
+    }
+  ],
+  "oracle_source": "coingecko",
+  "oracle_healthy": true,
+  "algo_usd_price": 0.081954,
+  "algo_usd_at": "2026-07-24T15:05:59.793749615+02:00",
+  "min_charge_output_tokens": 1000,
+  "builtin_tools": [
+    {
+      "type": "zs_get_time"
+    },
+    {
+      "type": "zs_web_read"
+    },
+    {
+      "type": "zs_web_search"
+    }
+  ],
+  "max_tool_iterations": 5,
+  "tool_headroom_per_iteration": 4000,
+  "version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+  "proto_version": "9.0",
+  "config_hash": "sha256:7a9242779254270dcbc2ce08d713459d7a3f94f1aa3efd39114713f0e14ab3c7"
+}

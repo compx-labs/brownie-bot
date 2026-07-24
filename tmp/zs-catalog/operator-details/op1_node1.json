@@ -1,0 +1,158 @@
+{
+  "operator_id": 1,
+  "node_id": 1,
+  "owner_addr": "R6KP6FOKGJM6I53EIJESWNCZBYS3UO4EY56SF3LZXFTNJBXIOAP7LEGCBQ",
+  "signing_addr": "V56UWOCDT7CIPNLA5OZXX3LAYPG6TRRZFQPNHW4765GW6FJULBEZ2W3OOM",
+  "ephemeral_age_pubkey": "age18kyyadwfzxnvw6zn2vl2vx2ahtn0tqdssf746ppdjfqr2h0tgvjqfdhs66",
+  "ephemeral_expiry": 1784899477,
+  "ephemeral_issued_at": 1784897977,
+  "ephemeral_sig": "7mUEuTvDZZgVKY45l1xO4pH2gy5YYIo/mEBNIldVCGJhMoh+Zmuv34hpm3kGya65zl//44knylBiZk8pkgmMBQ==",
+  "models": [
+    {
+      "id": "glm-5",
+      "input_rate_usd_per_1m": 1.1,
+      "output_rate_usd_per_1m": 3.52,
+      "cache_read_rate_usd_per_1m": 0.22,
+      "context_window": 200000,
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:zai-org/GLM-5",
+      "weights_unverifiable": true,
+      "image_tool_rate_micro_usdc": 200000,
+      "image_edit_tool_rate_micro_usdc": 320000,
+      "image_tool_base_micro_usdc": 50000,
+      "image_edit_tool_base_micro_usdc": 80000
+    },
+    {
+      "id": "glm-5-turbo",
+      "input_rate_usd_per_1m": 1.32,
+      "output_rate_usd_per_1m": 4.4,
+      "cache_read_rate_usd_per_1m": 0.264,
+      "context_window": 200000,
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "weights_unverifiable": true,
+      "image_tool_rate_micro_usdc": 200000,
+      "image_edit_tool_rate_micro_usdc": 320000,
+      "image_tool_base_micro_usdc": 50000,
+      "image_edit_tool_base_micro_usdc": 80000
+    },
+    {
+      "id": "zimage",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 0,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "weights_unverifiable": true,
+      "image_rate_micro_usdc": 50000,
+      "serves_image_gen": true
+    },
+    {
+      "id": "glm-4.7",
+      "input_rate_usd_per_1m": 0.66,
+      "output_rate_usd_per_1m": 2.42,
+      "cache_read_rate_usd_per_1m": 0.121,
+      "context_window": 200000,
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:zai-org/GLM-4.7",
+      "weights_unverifiable": true,
+      "image_tool_rate_micro_usdc": 200000,
+      "image_edit_tool_rate_micro_usdc": 320000,
+      "image_tool_base_micro_usdc": 50000,
+      "image_edit_tool_base_micro_usdc": 80000
+    },
+    {
+      "id": "glm-4.7-flash",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 0,
+      "context_window": 200000,
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:zai-org/GLM-4.7-Flash",
+      "weights_unverifiable": true
+    },
+    {
+      "id": "glm-5.2",
+      "input_rate_usd_per_1m": 1.54,
+      "output_rate_usd_per_1m": 4.84,
+      "cache_read_rate_usd_per_1m": 0.286,
+      "context_window": 1000000,
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "source": "hf:zai-org/GLM-5.2",
+      "weights_unverifiable": true,
+      "image_tool_rate_micro_usdc": 200000,
+      "image_edit_tool_rate_micro_usdc": 320000,
+      "image_tool_base_micro_usdc": 50000,
+      "image_edit_tool_base_micro_usdc": 80000
+    },
+    {
+      "id": "flux-edit",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 0,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "weights_unverifiable": true,
+      "image_edit_rate_micro_usdc": 80000,
+      "serves_image_edit": true
+    },
+    {
+      "id": "glm-4.5-flash",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 0,
+      "context_window": 128000,
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "weights_unverifiable": true
+    }
+  ],
+  "oracle_source": "coingecko",
+  "oracle_healthy": true,
+  "algo_usd_price": 0.081954,
+  "algo_usd_at": "2026-07-24T13:06:06.93670722Z",
+  "min_charge_output_tokens": 1000,
+  "builtin_tools": [
+    {
+      "type": "zs_get_time"
+    },
+    {
+      "type": "zs_image_edit"
+    },
+    {
+      "type": "zs_image_generation"
+    },
+    {
+      "type": "zs_web_read"
+    },
+    {
+      "type": "zs_web_search"
+    }
+  ],
+  "max_tool_iterations": 20,
+  "tool_headroom_per_iteration": 4000,
+  "version": "66f1eea [2026-07-24T07:22:02Z]",
+  "proto_version": "9.0",
+  "config_hash": "sha256:cbdebeee8ea6899debd614e1859d256b931e0b896aca97da6ac1f3a3bcb86c90"
+}

@@ -16,7 +16,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
-ARG ZS_PROXY_VERSION=0.9.0
+ARG ZS_PROXY_VERSION=0.10.2
 # TARGETARCH is set by BuildKit; fall back to uname for classic docker build.
 ARG TARGETARCH
 RUN set -eux; \
@@ -46,6 +46,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY config/zs-proxy.yaml /app/config/zs-proxy.yaml
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
+COPY docker/sanitize-zs-logs.mjs /app/docker/sanitize-zs-logs.mjs
 RUN chmod +x /app/docker/entrypoint.sh \
   && chown -R node:node /app /home/node
 

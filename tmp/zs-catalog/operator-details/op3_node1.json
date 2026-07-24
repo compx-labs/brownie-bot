@@ -1,0 +1,50 @@
+{
+  "operator_id": 3,
+  "node_id": 1,
+  "owner_addr": "JKLQCYKZS5WOSKQPYTGMFJLRX5C2QCNI7JO6NUM67G5WGLXY7V4CZWYYNM",
+  "signing_addr": "WP4RF6XH7ZE2JR5SJDQVMMRXX553YGCRPRVNYCLMDKAYJGZQCCUNJR2UQA",
+  "ephemeral_age_pubkey": "age19avs6905rx25n29g0hzl06du2wyyz6vwt548an3nhtkh4nxt7ftq8mavjf",
+  "ephemeral_expiry": 1784899827,
+  "ephemeral_issued_at": 1784898327,
+  "ephemeral_sig": "G8l5B3p9p2DIJCeA83ooOrtvtlNLaC3cYzC+3BXHSk4ie3qYjbHbS1YJXKZPzGyDBvA1U7pydvUaZow2ErzvCw==",
+  "models": [
+    {
+      "id": "Qwen/Qwen3-4B-Instruct-2507",
+      "input_rate_usd_per_1m": 0.025,
+      "output_rate_usd_per_1m": 0.045,
+      "context_window": 4096,
+      "max_output_tokens": 1024,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "source": "hf:Qwen/Qwen3-4B-Instruct-2507",
+      "weights_unverifiable": true
+    }
+  ],
+  "oracle_source": "coingecko",
+  "oracle_healthy": true,
+  "algo_usd_price": 0.081954,
+  "algo_usd_at": "2026-07-24T09:05:57.4276861-04:00",
+  "min_charge_output_tokens": 1000,
+  "min_charge_algo_txns": 7,
+  "min_charge_microusdc": 574,
+  "builtin_tools": [
+    {
+      "type": "zs_get_time"
+    },
+    {
+      "type": "zs_web_read"
+    },
+    {
+      "type": "zs_web_search"
+    }
+  ],
+  "max_tool_iterations": 20,
+  "tool_headroom_per_iteration": 4000,
+  "version": "0.10.1",
+  "proto_version": "9.0",
+  "config_hash": "sha256:93589d4ad1c151a0444ec475aaa3bc0b6f4e4d92b1c05088bae41408f7d195e7"
+}

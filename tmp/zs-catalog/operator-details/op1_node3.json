@@ -1,0 +1,92 @@
+{
+  "operator_id": 1,
+  "node_id": 3,
+  "owner_addr": "R6KP6FOKGJM6I53EIJESWNCZBYS3UO4EY56SF3LZXFTNJBXIOAP7LEGCBQ",
+  "signing_addr": "V56UWOCDT7CIPNLA5OZXX3LAYPG6TRRZFQPNHW4765GW6FJULBEZ2W3OOM",
+  "ephemeral_age_pubkey": "age1zc4evez7rdz8pr6hl5y6m93h3ct7dlzcde2hr4s9pz09e2mpvv7srffffx",
+  "ephemeral_expiry": 1784899414,
+  "ephemeral_issued_at": 1784897914,
+  "ephemeral_sig": "9t0pdOUCAE1OKUdUXOBeoAjxASGaB3ivRIO6A9l/8LJ8MrTEDhhCgy6SiUwWURK2a3jRJvfUH/3UOk0DgJWUCQ==",
+  "models": [
+    {
+      "id": "grok-4.5",
+      "input_rate_usd_per_1m": 2.2,
+      "output_rate_usd_per_1m": 6.6,
+      "cache_read_rate_usd_per_1m": 0.33,
+      "context_window": 200000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true,
+        "allowed_efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "high"
+      },
+      "tool_use": true,
+      "weights_unverifiable": true,
+      "image_tool_rate_micro_usdc": 60000,
+      "image_edit_tool_rate_micro_usdc": 60000,
+      "image_tool_base_micro_usdc": 60000,
+      "image_edit_tool_base_micro_usdc": 60000
+    },
+    {
+      "id": "grok-imagine-image-quality",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 0,
+      "context_window": 8000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "weights_unverifiable": true,
+      "image_rate_micro_usdc": 15000,
+      "image_edit_rate_micro_usdc": 15000,
+      "image_default_micro_usdc": 60000,
+      "image_edit_default_micro_usdc": 60000,
+      "image_cap_micro_usdc": 60000,
+      "image_edit_cap_micro_usdc": 60000,
+      "serves_image_gen": true,
+      "serves_image_edit": true
+    }
+  ],
+  "oracle_source": "coingecko",
+  "oracle_healthy": true,
+  "algo_usd_price": 0.081954,
+  "algo_usd_at": "2026-07-24T13:06:04.783112849Z",
+  "min_charge_output_tokens": 1000,
+  "min_charge_algo_txns": 7,
+  "min_charge_microusdc": 574,
+  "builtin_tools": [
+    {
+      "type": "zs_get_time"
+    },
+    {
+      "type": "zs_image_edit"
+    },
+    {
+      "type": "zs_image_generation"
+    },
+    {
+      "type": "zs_web_read"
+    },
+    {
+      "type": "zs_web_search"
+    }
+  ],
+  "max_tool_iterations": 20,
+  "tool_headroom_per_iteration": 4000,
+  "version": "66f1eea [2026-07-24T07:22:02Z]",
+  "proto_version": "9.0",
+  "config_hash": "sha256:8eb272823251dd7d74d0e58a2b35f0caa52d555609f60a57911537e9a0e1c7b4"
+}

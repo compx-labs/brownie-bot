@@ -11,6 +11,8 @@ import {
 import { AlgorandPaymentBuilder } from "../integrations/canix402/payment.js";
 import { walletFromMnemonic } from "../integrations/canix402/wallet.js";
 import { rankOpportunities } from "../services/treasury-review.js";
+import { formatBaseUnits } from "../services/money.js";
+import { sanitizeErrorMessage } from "../util/errors.js";
 
 interface CanixCliConfig {
   CANIX402_MCP_URL: string;
@@ -208,13 +210,31 @@ export function printPortfolioSnapshot(
   );
   if (snapshot.liquidBalances.length > 0) {
     console.table(
-      snapshot.liquidBalances.map((balance) => ({
-        AssetId: balance.assetId,
-        Symbol: balance.symbol ?? "—",
-        AmountRaw: balance.amountRaw,
-        SpendableRaw: balance.spendableAmountRaw ?? balance.amountRaw,
-        Frozen: balance.frozen ? "yes" : "no",
-      })),
+      snapshot.liquidBalances.map((balance) => {
+        const decimals = balance.decimals;
+        const amount =
+          decimals === undefined
+            ? undefined
+            : formatBaseUnits(balance.amountRaw, decimals);
+        return {
+          AssetId: balance.assetId,
+          Symbol: balance.symbol ?? "—",
+          Amount: amount ?? "—",
+          AmountRaw: balance.amountRaw,
+          Spendable:
+            decimals === undefined
+              ? "—"
+              : formatBaseUnits(
+                  balance.spendableAmountRaw ?? balance.amountRaw,
+                  decimals,
+                ),
+          USD:
+            balance.usdValue === null || balance.usdValue === undefined
+              ? "—"
+              : formatUsd(balance.usdValue),
+          Frozen: balance.frozen ? "yes" : "no",
+        };
+      }),
     );
   }
 
@@ -224,8 +244,9 @@ export function printPortfolioSnapshot(
 }
 
 export function printCliError(error: unknown): void {
-  const message =
-    error instanceof Error ? error.message : "Unknown command failure";
+  const message = sanitizeErrorMessage(
+    error instanceof Error ? error : "Unknown command failure",
+  );
   console.error(`Canix402 command failed: ${message}`);
 }
 
