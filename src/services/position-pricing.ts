@@ -1,4 +1,9 @@
-import type { AssetPrice, Position, WalletPositions } from "../domain.js";
+import type {
+  AssetPrice,
+  LiquidBalance,
+  Position,
+  WalletPositions,
+} from "../domain.js";
 import { formatUsd, money } from "./money.js";
 
 const USDC_ASSET_ID = 31_566_704;
@@ -219,6 +224,42 @@ export function repricePositionsFromTokenPrices(
     return { ...position, usdValue };
   });
   return { positions: next, notes };
+}
+
+/**
+ * Attach usdValue to wallet liquid balances using amountRaw / 10^decimals × price.
+ * Never multiply raw base units by a per-token USD price.
+ */
+export function priceLiquidBalances(
+  balances: LiquidBalance[],
+  prices: AssetPrice[],
+): LiquidBalance[] {
+  const byAssetId = new Map(prices.map((price) => [price.assetId, price]));
+  return balances.map((balance) => {
+    if (balance.decimals === undefined) {
+      return { ...balance, usdValue: null };
+    }
+    let priceUsd = usableTokenPrice(byAssetId.get(balance.assetId)?.priceUsd);
+    if (priceUsd === null && isUnitUsdAssetId(balance.assetId)) {
+      priceUsd = "1";
+    }
+    if (
+      priceUsd === null &&
+      isUnitUsdAssetId(knownAssetIdForSymbol(balance.symbol))
+    ) {
+      priceUsd = "1";
+    }
+    if (priceUsd === null) {
+      return { ...balance, usdValue: null };
+    }
+    const humanAmount = money(balance.amountRaw).div(
+      money(10).pow(balance.decimals),
+    );
+    return {
+      ...balance,
+      usdValue: Number(formatUsd(humanAmount.times(money(priceUsd)))),
+    };
+  });
 }
 
 export function recomputeWalletPositionTotals(

@@ -1,0 +1,1 @@
+{"id":"XiaomiMiMo/MiMo-V2.5","object":"model","created":0,"owned_by":"zerosignal","architecture":{"input_modalities":["text","audio","image","video"],"output_modalities":["text"]}}

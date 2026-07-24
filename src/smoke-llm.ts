@@ -17,6 +17,7 @@ import {
   extractOutputText,
   normalizeAgentResponse,
 } from "./services/portfolio-agent.js";
+import { sanitizeErrorMessage } from "./util/errors.js";
 
 const SMOKE_TOOL = "canix_list_opportunities";
 const MAX_TURNS = 4;
@@ -223,7 +224,7 @@ if (isDirectRun) {
       )}\n`,
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = sanitizeErrorMessage(error);
     console.error(`[smoke-llm] ${message}`);
     if (error instanceof Error && error.stack) {
       console.error(error.stack);

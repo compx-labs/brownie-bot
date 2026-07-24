@@ -73,7 +73,7 @@ zs-proxy):
 ```dotenv
 OPENAI_BASE_URL="http://127.0.0.1:8080/v1"
 OPEN_AI_API_KEY="zerosignal"
-OPENAI_MODEL="Qwen/Qwen3-Coder-480B-A35B-Instruct"
+OPENAI_MODEL="glm-5.2"
 OPENAI_REASONING_EFFORT="medium"
 AI_MODE=full
 AI_MAX_TOOL_CALLS=16
@@ -222,15 +222,25 @@ not fail the run. Optional external cashflows can still be recorded through
 
 ## HTTP API
 
-- `GET /health` — configuration readiness without contacting or spending
-  through Canix402
-- `GET /runs/latest` — latest in-memory review result
+- `GET /health` — operator health: config readiness, busy flag, latest
+  review/accounting age and status (from in-memory / hydrated state). Does
+  not contact deps by default. Append `?deps=1` to also probe zs-proxy
+  `/healthz`, Algod `/health`, and free `canix_health` (short timeouts; may
+  mark `status` as `degraded` with `warnings` when something is down or
+  stale). Always HTTP 200 while the process is up — check the `status`
+  field (`ok` | `degraded`).
+- `GET /runs/latest` — latest review result (hydrated from
+  `wallets/<addr>/reviews/latest.json` on boot; updated after each review)
 - `POST /runs` — manually run a review; disabled unless
   `MANUAL_TRIGGER_TOKEN` is set and requires
   `Authorization: Bearer <token>`
 - `GET /accounting/latest` — latest accounting run
 - `POST /accounting/run` — manually run accounting; same bearer token model
 - `POST /accounting/cashflows` — record an immutable external cashflow event
+
+Latest review JSON is stored alongside accounting under the same local
+`ACCOUNTING_DATA_DIR` (or Spaces) root. Persistence is best-effort: a store
+write failure is logged and does not fail the review.
 
 ## Canix402 payment flow
 
@@ -274,6 +284,11 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 ```
 
+When Telegram is configured, review and accounting digests are sent as Telegram
+**rich messages** (`sendRichMessage`: `###` section headings, tables, collapsible
+details, Allo links). If rich delivery fails, the bot falls back to HTML
+`sendMessage`, then plain text.
+
 Review reports include the portfolio plan, expected net benefit, policy blocks
 or notes, signing mode, action outcomes, transaction IDs, x402 totals, and
 failures.
@@ -316,13 +331,12 @@ Before shipping signing-enabled deploys, prove each protocol path with a
 npm run canix:discover-verify
 ```
 
-   Writes `tests/fixtures/protocol-verify-opportunities.json`.
-3. Run full enter→exit (and Haystack swap both ways) on the **same host path
-   production uses**: agent-minimal plan actions (shape key + spends/amount only)
-   → `normalizePortfolioPlan` shape completion → policy →
-   `AlgorandExecutionService` (quotes + local sign + submit). A green suite
-   means those pinned venues work when the live agent emits the same minimal
-   fields (shape key, amounts, position id)—not a parallel verify-only builder.
+Writes `tests/fixtures/protocol-verify-opportunities.json`. 3. Run full enter→exit (and Haystack swap both ways) on the **same host path
+production uses**: agent-minimal plan actions (shape key + spends/amount only)
+→ `normalizePortfolioPlan` shape completion → policy →
+`AlgorandExecutionService` (quotes + local sign + submit). A green suite
+means those pinned venues work when the live agent emits the same minimal
+fields (shape key, amounts, position id)—not a parallel verify-only builder.
 
 ```bash
 RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify
@@ -353,7 +367,8 @@ docker run --env-file .env \
 
 `docker/entrypoint.sh` imports `WALLET_MNEMONIC` into zs-proxy, waits for
 `/healthz`, then runs `node dist/index.js`. Spend caps default from
-`config/zs-proxy.yaml` (override with `PROXY_SPEND_*`). Fund the wallet on-chain
+`config/zs-proxy.yaml` (override with `PROXY_SPEND_*`). Relay privacy defaults
+**off** (`zs.privacy: false`; override with `PROXY_ZS_PRIVACY=true`). Fund the wallet on-chain
 before the first review (`zs-proxy fund` from any machine with the same
 mnemonic, or transfer USDC/ALGO to the address).
 
@@ -362,10 +377,10 @@ needed, rebuild if the entrypoint changed, then:
 
 ```bash
 # Safe connectivity smoke (LLM + one Canix research call; never signs)
-docker run --rm --env-file .ENV brownie-bot smoke
+docker run --rm --env-file .env brownie-bot smoke
 
 # Full one-shot treasury review — set ENABLE_TRANSACTION_SIGNING=false first
-docker run --rm --env-file .ENV brownie-bot once
+docker run --rm --env-file .env brownie-bot once
 ```
 
 `smoke` starts zs-proxy, runs `dist/smoke-llm.js` (ZeroSignal +

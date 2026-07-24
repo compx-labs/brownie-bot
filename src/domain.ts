@@ -15,7 +15,9 @@ export const opportunityExecutionInputHintsSchema = z
     programId: z.number().int().positive().optional(),
     liquidityAssetId: z.number().int().nonnegative().optional(),
     escrowAddress: z.string().min(58).max(58).optional(),
-    valueToVerify: z.union([z.number().int().nonnegative(), z.string()]).optional(),
+    valueToVerify: z
+      .union([z.number().int().nonnegative(), z.string()])
+      .optional(),
   })
   .passthrough();
 
@@ -157,6 +159,8 @@ export const liquidBalanceSchema = z.object({
   decimals: z.number().int().nonnegative().optional(),
   symbol: z.string().min(1).optional(),
   frozen: z.boolean().optional(),
+  /** Host-computed USD using amountRaw / 10^decimals × priceUsd. */
+  usdValue: z.number().nonnegative().nullable().optional(),
 });
 
 export type LiquidBalance = z.infer<typeof liquidBalanceSchema>;
@@ -247,6 +251,91 @@ export const portfolioPlanSchema = z.object({
 
 export type PortfolioPlan = z.infer<typeof portfolioPlanSchema>;
 
+export const portfolioSnapshotSchema = z.object({
+  address: z.string().min(1),
+  fetchedAt: z.iso.datetime(),
+  positions: z.array(positionSchema),
+  protocols: z.array(protocolPositionResultSchema),
+  totals: walletPositionsSchema.shape.totals,
+  liquidBalances: z.array(liquidBalanceSchema),
+  minimumBalanceRaw: z.string().regex(/^[0-9]+$/),
+  complete: z.boolean(),
+  caveats: z.array(z.string()),
+});
+
+export const paymentReceiptSchema = z.object({
+  amountBaseUnits: z.string().min(1),
+  assetId: z.string().min(1),
+  network: z.string().min(1),
+  responseHeader: z.string().optional(),
+  resourcePath: z.string().optional(),
+});
+
+export const policyResultSchema = z.object({
+  approved: z.boolean(),
+  violations: z.array(z.string()),
+  warnings: z.array(z.string()),
+  metrics: z.object({
+    maxPositionPct: z.number(),
+    maxProtocolPct: z.number(),
+    liquidReservePct: z.number(),
+    turnoverPct: z.number(),
+  }),
+});
+
+export const executionOutcomeSchema = z.object({
+  actionId: z.string().min(1),
+  status: z.enum(["validated-dry-run", "confirmed", "failed", "skipped"]),
+  toolName: z.string().optional(),
+  transactionId: z.string().optional(),
+  confirmedRound: z.string().optional(),
+  error: z.string().optional(),
+});
+
+export const inferenceCostSchema = z.object({
+  totalUsdc: z.string().min(1),
+  requestCount: z.number().int().nonnegative(),
+  charges: z.array(
+    z.object({
+      amountUsdc: z.string().min(1),
+      headers: z.record(z.string(), z.string()),
+    }),
+  ),
+});
+
+export const reviewRunSchema = z.object({
+  id: z.string().min(1),
+  startedAt: z.iso.datetime(),
+  completedAt: z.iso.datetime(),
+  status: z.enum([
+    "planned",
+    "validated-dry-run",
+    "executing",
+    "partially-executed",
+    "confirmed",
+    "no-op",
+    "reported",
+    "failed",
+  ]),
+  mode: z.literal("autonomous"),
+  signingEnabled: z.boolean(),
+  walletAddress: z.string().min(1).optional(),
+  snapshot: portfolioSnapshotSchema.optional(),
+  reconciledSnapshot: portfolioSnapshotSchema.optional(),
+  reconciliationError: z.string().optional(),
+  plan: portfolioPlanSchema.optional(),
+  /** Unstructured agent text when portfolio_plan JSON could not be parsed. */
+  planRawText: z.string().optional(),
+  planParseError: z.string().optional(),
+  policy: policyResultSchema.optional(),
+  executions: z.array(executionOutcomeSchema).optional(),
+  payments: z.array(paymentReceiptSchema).optional(),
+  inferenceCost: inferenceCostSchema.optional(),
+  opportunities: z.array(opportunitySchema),
+  error: z.string().optional(),
+  notificationError: z.string().optional(),
+});
+
 export interface PolicyResult {
   approved: boolean;
   violations: string[];
@@ -269,41 +358,7 @@ export interface ExecutionOutcome {
   error?: string;
 }
 
-export interface ReviewRun {
-  id: string;
-  startedAt: string;
-  completedAt: string;
-  status:
-    | "planned"
-    | "validated-dry-run"
-    | "executing"
-    | "partially-executed"
-    | "confirmed"
-    | "no-op"
-    | "failed";
-  mode: "autonomous";
-  signingEnabled: boolean;
-  walletAddress?: string;
-  snapshot?: PortfolioSnapshot;
-  reconciledSnapshot?: PortfolioSnapshot;
-  reconciliationError?: string;
-  plan?: PortfolioPlan;
-  policy?: PolicyResult;
-  executions?: ExecutionOutcome[];
-  payments?: PaymentReceipt[];
-  /** ZeroSignal / zs-proxy inference spend for this run (from response headers). */
-  inferenceCost?: {
-    totalUsdc: string;
-    requestCount: number;
-    charges: Array<{
-      amountUsdc: string;
-      headers: Record<string, string>;
-    }>;
-  };
-  opportunities: Opportunity[];
-  error?: string;
-  notificationError?: string;
-}
+export type ReviewRun = z.infer<typeof reviewRunSchema>;
 
 export interface OpportunityResult {
   opportunities: Opportunity[];

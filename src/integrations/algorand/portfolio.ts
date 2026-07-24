@@ -8,6 +8,7 @@ import type {
 import type { Canix402Client } from "../canix402/client.js";
 import {
   collectRepriceAssetIds,
+  priceLiquidBalances,
   recomputeWalletPositionTotals,
   repricePositionsFromTokenPrices,
 } from "../../services/position-pricing.js";
@@ -36,12 +37,22 @@ export class AlgorandPortfolioReader implements PortfolioReader {
       this.readAccountState(),
     ]);
     const repriceAssetIds = collectRepriceAssetIds(positions.data);
+    const liquidAssetIds = accountState.balances.map(
+      (balance) => balance.assetId,
+    );
+    const priceAssetIds = [
+      ...new Set([...repriceAssetIds, ...liquidAssetIds]),
+    ];
     const prices =
-      repriceAssetIds.length === 0
+      priceAssetIds.length === 0
         ? []
-        : await this.canix.getTokenPrices(repriceAssetIds);
+        : await this.canix.getTokenPrices(priceAssetIds);
     const { positions: pricedPositions } = repricePositionsFromTokenPrices(
       positions.data,
+      prices,
+    );
+    const liquidBalances = priceLiquidBalances(
+      accountState.balances,
       prices,
     );
     const totals = recomputeWalletPositionTotals(pricedPositions);
@@ -79,7 +90,7 @@ export class AlgorandPortfolioReader implements PortfolioReader {
         positions: pricedPositions,
         protocols: positions.protocols,
         totals,
-        liquidBalances: accountState.balances,
+        liquidBalances,
         minimumBalanceRaw: accountState.minimumBalanceRaw,
         complete: caveats.length === 0,
         caveats,

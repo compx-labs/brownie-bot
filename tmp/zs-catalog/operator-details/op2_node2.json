@@ -1,0 +1,140 @@
+{
+  "operator_id": 2,
+  "node_id": 2,
+  "owner_addr": "BELTAI5SNXQON5YXN5TBJ6OHZ3YFOJ7VG6QMVG32AVGBWT4IKXFTUDBE3Q",
+  "signing_addr": "BELTAI5SNXQON5YXN5TBJ6OHZ3YFOJ7VG6QMVG32AVGBWT4IKXFTUDBE3Q",
+  "ephemeral_age_pubkey": "age15ayj8nyktnertaahvtn3pcx72fcywrwc26wzdc6ggga2lvxrsuks0jes26",
+  "ephemeral_expiry": 1784899506,
+  "ephemeral_issued_at": 1784898006,
+  "ephemeral_sig": "52fc3JFmUP2or18zGspRyciD9DCkHvFah9LLuODaLO7QM9aC4rsBaOCQYoLkuo0rZ2IwpMqoWfceynWxP2aJAg==",
+  "models": [
+    {
+      "id": "z-image-turbo-20-NSFW-adult",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 5,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "weights_unverifiable": true,
+      "image_rate_micro_usdc": 50000,
+      "image_default_micro_usdc": 50000,
+      "image_cap_micro_usdc": 800000,
+      "serves_image_gen": true
+    },
+    {
+      "id": "AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4",
+      "input_rate_usd_per_1m": 0.5,
+      "output_rate_usd_per_1m": 5,
+      "cache_read_rate_usd_per_1m": 0.1,
+      "context_window": 262144,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": true
+      },
+      "tool_use": true,
+      "tags": [
+        "x-fast",
+        "26b",
+        "4-bit",
+        "4b-active",
+        "aarch64",
+        "abliterated",
+        "aeon",
+        "aeon-7",
+        "agentic",
+        "arm64",
+        "blackwell",
+        "chat",
+        "chunked-prefill",
+        "coding",
+        "compressed-tensors",
+        "conversational",
+        "dflash",
+        "dgx-spark",
+        "edge",
+        "english",
+        "flashinfer-cutlass",
+        "fp4",
+        "fp8-kv-cache",
+        "function-calling",
+        "gb10",
+        "gemma",
+        "gemma-4",
+        "gemma4",
+        "google",
+        "gpu",
+        "grace-blackwell",
+        "image-text-to-text",
+        "instruct",
+        "llmcompressor",
+        "long-context",
+        "mixture-of-experts",
+        "moe",
+        "multimodal",
+        "native-fp4",
+        "nvfp4",
+        "nvidia",
+        "on-device",
+        "openai-api",
+        "openai-compatible",
+        "prefix-caching",
+        "production-ready",
+        "quantized",
+        "reasoning",
+        "refusal-removed",
+        "safetensors",
+        "sliding-window-attention",
+        "sm_121a",
+        "sparse-moe",
+        "speculative-decoding",
+        "text-generation",
+        "thinking",
+        "tool-calling",
+        "transformer",
+        "uncensored",
+        "unfiltered",
+        "vision",
+        "vision-language",
+        "vllm",
+        "weight-quantization"
+      ],
+      "source": "hf:AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4",
+      "weights_unverifiable": true,
+      "image_tool_rate_micro_usdc": 50000,
+      "image_tool_base_micro_usdc": 50000
+    }
+  ],
+  "oracle_source": "coingecko",
+  "oracle_healthy": true,
+  "algo_usd_price": 0.081954,
+  "algo_usd_at": "2026-07-24T13:06:06.5618166Z",
+  "min_charge_output_tokens": 1000,
+  "builtin_tools": [
+    {
+      "type": "zs_get_time"
+    },
+    {
+      "type": "zs_image_generation"
+    },
+    {
+      "type": "zs_web_read"
+    },
+    {
+      "type": "zs_web_search"
+    }
+  ],
+  "max_tool_iterations": 5,
+  "tool_headroom_per_iteration": 4000,
+  "version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+  "proto_version": "9.0",
+  "config_hash": "sha256:2e06f934932d2d66ddf30c81df704486c77d9f1d8608e9000639acd229dd8d8a"
+}

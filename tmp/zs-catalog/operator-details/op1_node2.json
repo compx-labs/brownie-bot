@@ -1,0 +1,97 @@
+{
+  "operator_id": 1,
+  "node_id": 2,
+  "owner_addr": "R6KP6FOKGJM6I53EIJESWNCZBYS3UO4EY56SF3LZXFTNJBXIOAP7LEGCBQ",
+  "signing_addr": "V56UWOCDT7CIPNLA5OZXX3LAYPG6TRRZFQPNHW4765GW6FJULBEZ2W3OOM",
+  "ephemeral_age_pubkey": "age1ndm70ak4t3wfxnhqqp3uglxzx425e33w6d6s4ggla0ddgldk7q5sls88qm",
+  "ephemeral_expiry": 1784899409,
+  "ephemeral_issued_at": 1784897909,
+  "ephemeral_sig": "xDMZsssAZCS9y9ouk1dOTAgXBQGJ8/ubtGQI0POpwASo4oFTm9F2y/XcJqmO/bAwvdpbKaB3D+9N9mg2EVk3Aw==",
+  "models": [
+    {
+      "id": "flux-edit",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 0,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "weights_unverifiable": true,
+      "image_edit_rate_micro_usdc": 80000,
+      "serves_image_edit": true
+    },
+    {
+      "id": "kimi-k3",
+      "input_rate_usd_per_1m": 3.12,
+      "output_rate_usd_per_1m": 15.6,
+      "cache_read_rate_usd_per_1m": 0.312,
+      "context_window": 1048576,
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "reasoning": {
+        "supported": true,
+        "allowed_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "default_effort": "max"
+      },
+      "tool_use": true,
+      "weights_unverifiable": true,
+      "image_tool_rate_micro_usdc": 200000,
+      "image_edit_tool_rate_micro_usdc": 320000,
+      "image_tool_base_micro_usdc": 50000,
+      "image_edit_tool_base_micro_usdc": 80000
+    },
+    {
+      "id": "zimage",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 0,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "weights_unverifiable": true,
+      "image_rate_micro_usdc": 50000,
+      "serves_image_gen": true
+    }
+  ],
+  "oracle_source": "coingecko",
+  "oracle_healthy": true,
+  "algo_usd_price": 0.081954,
+  "algo_usd_at": "2026-07-24T13:05:58.314091782Z",
+  "min_charge_output_tokens": 1000,
+  "min_charge_algo_txns": 7,
+  "min_charge_microusdc": 574,
+  "builtin_tools": [
+    {
+      "type": "zs_get_time"
+    },
+    {
+      "type": "zs_image_edit"
+    },
+    {
+      "type": "zs_image_generation"
+    },
+    {
+      "type": "zs_web_read"
+    },
+    {
+      "type": "zs_web_search"
+    }
+  ],
+  "max_tool_iterations": 20,
+  "tool_headroom_per_iteration": 4000,
+  "version": "66f1eea [2026-07-24T07:22:02Z]",
+  "proto_version": "9.0",
+  "config_hash": "sha256:aa5319813c0cdff1d947b5d1522e920210e998e2a6a7c92297404a08908e6cab"
+}

@@ -31,6 +31,7 @@ import {
   collectRepriceAssetIds,
   repricePositionsFromTokenPrices,
 } from "./position-pricing.js";
+import { sanitizeErrorMessage } from "../util/errors.js";
 
 const ALGO_ASSET_ID = 0;
 const ALGO_DECIMALS = 6;
@@ -425,5 +426,5 @@ function moneyToString(value: Money | null): string | null {
 }
 
 function safeErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unknown error";
+  return sanitizeErrorMessage(error);
 }

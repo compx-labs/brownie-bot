@@ -6,6 +6,14 @@ algod:
 server:
   listen: "127.0.0.1:8080"
 
+# Direct to the model operator (no privacy relay hop). Relays through flaky
+# *.belt.algo.xyz nodes were causing bunny/CDN 504s on multi-turn /v1/responses.
+# Tradeoff: the target operator sees this client's IP. Re-enable with
+# `privacy: true` or `PROXY_ZS_PRIVACY=true`.
+zs:
+  privacy: false
+  allow_privacy_override: true
+
 spend:
   daily_cap_usdc: 5.00
   per_request_cap_usdc: 1.00

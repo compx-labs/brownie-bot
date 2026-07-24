@@ -1,0 +1,50 @@
+{
+  "operator_id": 2,
+  "node_id": 4,
+  "owner_addr": "BELTAI5SNXQON5YXN5TBJ6OHZ3YFOJ7VG6QMVG32AVGBWT4IKXFTUDBE3Q",
+  "signing_addr": "BELTAI5SNXQON5YXN5TBJ6OHZ3YFOJ7VG6QMVG32AVGBWT4IKXFTUDBE3Q",
+  "ephemeral_age_pubkey": "age1undzr2fucp8dn377kcpcj82n0s7srqetrdtx0m4dhxua7hqxlcasv4ky2v",
+  "ephemeral_expiry": 1784899210,
+  "ephemeral_issued_at": 1784897710,
+  "ephemeral_sig": "yLXIlSoYCAvnTWuIgjOUjHUMU6ecuPbg6g42ot1+xSMkvmnq/xOEM5jxWi+COKdgrFCPBLUmtFF1/qMn7ew0BA==",
+  "models": [
+    {
+      "id": "ig1/medgemma-27b-it-FP8-Dynamic",
+      "input_rate_usd_per_1m": 0,
+      "output_rate_usd_per_1m": 0,
+      "context_window": 131072,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "supported": false
+      },
+      "tool_use": false,
+      "tags": [
+        "medical",
+        "x-ray",
+        "biomedical",
+        "multimodal",
+        "text-generation",
+        "fp8",
+        "quantization",
+        "vllm",
+        "medgemma"
+      ],
+      "source": "hf:ig1/medgemma-27b-it-FP8-Dynamic",
+      "weights_unverifiable": true
+    }
+  ],
+  "oracle_source": "coingecko",
+  "oracle_healthy": true,
+  "algo_usd_price": 0.081954,
+  "algo_usd_at": "2026-07-24T13:06:10.049753925Z",
+  "min_charge_output_tokens": 1000,
+  "version": "66f1eea-dirty [2026-07-24T07:22:02Z]",
+  "proto_version": "9.0",
+  "config_hash": "sha256:190b64cb2eecf84a9f8a44276dad7ddaf6ee32b37317c8749149904b144b333f"
+}

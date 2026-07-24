@@ -1,0 +1,1 @@
+{"id":"openai/gpt-oss-120b","object":"model","created":0,"owned_by":"zerosignal","architecture":{"input_modalities":["text"],"output_modalities":["text"]}}

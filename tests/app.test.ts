@@ -19,15 +19,15 @@ describe("backend routes", () => {
   });
 
   it("reports safe configuration state without optional integrations", async () => {
-    context = createApp(loadConfig(environment));
+    context = await createApp(loadConfig(environment));
     const response = await context.app.inject({
       method: "GET",
       url: "/health",
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({
-      status: "ok",
+    expect(response.json()).toMatchObject({
+      status: "degraded",
       mode: "autonomous",
       signingEnabled: false,
       walletConfigured: true,
@@ -35,11 +35,71 @@ describe("backend routes", () => {
       accountingEnabled: true,
       accountingStorage: "local",
       folksEscrowStorage: "local",
+      busy: false,
+      latestReview: null,
+      latestAccounting: null,
+      warnings: ["No treasury review has completed yet"],
     });
+    expect(response.json().deps).toBeUndefined();
+  });
+
+  it("includes last review summary on /health after hydrate", async () => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const rootDir = await mkdtemp(join(tmpdir(), "brownie-app-health-"));
+    try {
+      const { LocalFilesystemReviewRunStore } =
+        await import("../src/integrations/storage/review-run-store.js");
+      const { portfolioPlan, portfolioSnapshot } =
+        await import("./fixtures.js");
+      const store = new LocalFilesystemReviewRunStore({
+        rootDir,
+        prefix: "brownie-bot",
+      });
+      const wallet = account.addr.toString();
+      await store.putLatest({
+        id: "persisted-run",
+        startedAt: "2026-07-13T09:00:00.000Z",
+        completedAt: "2026-07-13T09:00:01.000Z",
+        status: "no-op",
+        mode: "autonomous",
+        signingEnabled: false,
+        walletAddress: wallet,
+        snapshot: portfolioSnapshot({ address: wallet }),
+        plan: portfolioPlan(),
+        opportunities: [],
+      });
+
+      context = await createApp(
+        loadConfig({
+          ...environment,
+          ACCOUNTING_DATA_DIR: rootDir,
+          DO_SPACES_PREFIX: "brownie-bot",
+        }),
+      );
+      const response = await context.app.inject({
+        method: "GET",
+        url: "/health",
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        latestReview: {
+          id: "persisted-run",
+          status: "no-op",
+          failed: false,
+        },
+      });
+      expect(response.json().latestReview.ageSeconds).toBeGreaterThan(0);
+    } finally {
+      await context?.app.close();
+      context = undefined;
+      await rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it("reports Telegram and Spaces when configured", async () => {
-    context = createApp(
+    context = await createApp(
       loadConfig({
         ...environment,
         TELEGRAM_BOT_TOKEN: "test-token",
@@ -62,7 +122,7 @@ describe("backend routes", () => {
   });
 
   it("does not expose an unprotected manual trigger", async () => {
-    context = createApp(loadConfig(environment));
+    context = await createApp(loadConfig(environment));
     const response = await context.app.inject({
       method: "POST",
       url: "/runs",
@@ -70,9 +130,61 @@ describe("backend routes", () => {
     expect(response.statusCode).toBe(404);
   });
 
+  it("hydrates /runs/latest from persisted review store on boot", async () => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const rootDir = await mkdtemp(join(tmpdir(), "brownie-app-review-"));
+    try {
+      const { LocalFilesystemReviewRunStore } =
+        await import("../src/integrations/storage/review-run-store.js");
+      const { portfolioPlan, portfolioSnapshot } =
+        await import("./fixtures.js");
+      const store = new LocalFilesystemReviewRunStore({
+        rootDir,
+        prefix: "brownie-bot",
+      });
+      const wallet = account.addr.toString();
+      await store.putLatest({
+        id: "persisted-run",
+        startedAt: "2026-07-13T09:00:00.000Z",
+        completedAt: "2026-07-13T09:00:01.000Z",
+        status: "no-op",
+        mode: "autonomous",
+        signingEnabled: false,
+        walletAddress: wallet,
+        snapshot: portfolioSnapshot({ address: wallet }),
+        plan: portfolioPlan(),
+        opportunities: [],
+        payments: [],
+      });
+
+      context = await createApp(
+        loadConfig({
+          ...environment,
+          ACCOUNTING_DATA_DIR: rootDir,
+          DO_SPACES_PREFIX: "brownie-bot",
+        }),
+      );
+      const response = await context.app.inject({
+        method: "GET",
+        url: "/runs/latest",
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        id: "persisted-run",
+        status: "no-op",
+      });
+    } finally {
+      await context?.app.close();
+      context = undefined;
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("allows a separate x402 payer only while execution signing is disabled", async () => {
     const differentTreasury = algosdk.generateAccount().addr.toString();
-    context = createApp(
+    context = await createApp(
       loadConfig({ ...environment, BOT_WALLET: differentTreasury }),
     );
     await context.app.ready();
@@ -80,7 +192,7 @@ describe("backend routes", () => {
     await context.app.close();
     context = undefined;
 
-    expect(() =>
+    await expect(
       createApp(
         loadConfig({
           ...environment,
@@ -88,6 +200,6 @@ describe("backend routes", () => {
           ENABLE_TRANSACTION_SIGNING: "true",
         }),
       ),
-    ).toThrow(/BOT_WALLET must match WALLET_MNEMONIC/);
+    ).rejects.toThrow(/BOT_WALLET must match WALLET_MNEMONIC/);
   });
 });

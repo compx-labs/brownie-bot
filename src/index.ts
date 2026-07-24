@@ -3,7 +3,7 @@ import { loadConfig } from "./config.js";
 import { startAccountingScheduler, startReviewScheduler } from "./scheduler.js";
 
 const config = loadConfig();
-const { app, reviewService, accountingService } = createApp(config);
+const { app, reviewService, accountingService } = await createApp(config);
 const reviewTask = config.RUN_CRON
   ? startReviewScheduler(
       reviewService,

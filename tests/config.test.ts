@@ -23,7 +23,7 @@ describe("loadConfig", () => {
     expect(config.X402_ALGOD_URL).toBe("https://mainnet-api.algonode.cloud");
     expect(config.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
     expect(config.OPEN_AI_API_KEY).toBe("zerosignal");
-    expect(config.OPENAI_MODEL).toBe("Qwen/Qwen3-Coder-480B-A35B-Instruct");
+    expect(config.OPENAI_MODEL).toBe("glm-5.2");
     expect(config.OPENAI_REASONING_EFFORT).toBe("medium");
     expect(config.AI_MODE).toBe("full");
     expect(config.AI_MAX_TOOL_CALLS).toBe(16);
@@ -45,12 +45,12 @@ describe("loadConfig", () => {
     const config = loadConfig({
       ...walletEnvironment,
       OPENAI_BASE_URL: "http://127.0.0.1:9090/v1",
-      OPENAI_MODEL: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      OPENAI_MODEL: "glm-5.2",
       OPEN_AI_API_KEY: "not-checked",
     });
     expect(config.OPENAI_BASE_URL).toBe("http://127.0.0.1:9090/v1");
     expect(config.OPEN_AI_API_KEY).toBe("not-checked");
-    expect(config.OPENAI_MODEL).toBe("Qwen/Qwen3-Coder-480B-A35B-Instruct");
+    expect(config.OPENAI_MODEL).toBe("glm-5.2");
   });
 
   it("requires both wallet identity and signer", () => {

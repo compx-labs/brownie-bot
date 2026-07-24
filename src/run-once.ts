@@ -2,7 +2,7 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 
 const config = loadConfig();
-const { app, reviewService } = createApp(config);
+const { app, reviewService } = await createApp(config);
 
 try {
   const run = await reviewService.run();

@@ -22,7 +22,11 @@ import {
   type InferenceCostCharge,
   type InferenceCostSummary,
 } from "./inference-cost.js";
+import { sanitizeErrorMessage } from "../util/errors.js";
 import { normalizePortfolioPlan } from "./portfolio-policy.js";
+import { formatBaseUnits } from "./money.js";
+
+export { formatBaseUnits };
 
 const SKIPPABLE_RESEARCH_TOOLS = new Set(["canix_get_protocol_opportunities"]);
 
@@ -44,8 +48,8 @@ const OPPORTUNITY_RESEARCH_TOOLS = new Set([
   "canix_get_protocol_opportunities",
 ]);
 
-/** Hard cap per opportunity MCP call (API allows up to 200). */
-export const MAX_OPPORTUNITY_TOOL_LIMIT = 25;
+/** Hard cap per opportunity MCP call (API allows up to 200). Model-facing rows stay small for ZS latency. */
+export const MAX_OPPORTUNITY_TOOL_LIMIT = 10;
 
 /** Host-only after policy approval. Never expose to the planning agent. */
 const FINAL_EXECUTION_TOOLS = new Set([
@@ -136,7 +140,11 @@ export interface ResponsesClient {
 
 export interface PortfolioAgentResult {
   snapshot: PortfolioSnapshot;
-  plan: PortfolioPlan;
+  /** Present when portfolio_plan JSON parsed successfully. */
+  plan?: PortfolioPlan;
+  /** Best-effort agent text when structured plan parse failed. */
+  planRawText?: string;
+  planParseError?: string;
   opportunities: Opportunity[];
   payments: PaymentReceipt[];
   toolCalls: string[];
@@ -169,112 +177,67 @@ export interface PortfolioAgentOptions {
   signingEnabled: boolean;
 }
 
-export const PORTFOLIO_AGENT_PROMPT_V1 = `You are Brownie, an autonomous Algorand treasury portfolio manager that runs once per day.
+const PORTFOLIO_AGENT_PROMPT_SHARED = `You are Brownie, an autonomous Algorand treasury portfolio manager (once per day).
 
-OBJECTIVE
-Put idle capital to work. Maximize the treasury's expected net return over time after fees, slippage, x402 costs, switching costs, and material risk—not headline APY alone. Preserve the guided liquid reserve and stay diversified across positions/protocols, but do not leave large liquid balances idle when researched, executable yield exists. Prefer high-TVL, liquid venues over thin pools that advertise peak APY.
+GOAL
+Deploy idle capital into high-TVL, execution-ready yield after fees/slippage/risk. Keep minLiquidReservePct liquid. Prefer deeper liquidity over peak APY. Host guidance numbers are in the task input—plan toward them; the host hard-enforces structure when signing.
 
-HOST GUIDANCE (plan toward these; they inform your allocations and do not need to be gamed)
-The host supplies numeric guidance in the task input (maxPositionPct, maxProtocolPct, minLiquidReservePct, minTvlUsd, maxSourceAgeHours, minProjectedNetImprovementUsd). Prefer target allocations that keep any single deployed (protocol != null) position and any single protocol at or below those caps. Liquid wallet holdings (protocol=null) are an operational reserve floor (minLiquidReservePct), not a license to stay ~100% cash. Surplus liquid capital above that floor should be deployed when eligible opportunities exist. Liquid holdings are not limited by maxPositionPct. Only propose non-hold actions when projected net benefit clears the guidance floor. Prefer opportunities that meet TVL and freshness guidance; among eligible options, favor higher TVL for safety and exit liquidity. The host still hard-enforces executable structure (valid dependencies that reference other action ids in this plan, execution shapes, spends within balances) when signing is enabled.
+SNAPSHOT
+Host already loaded positions + liquid balances. Treat null/partial protocol data as incomplete, not zero. For liquidBalances: use amount/spendableAmount/usdValue for judgment and summaries; use amountRaw/spendableAmountRaw only in authorizedSpends and executionInput. Never multiply amountRaw by a USD price. Never invent decimals.
 
-IDLE CAPITAL (default bias: deploy)
-- Compute deployable surplus = liquid share above minLiquidReservePct (and any liquid ALGO/USDC/other assets that are not needed for the reserve).
-- Shared USDC ops budget: the managed wallet's liquid USDC (asset 31566704) pays both Canix402 x402 tool calls and ZeroSignal inference (host zs-proxy uses the same mnemonic as the x402 payer). Treat them as one ops sink—do not plan as if inference were a separate card or API key.
-- USDC operations buffer (end-of-run target): after all planned actions settle, liquid USDC should be at least ~5 USDC (5_000_000 base units) so later Canix402 / x402 calls and ZeroSignal inference can pay. This is an ending balance target, not a freeze on deploying USDC mid-plan.
-  - You may deploy or spend USDC into yield when that is the best use of capital.
-  - If the projected ending liquid USDC would be below ~5 (including when starting below 5, or after deploying most USDC), add a final consolidation Haystack swap: convert a small amount of other liquid tokens (prefer deep/liquid pairs; ALGO or other stables first) into enough USDC to restore the ~5 USDC buffer. Size that swap only for the shortfall plus a small cushion for slippage/fees—do not dump large idle balances into USDC just for the buffer.
-  - Put consolidation last in the action order (depend on prior opens/swaps if needed so it runs after capital deployment). Prefer a dedicated swap action id such as "consolidate-usdc-buffer".
-  - If other liquid assets cannot fund the shortfall without breaking minLiquidReservePct or leaving the wallet unable to pay fees, say so in evidence and keep as much USDC as practical.
-  - Never request or invent mnemonic, zs-proxy, or payment details; the host wires inference.
-- If surplus is material and tool research returns executable opportunities that clear TVL, freshness, and net-benefit guidance, prefer opening/increasing (with swaps if needed) over a pure hold.
-- A pure hold / no-op is allowed only when you can justify it: name the best candidates you considered (protocol, opportunityId, APY, TVL, executionReady) and why each failed (TVL, stale data, research-only shapes, net benefit below floor, concentration, incomplete snapshot, or missing from tools after required searches).
-- Incomplete snapshot caveats raise caution for exits and sizing; they do not automatically justify leaving surplus idle if other protocols still return executable enter paths.
+CAPITAL
+Deploy surplus above the reserve when eligible executable opportunities exist. Hold only with named rejected candidates (id, APY, TVL, why). Ending liquid USDC (asset 31566704) should be ~5+ for ops (Canix x402 + ZeroSignal); if short, end with a small consolidate-usdc-buffer swap. Do not invent secrets, mnemonics, or payment details.
 
-REQUIRED WORKFLOW
-1. The host calls canix_get_positions and reads liquid Algorand balances before you begin. Inspect the supplied snapshot: open protocol positions (including compatibleExitShapeKeys / compatibleManageShapeKeys), LP tokens, lending/staking deposits, debts, rewards, valuations, protocol availability, caveats, liquid balances, and available exit paths. Never treat a null value or partial/unavailable protocol result as zero or as a complete portfolio. For liquidBalances, amountRaw/spendableAmountRaw are integer on-chain base units; amount/spendableAmount are host-scaled human units using decimals (e.g. USDC decimals=6 so amountRaw "30000000" means amount "30"). Use amount for sizing judgment; use amountRaw in plan authorizedSpends and executionInput. Never rescale amountRaw by inventing decimals.
-2. Research with both personalization and high-TVL discovery (do not skip either). The host caps each opportunity tool to at most 25 rows and returns a compact payload—request only what you need (prefer limit ≤ 25, sort/filter toward high TVL and executionReady):
-   - Always call canix_get_personalized_opportunities for the managed wallet so recommendations match assets already held.
-   - Always use canix_search_opportunities (and/or list/filter) sorted or filtered toward the highest-TVL opportunities that meet minTvlUsd—use this for safety reasoning and better liquidity, not only for peak APY.
-   - Also use global/protocol tools for better uses of capital, including opportunities that need a Haystack swap first. Do not favor any named protocol over others; choose from tool facts by TVL, readiness, net benefit, and concentration.
-   - Prefer opportunities with executionReady=true and a non-empty executionShapes array. Treat empty executionShapes as research-only—do not invent shape keys. If the best asset-matched venues are missing or research-only, retry search/protocol queries before concluding no-op; record what the tools returned.
-   - Do not call OpenAPI, discovery, metadata, health, or strategy tools—the host does not expose them.
-3. Compare the current portfolio with a diversified target that deploys surplus above the reserve. You may hold, claim, open, increase, reduce, close, or swap when supported. Set dependencies only to other action ids in this plan (for example a swap that must finish before an open). Keep at least minLiquidReservePct liquid; ensure ending liquid USDC is ~5+ (for Canix402 x402 and ZeroSignal inference) via deployment sizing and/or a final USDC consolidation swap when short.
-4. There is no minimum holding period. Re-evaluate every held position on each run. Exit, reduce, claim, or rotate when rewards end, APY collapses, risk worsens, or a clearly better risk-adjusted use of capital appears after fees and slippage. Avoid churn only when the expected net improvement is small versus costs—not because a position is "too new."
-5. Produce a coherent action plan with current and target allocations, integer base-unit amounts, and an exhaustive authorizedSpends list for every asset the treasury will transfer in each action. Include expected return impact, costs, dependencies, rationale, risks, and evidence from tool results. Use holdingHorizonDays as the assumed window for projecting net benefit of today's plan—not as a lock-up that prevents later exits.
-6. Net benefit math (be honest; idle APY is ~0):
-   projectedNetBenefitUsd ≈ sum over deployments of (deployedUsd × (targetApyPct − currentApyPct) / 100 × holdingHorizonDays / 365) − estimatedOneTimeCostsUsd.
-   Use a realistic horizon (often 30–90 days) so genuine yield on surplus capital is not understated into a false no-op.
-   For lending/deposit yields, use the opportunity's base supply/deposit APY (or APR when yieldBasis says so) from tool facts. Do not inflate projected returns with reward multipliers, boost badges, or unclear blended figures—if tools expose both a base rate and a boosted/reward rate, prefer the base lending APY for allocations and projectedNetBenefitUsd and note any rewards separately in evidence.
-7. Execution wiring from Canix facts only:
-   - open/increase: emit ONE action per opportunity entry. Set executionShapeKey to a capital-deploying enter shapeKey from that opportunity's executionShapes (e.g. deposit/addLiquidity—never invent). Put the full treasury asset transfer in that action's authorizedSpends and set amountRaw/fromAssetId. executionInput may be null or partial—the host completes requiredInputs from shape inputHints and spends. The host expands multi-step enter shapes (setup/escrow prerequisites ordered by executionShapes.order) at quote time—do NOT emit separate plan actions for create-escrow, setup, market opt-in, or other prerequisite shapes, and do NOT put shapeKey strings in dependencies.
-   - close/reduce: set executionShapeKey from the position's compatibleExitShapeKeys (never invent), positionId, amountRaw, and opportunityId when known. executionInput may be null or partial—the host completes requiredInputs (pair ids, poolTokenAmount, Folks withdraw denomination, etc.).
-   - If liquid balances lack any requiredAssetIds for the chosen enter shape(s), emit prior Haystack swap action(s) (fromAssetId/toAssetId/amountRaw), list those action ids in dependencies, and size the open's authorizedSpends to the intended deposit (existing liquid of that asset plus expected swap proceeds). The host handles ASA opt-in for swap outputs during swap execution—do NOT emit a separate opt-in plan action.
-   - dependencies may ONLY list other action id strings from this plan (e.g. "swap-algo-to-usdc"). Never list executionShapeKey values, opportunityIds, or protocol setup step names.
-   - reduce/close/claim: set executionShapeKey from the position's compatibleExitShapeKeys or compatibleManageShapeKeys.
-   - Swaps use canix_get_quote for planning; do not call canix_get_execution_quote, canix_swap, or canix_optin for final groups—the host does that only when signing is enabled. Do not claim a transaction has executed.
+PLAN ACTIONS
+- Prefer executionReady with non-empty shapeKeys; empty shapeKeys = research-only—never invent keys.
+- open/increase: one capital action per opportunity; executionShapeKey from shapeKeys (deposit/addLiquidity-style); authorizedSpends + amountRaw/fromAssetId; executionInput may be null (host completes). No separate setup/escrow/opt-in plan actions.
+- close/reduce/claim: executionShapeKey from position compatibleExitShapeKeys / compatibleManageShapeKeys.
+- Missing required assets: prior swap action(s), then depend on those action ids only.
+- dependencies: only other action ids in this plan.
+- projectedNetBenefitUsd: honest yield-vs-idle over holdingHorizonDays (often 30–90) minus one-time costs; use base supply/deposit APY, not reward boosts.
+- Re-evaluate every position each run; avoid churn only when net improvement is small vs costs.
 
-DECISION RULES
-- Plan within host guidance; do not alter inputs to evade structural checks.
-- Bias toward deploying surplus into high-TVL, execution-ready yield; do not treat "already mostly liquid" as success.
-- Among eligible opportunities, prefer higher TVL and deeper liquidity for safer entries/exits; do not chase the single highest APY in a thin pool.
-- Treat APY/APR as variable estimates. Consider TVL, freshness, protocol and asset concentration, impermanent loss, smart-contract risk, liquidity, slippage, and incomplete data. Prefer exiting a dead or collapsing yield position over waiting.
-- Use only tool facts. Never invent balances, positions, prices, supported execution paths, safety claims, or transactions.
-- Never request or reveal a mnemonic, private key, payment signature, signed transaction, API key, or secret.
-- Never change the managed wallet. Holding is valid only when surplus is immaterial, no eligible executable opportunity clears guidance after the required research, or risks clearly outweigh expected net benefit—and that case must be evidenced with named rejected candidates.
+OUTPUT
+Return ONLY one top-level JSON object (no portfolio_plan wrapper). No markdown, tables, or code fences.
+Do not invent alternate field names. Allocations must NOT use label/usdValue/name — only the keys below.
 
-FINAL OUTPUT
-Return the required structured plan with current and target allocations, ordered actions, hold decisions, expected annualized return before and after, one-time costs, projected net benefit over the plan's assumed holdingHorizonDays, evidence (include key candidates considered and pass/fail reasons), assumptions, risks, confidence, and concise summary.`;
+Top-level (all required):
+currentAllocations, targetAllocations, actions, holdDecisions,
+currentAnnualizedReturnPct, targetAnnualizedReturnPct, estimatedOneTimeCostsUsd,
+projectedNetBenefitUsd, holdingHorizonDays, evidence, assumptions, risks, confidence, summary
 
-export const PORTFOLIO_AGENT_PROMPT_LITE = `You are Brownie, an autonomous Algorand treasury portfolio manager that runs once per day.
+Allocation object (each currentAllocations/targetAllocations item):
+key (string id, e.g. "liquid-usdc" or "folks:xalgo"), protocol (string|null), opportunityId (string|null),
+assetIds (number[]), weightPct (0–100), expectedApyPct (number|null)
+Do not put usdValue on allocations.
 
-OBJECTIVE
-Put idle capital to work. Maximize the treasury's expected net return over time after fees, slippage, x402 costs, switching costs, and material risk—not headline APY alone. Preserve the guided liquid reserve and stay diversified across positions/protocols, but do not leave large liquid balances idle when researched, executable yield exists. Prefer high-TVL, liquid venues over thin pools that advertise peak APY.
+Action object:
+id, type (hold|open|increase|reduce|close|swap|claim), protocol, opportunityId, positionId,
+amountRaw, fromAssetId, toAssetId, targetWeightPct, executionShapeKey, executionInput,
+authorizedSpends ([{assetId, amountRaw}]), rationale, dependencies
+Use id not actionId; rationale not reason; spend assetId not fromAssetId.
 
-HOST GUIDANCE (plan toward these; they inform your allocations and do not need to be gamed)
-The host supplies numeric guidance in the task input (maxPositionPct, maxProtocolPct, minLiquidReservePct, minTvlUsd, maxSourceAgeHours, minProjectedNetImprovementUsd). Prefer target allocations that keep any single deployed (protocol != null) position and any single protocol at or below those caps. Liquid wallet holdings (protocol=null) are an operational reserve floor (minLiquidReservePct), not a license to stay ~100% cash. Surplus liquid capital above that floor should be deployed when eligible opportunities exist. Liquid holdings are not limited by maxPositionPct. Only propose non-hold actions when projected net benefit clears the guidance floor. Prefer opportunities that meet TVL and freshness guidance; among eligible options, favor higher TVL for safety and exit liquidity. The host still hard-enforces executable structure (valid dependencies that reference other action ids in this plan, execution shapes, spends within balances) when signing is enabled.
+summary must be a string. holdDecisions is a string[]. Nullable action fields may be null.`;
 
-IDLE CAPITAL (default bias: deploy)
-- Compute deployable surplus = liquid share above minLiquidReservePct (and any liquid ALGO/USDC/other assets that are not needed for the reserve).
-- Shared USDC ops budget: the managed wallet's liquid USDC (asset 31566704) pays both Canix402 x402 tool calls and ZeroSignal inference (host zs-proxy uses the same mnemonic as the x402 payer). Treat them as one ops sink—do not plan as if inference were a separate card or API key.
-- USDC operations buffer (end-of-run target): after all planned actions settle, liquid USDC should be at least ~5 USDC (5_000_000 base units) so later Canix402 / x402 calls and ZeroSignal inference can pay. This is an ending balance target, not a freeze on deploying USDC mid-plan.
-  - You may deploy or spend USDC into yield when that is the best use of capital.
-  - If the projected ending liquid USDC would be below ~5 (including when starting below 5, or after deploying most USDC), add a final consolidation Haystack swap: convert a small amount of other liquid tokens (prefer deep/liquid pairs; ALGO or other stables first) into enough USDC to restore the ~5 USDC buffer. Size that swap only for the shortfall plus a small cushion for slippage/fees—do not dump large idle balances into USDC just for the buffer.
-  - Put consolidation last in the action order (depend on prior opens/swaps if needed so it runs after capital deployment). Prefer a dedicated swap action id such as "consolidate-usdc-buffer".
-  - If other liquid assets cannot fund the shortfall without breaking minLiquidReservePct or leaving the wallet unable to pay fees, say so in evidence and keep as much USDC as practical.
-  - Never request or invent mnemonic, zs-proxy, or payment details; the host wires inference.
-- If surplus is material and host research returns executable opportunities that clear TVL, freshness, and net-benefit guidance, prefer opening/increasing (with swaps if needed) over a pure hold.
-- A pure hold / no-op is allowed only when you can justify it: name the best candidates you considered (protocol, opportunityId, APY, TVL, executionReady) and why each failed (TVL, stale data, research-only shapes, net benefit below floor, concentration, incomplete snapshot, or missing from host research after required searches).
-- Incomplete snapshot caveats raise caution for exits and sizing; they do not automatically justify leaving surplus idle if other protocols still return executable enter paths.
+export const PORTFOLIO_AGENT_PROMPT_V1 = `${PORTFOLIO_AGENT_PROMPT_SHARED}
 
-REQUIRED WORKFLOW
-1. The host calls canix_get_positions and reads liquid Algorand balances before you begin. Inspect the supplied snapshot: open protocol positions (including compatibleExitShapeKeys / compatibleManageShapeKeys), LP tokens, lending/staking deposits, debts, rewards, valuations, protocol availability, caveats, liquid balances, and available exit paths. Never treat a null value or partial/unavailable protocol result as zero or as a complete portfolio. For liquidBalances, amountRaw/spendableAmountRaw are integer on-chain base units; amount/spendableAmount are host-scaled human units using decimals (e.g. USDC decimals=6 so amountRaw "30000000" means amount "30"). Use amount for sizing judgment; use amountRaw in plan authorizedSpends and executionInput. Never rescale amountRaw by inventing decimals.
-2. The host has already researched opportunities (personalized + high-TVL list). Use the supplied researchedOpportunities / candidates only—do not call tools (none are available). Prefer opportunities with executionReady=true and a non-empty executionShapes array. Treat empty executionShapes as research-only—do not invent shape keys. Do not favor any named protocol; choose from host research by TVL, readiness, net benefit, and concentration. If the best asset-matched venues are missing or research-only, record what host research returned and justify hold vs deploy from those facts.
-3. Compare the current portfolio with a diversified target that deploys surplus above the reserve. You may hold, claim, open, increase, reduce, close, or swap when supported. Set dependencies only to other action ids in this plan (for example a swap that must finish before an open). Keep at least minLiquidReservePct liquid; ensure ending liquid USDC is ~5+ (for Canix402 x402 and ZeroSignal inference) via deployment sizing and/or a final USDC consolidation swap when short.
-4. There is no minimum holding period. Re-evaluate every held position on each run. Exit, reduce, claim, or rotate when rewards end, APY collapses, risk worsens, or a clearly better risk-adjusted use of capital appears after fees and slippage. Avoid churn only when the expected net improvement is small versus costs—not because a position is "too new."
-5. Produce a coherent action plan with current and target allocations, integer base-unit amounts, and an exhaustive authorizedSpends list for every asset the treasury will transfer in each action. Include expected return impact, costs, dependencies, rationale, risks, and evidence from host research. Use holdingHorizonDays as the assumed window for projecting net benefit of today's plan—not as a lock-up that prevents later exits.
-6. Net benefit math (be honest; idle APY is ~0):
-   projectedNetBenefitUsd ≈ sum over deployments of (deployedUsd × (targetApyPct − currentApyPct) / 100 × holdingHorizonDays / 365) − estimatedOneTimeCostsUsd.
-   Use a realistic horizon (often 30–90 days) so genuine yield on surplus capital is not understated into a false no-op.
-   For lending/deposit yields, use the opportunity's base supply/deposit APY (or APR when yieldBasis says so) from research facts. Do not inflate projected returns with reward multipliers, boost badges, or unclear blended figures—if research exposes both a base rate and a boosted/reward rate, prefer the base lending APY for allocations and projectedNetBenefitUsd and note any rewards separately in evidence.
-7. Execution wiring from Canix facts only:
-   - open/increase: emit ONE action per opportunity entry. Set executionShapeKey to a capital-deploying enter shapeKey from that opportunity's executionShapes (e.g. deposit/addLiquidity—never invent). Put the full treasury asset transfer in that action's authorizedSpends and set amountRaw/fromAssetId. executionInput may be null or partial—the host completes requiredInputs from shape inputHints and spends. The host expands multi-step enter shapes (setup/escrow prerequisites ordered by executionShapes.order) at quote time—do NOT emit separate plan actions for create-escrow, setup, market opt-in, or other prerequisite shapes, and do NOT put shapeKey strings in dependencies.
-   - close/reduce: set executionShapeKey from the position's compatibleExitShapeKeys (never invent), positionId, amountRaw, and opportunityId when known. executionInput may be null or partial—the host completes requiredInputs (pair ids, poolTokenAmount, Folks withdraw denomination, etc.).
-   - If liquid balances lack any requiredAssetIds for the chosen enter shape(s), emit prior Haystack swap action(s) (fromAssetId/toAssetId/amountRaw), list those action ids in dependencies, and size the open's authorizedSpends to the intended deposit (existing liquid of that asset plus expected swap proceeds). The host handles ASA opt-in for swap outputs during swap execution—do NOT emit a separate opt-in plan action.
-   - dependencies may ONLY list other action id strings from this plan (e.g. "swap-algo-to-usdc"). Never list executionShapeKey values, opportunityIds, or protocol setup step names.
-   - reduce/close/claim: set executionShapeKey from the position's compatibleExitShapeKeys or compatibleManageShapeKeys.
-   - Swaps may be planned from snapshot balances and opportunity requiredAssetIds; the host obtains final execution quotes only when signing is enabled. Do not claim a transaction has executed.
+FULL MODE — RESEARCH
+1. Call canix_get_personalized_opportunities once (managed wallet).
+2. Call canix_search_opportunities or canix_list_opportunities once for high-TVL / executionReady (prefer limit ≤ 10).
+3. Stop after those two unless you truly need one more (e.g. canix_get_quote for a planned swap). Avoid canix_list_execution_shapes and canix_get_token_prices unless shapeKeys or usdValue are missing.
+Tool rows are skinny (shapeKeys only); host keeps full shapes for policy/execution. Do not favor named protocols—rank by TVL, readiness, net benefit, concentration.`;
 
-DECISION RULES
-- Plan within host guidance; do not alter inputs to evade structural checks.
-- Bias toward deploying surplus into high-TVL, execution-ready yield; do not treat "already mostly liquid" as success.
-- Among eligible opportunities, prefer higher TVL and deeper liquidity for safer entries/exits; do not chase the single highest APY in a thin pool.
-- Treat APY/APR as variable estimates. Consider TVL, freshness, protocol and asset concentration, impermanent loss, smart-contract risk, liquidity, slippage, and incomplete data. Prefer exiting a dead or collapsing yield position over waiting.
-- Use only host-supplied facts. Never invent balances, positions, prices, supported execution paths, safety claims, or transactions.
-- Never request or reveal a mnemonic, private key, payment signature, signed transaction, API key, or secret.
-- Never change the managed wallet. Holding is valid only when surplus is immaterial, no eligible executable opportunity clears guidance after the required research, or risks clearly outweigh expected net benefit—and that case must be evidenced with named rejected candidates.
+export const PORTFOLIO_AGENT_PROMPT_LITE = `${PORTFOLIO_AGENT_PROMPT_SHARED}
 
-FINAL OUTPUT
-Return the required structured plan with current and target allocations, ordered actions, hold decisions, expected annualized return before and after, one-time costs, projected net benefit over the plan's assumed holdingHorizonDays, evidence (include key candidates considered and pass/fail reasons), assumptions, risks, confidence, and concise summary.`;
+LITE MODE — NO TOOLS
+Host already researched (personalized + high-TVL). Use researchedOpportunities / candidates only. Prefer executionReady with non-empty shapeKeys. Rank by TVL, readiness, net benefit, concentration—not named protocols.`;
+
+const PLAN_JSON_REPAIR_USER_MESSAGE =
+  "Your previous reply was not valid portfolio_plan JSON. Reply with ONLY one top-level JSON object (no portfolio_plan wrapper). " +
+  "Allocations: [{key, protocol, opportunityId, assetIds, weightPct, expectedApyPct}] — never label/usdValue. " +
+  "Actions: [{id, type, protocol, opportunityId, positionId, amountRaw, fromAssetId, toAssetId, targetWeightPct, executionShapeKey, executionInput, authorizedSpends:[{assetId,amountRaw}], rationale, dependencies}]. " +
+  "Also include: holdDecisions (string[]), currentAnnualizedReturnPct, targetAnnualizedReturnPct, estimatedOneTimeCostsUsd, projectedNetBenefitUsd, holdingHorizonDays, evidence, assumptions, risks, confidence, summary (string). " +
+  "No markdown, headings, tables, or code fences.";
 
 const planFormat = {
   type: "json_schema",
@@ -458,10 +421,32 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       );
     }
 
+    const parsed = await this.parsePlanWithOptionalRepair(response, {
+      instructions: PORTFOLIO_AGENT_PROMPT_LITE,
+      initialInput,
+      conversationItems: [],
+      inferenceCharges,
+    });
+
+    if (!parsed.ok) {
+      console.error(
+        `[portfolio-agent] Plan still invalid after repair; returning report-only: ${parsed.planParseError}`,
+      );
+      return {
+        snapshot,
+        planRawText: parsed.planRawText,
+        planParseError: parsed.planParseError,
+        opportunities: research.opportunities,
+        payments,
+        toolCalls,
+        inferenceCost: summarizeInferenceCosts(inferenceCharges),
+      };
+    }
+
     return {
       snapshot,
       plan: normalizePortfolioPlan(
-        parsePlan(response.output_text),
+        parsed.plan,
         research.opportunities,
         snapshot,
       ),
@@ -527,10 +512,30 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
             "Portfolio agent returned a plan without researching opportunities",
           );
         }
+        const parsed = await this.parsePlanWithOptionalRepair(response, {
+          instructions: PORTFOLIO_AGENT_PROMPT_V1,
+          initialInput,
+          conversationItems,
+          inferenceCharges,
+        });
+        if (!parsed.ok) {
+          console.error(
+            `[portfolio-agent] Plan still invalid after repair; returning report-only: ${parsed.planParseError}`,
+          );
+          return {
+            snapshot,
+            planRawText: parsed.planRawText,
+            planParseError: parsed.planParseError,
+            opportunities,
+            payments,
+            toolCalls,
+            inferenceCost: summarizeInferenceCosts(inferenceCharges),
+          };
+        }
         return {
           snapshot,
           plan: normalizePortfolioPlan(
-            parsePlan(response.output_text),
+            parsed.plan,
             opportunities,
             snapshot,
           ),
@@ -647,6 +652,80 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       const next = await createAgentResponse(this.openai, followUp);
       recordInferenceCharge(inferenceCharges, next.headers);
       response = normalizeAgentResponse(next.data);
+    }
+  }
+
+  /**
+   * Parse the structured plan; if the model returned markdown/prose, make one
+   * tools-off repair turn that demands JSON only. On final failure, soft-succeed
+   * with raw text instead of throwing.
+   */
+  private async parsePlanWithOptionalRepair(
+    response: NormalizedAgentResponse,
+    context: {
+      instructions: string;
+      initialInput: string;
+      conversationItems: unknown[];
+      inferenceCharges: InferenceCostCharge[];
+    },
+  ): Promise<ParsePlanOutcome> {
+    try {
+      return { ok: true, plan: parsePlan(response.output_text) };
+    } catch (firstError) {
+      console.error(
+        `[portfolio-agent] Plan JSON invalid; requesting one repair turn: ${safeErrorMessage(firstError)}`,
+      );
+      const repairFollowUp =
+        response.id !== undefined
+          ? {
+              model: this.options.model,
+              previous_response_id: response.id,
+              input: [
+                {
+                  role: "user",
+                  content: PLAN_JSON_REPAIR_USER_MESSAGE,
+                },
+              ],
+              reasoning: { effort: this.options.reasoningEffort },
+              tools: [],
+              text: { format: planFormat },
+            }
+          : {
+              model: this.options.model,
+              instructions: context.instructions,
+              input: [
+                { role: "user", content: context.initialInput },
+                ...context.conversationItems,
+                ...response.output,
+                {
+                  role: "user",
+                  content: PLAN_JSON_REPAIR_USER_MESSAGE,
+                },
+              ],
+              reasoning: { effort: this.options.reasoningEffort },
+              tools: [],
+              text: { format: planFormat },
+            };
+
+      const repaired = await createAgentResponse(this.openai, repairFollowUp);
+      recordInferenceCharge(context.inferenceCharges, repaired.headers);
+      const repairedResponse = normalizeAgentResponse(repaired.data);
+      try {
+        return { ok: true, plan: parsePlan(repairedResponse.output_text) };
+      } catch (secondError) {
+        const planRawText =
+          repairedResponse.output_text?.trim() ||
+          response.output_text?.trim() ||
+          "";
+        return {
+          ok: false,
+          planRawText:
+            planRawText.length > 0
+              ? planRawText
+              : "(empty agent output)",
+          planParseError: safeErrorMessage(secondError),
+        };
+      }
     }
   }
 }
@@ -813,7 +892,7 @@ export function compactOpportunitiesForModel(
       returnedCount: selected.length,
       truncated: opportunities.length > selected.length,
       hostNote:
-        "Compacted by host: sorted executionReady then TVL, capped rows, shapes trimmed to wiring fields.",
+        "Compacted by host: sorted executionReady then TVL, capped rows, shapeKeys only (full shapes kept host-side).",
     },
   };
 }
@@ -831,14 +910,7 @@ function compactOpportunityForModel(opportunity: Opportunity) {
     tvlUsd: opportunity.tvlUsd,
     sourceTimestamp: opportunity.sourceTimestamp,
     executionReady: opportunity.executionReady,
-    executionShapes: opportunity.executionShapes.map((shape) => ({
-      shapeKey: shape.shapeKey,
-      action: shape.action,
-      order: shape.order,
-      requiredInputs: shape.requiredInputs,
-      requiredAssetIds: shape.requiredAssetIds,
-      inputHints: shape.inputHints,
-    })),
+    shapeKeys: opportunity.executionShapes.map((shape) => shape.shapeKey),
   };
 }
 
@@ -862,13 +934,16 @@ function compactSnapshotForModel(snapshot: PortfolioSnapshot) {
                 decimals,
               ),
             };
+      // Human units + usdValue first so models do not treat amountRaw as the
+      // display quantity when writing tables or sizing in prose.
       return {
         assetId: balance.assetId,
         symbol: balance.symbol,
         decimals,
+        ...scaled,
+        usdValue: balance.usdValue ?? null,
         amountRaw: balance.amountRaw,
         spendableAmountRaw: balance.spendableAmountRaw,
-        ...scaled,
         frozen: balance.frozen,
       };
     }),
@@ -888,23 +963,6 @@ function compactSnapshotForModel(snapshot: PortfolioSnapshot) {
       compatibleManageShapeKeys: position.compatibleManageShapeKeys,
     })),
   };
-}
-
-/** Format integer base units with asset decimals (no float rounding). */
-export function formatBaseUnits(amountRaw: string, decimals: number): string {
-  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) {
-    throw new Error(`Invalid decimals: ${decimals}`);
-  }
-  if (!/^[0-9]+$/.test(amountRaw)) {
-    throw new Error(`Invalid amountRaw: ${amountRaw}`);
-  }
-  if (decimals === 0) {
-    return amountRaw.replace(/^0+(?=\d)/, "") || "0";
-  }
-  const padded = amountRaw.padStart(decimals + 1, "0");
-  const whole = padded.slice(0, -decimals).replace(/^0+(?=\d)/, "") || "0";
-  const fraction = padded.slice(-decimals).replace(/0+$/, "");
-  return fraction.length > 0 ? `${whole}.${fraction}` : whole;
 }
 
 function stripPaymentNoise(value: unknown): unknown {
@@ -1028,13 +1086,284 @@ function parseArguments(text: string): Record<string, unknown> {
   return parsed.data;
 }
 
+/** Prefer raw JSON, then fenced ```json, then the outermost `{...}` object. */
+export function extractStructuredPlanText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("{")) {
+    return trimmed;
+  }
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    const inner = fenced[1].trim();
+    if (inner.length > 0) {
+      return inner;
+    }
+  }
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return trimmed.slice(start, end + 1);
+  }
+  return trimmed;
+}
+
+type ParsePlanOutcome =
+  | { ok: true; plan: PortfolioPlan }
+  | { ok: false; planRawText: string; planParseError: string };
+
+const PLAN_WRAPPER_KEYS = new Set([
+  "portfolio_plan",
+  "plan",
+  "portfolioPlan",
+]);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function coerceHoldDecisions(value: unknown): string[] | undefined {
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+    return value;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.map((item) => {
+    if (typeof item === "string") {
+      return item;
+    }
+    if (!isPlainObject(item)) {
+      return JSON.stringify(item);
+    }
+    const id =
+      asString(item.positionId) ??
+      asString(item.opportunityId) ??
+      asString(item.id) ??
+      "unknown";
+    const reason =
+      asString(item.reason) ??
+      asString(item.rationale) ??
+      asString(item.why) ??
+      JSON.stringify(item);
+    return `${id}: ${reason}`;
+  });
+}
+
+function coerceAuthorizedSpend(
+  spend: unknown,
+): Record<string, unknown> | undefined {
+  if (!isPlainObject(spend)) {
+    return undefined;
+  }
+  const next = { ...spend };
+  if (next.assetId === undefined && next.fromAssetId !== undefined) {
+    next.assetId = next.fromAssetId;
+  }
+  return next;
+}
+
+function coerceAllocation(allocation: unknown): unknown {
+  if (!isPlainObject(allocation)) {
+    return allocation;
+  }
+  const next: Record<string, unknown> = { ...allocation };
+  if (next.key === undefined) {
+    const alias =
+      asString(next.label) ?? asString(next.name) ?? asString(next.id);
+    if (alias) {
+      next.key = alias;
+    }
+  }
+  if (!("protocol" in next)) {
+    next.protocol = null;
+  }
+  if (!("opportunityId" in next)) {
+    next.opportunityId = null;
+  }
+  if (!Array.isArray(next.assetIds)) {
+    next.assetIds = [];
+  }
+  if (!("expectedApyPct" in next)) {
+    const apy =
+      asNumber(next.expectedApyPct) ??
+      asNumber(next.apy) ??
+      asNumber(next.apyPct);
+    next.expectedApyPct = apy ?? null;
+  }
+  if (next.weightPct === undefined) {
+    const weight = asNumber(next.weight) ?? asNumber(next.pct);
+    if (weight !== undefined) {
+      next.weightPct = weight;
+    }
+  }
+  return next;
+}
+
+function coerceAction(action: unknown): unknown {
+  if (!isPlainObject(action)) {
+    return action;
+  }
+  const next: Record<string, unknown> = { ...action };
+  if (next.id === undefined) {
+    const alias = asString(next.actionId) ?? asString(next.action_id);
+    if (alias) {
+      next.id = alias;
+    }
+  }
+  if (next.rationale === undefined) {
+    const alias = asString(next.reason);
+    if (alias) {
+      next.rationale = alias;
+    }
+  }
+  for (const key of [
+    "protocol",
+    "opportunityId",
+    "positionId",
+    "amountRaw",
+    "fromAssetId",
+    "toAssetId",
+    "targetWeightPct",
+    "executionShapeKey",
+    "executionInput",
+  ] as const) {
+    if (!(key in next)) {
+      next[key] = null;
+    }
+  }
+  if (!Array.isArray(next.dependencies)) {
+    next.dependencies = [];
+  }
+  if (Array.isArray(next.authorizedSpends)) {
+    next.authorizedSpends = next.authorizedSpends
+      .map(coerceAuthorizedSpend)
+      .filter((spend): spend is Record<string, unknown> => spend !== undefined);
+  } else if (!("authorizedSpends" in next)) {
+    next.authorizedSpends = [];
+  }
+  return next;
+}
+
+/**
+ * Normalize common LLM schema drift before Zod validation.
+ * Does not invent action types or executionShapeKey values.
+ */
+export function coercePortfolioPlanValue(raw: unknown): unknown {
+  let value = raw;
+  if (isPlainObject(value)) {
+    const keys = Object.keys(value);
+    if (keys.length === 1 && PLAN_WRAPPER_KEYS.has(keys[0]!)) {
+      const wrapped = value[keys[0]!];
+      if (isPlainObject(wrapped)) {
+        value = wrapped;
+      }
+    }
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const next: Record<string, unknown> = { ...value };
+  const summarySource = next.summary;
+
+  if (Array.isArray(next.currentAllocations)) {
+    next.currentAllocations = next.currentAllocations.map(coerceAllocation);
+  } else {
+    next.currentAllocations = [];
+  }
+  if (Array.isArray(next.targetAllocations)) {
+    next.targetAllocations = next.targetAllocations.map(coerceAllocation);
+  } else {
+    next.targetAllocations = [];
+  }
+  if (Array.isArray(next.actions)) {
+    next.actions = next.actions.map(coerceAction);
+  } else {
+    next.actions = [];
+  }
+
+  if (!Array.isArray(next.holdDecisions)) {
+    const fromAliases =
+      coerceHoldDecisions(next.noActionPositions) ??
+      coerceHoldDecisions(next.holds) ??
+      coerceHoldDecisions(next.rejectedCandidates);
+    next.holdDecisions = fromAliases ?? [];
+  }
+
+  if (isPlainObject(summarySource)) {
+    const benefit = asNumber(summarySource.totalProjectedNetBenefitUsd);
+    if (next.projectedNetBenefitUsd === undefined && benefit !== undefined) {
+      next.projectedNetBenefitUsd = benefit;
+    }
+    const serialized = JSON.stringify(summarySource);
+    next.summary =
+      serialized.length > 4_000 ? serialized.slice(0, 4_000) : serialized;
+  } else if (typeof summarySource !== "string") {
+    if (summarySource !== undefined && summarySource !== null) {
+      const serialized = JSON.stringify(summarySource);
+      next.summary =
+        serialized.length > 4_000 ? serialized.slice(0, 4_000) : serialized;
+    }
+  }
+
+  if (!Array.isArray(next.evidence)) {
+    const fromRejected = coerceHoldDecisions(next.rejectedCandidates);
+    const fromNotes = coerceHoldDecisions(next.concentrationNotes);
+    next.evidence = fromRejected ?? fromNotes ?? [];
+  }
+  if (!Array.isArray(next.assumptions)) {
+    next.assumptions = [];
+  }
+  if (!Array.isArray(next.risks)) {
+    next.risks = [];
+  }
+
+  if (next.holdingHorizonDays === undefined) {
+    next.holdingHorizonDays = 30;
+  }
+  if (next.estimatedOneTimeCostsUsd === undefined) {
+    next.estimatedOneTimeCostsUsd = 0;
+  }
+  if (next.confidence === undefined) {
+    next.confidence = 0.5;
+  }
+  if (!("currentAnnualizedReturnPct" in next)) {
+    next.currentAnnualizedReturnPct = null;
+  }
+  if (!("targetAnnualizedReturnPct" in next)) {
+    next.targetAnnualizedReturnPct = null;
+  }
+  if (next.projectedNetBenefitUsd === undefined) {
+    next.projectedNetBenefitUsd = 0;
+  }
+  if (typeof next.summary !== "string" || next.summary.length === 0) {
+    next.summary = "Agent returned a plan without a string summary.";
+  }
+
+  return next;
+}
+
 function parsePlan(text: string | undefined): PortfolioPlan {
   if (!text) {
     throw new Error("Portfolio agent returned no structured plan");
   }
+  const candidate = extractStructuredPlanText(text);
   let value: unknown;
   try {
-    value = JSON.parse(text) as unknown;
+    value = JSON.parse(candidate) as unknown;
   } catch (error) {
     const message = safeErrorMessage(error);
     console.error(
@@ -1046,7 +1375,8 @@ function parsePlan(text: string | undefined): PortfolioPlan {
       { cause: error },
     );
   }
-  const parsed = portfolioPlanSchema.safeParse(value);
+  const coerced = coercePortfolioPlanValue(value);
+  const parsed = portfolioPlanSchema.safeParse(coerced);
   if (!parsed.success) {
     const details = formatZodIssues(parsed.error);
     console.error(
@@ -1077,7 +1407,7 @@ function truncateForLog(text: string, maxLength = 4_000): string {
 }
 
 function safeErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unknown error";
+  return sanitizeErrorMessage(error);
 }
 
 function collectOpportunities(payload: unknown, target: Opportunity[]): void {
