@@ -52,7 +52,8 @@ export const PROTOCOL_VERIFY_CASE_IDS = [
   "folks-usdc-deposit",
   "folks-algo-stake",
   "tinyman-lp",
-  // tinyman-lp-farm — deferred until Canix exposes farm stake/unstake shapes
+  // tinyman-lp-farm stake/unstake verify — deferred; claimRewards is live on
+  // Tinyman reward positions (compatibleManageShapeKeys).
   "compx-lending",
   "dorkfi-usdc-lending",
   "pact-lp",

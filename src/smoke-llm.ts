@@ -104,6 +104,7 @@ export async function runLlmSmoke(
         instructions:
           "You are a connectivity smoke test. Use only the provided tool, then answer briefly.",
         input: initialInput,
+        store: false,
         tools,
         tool_choice: "auto",
       }),
@@ -175,31 +176,20 @@ export async function runLlmSmoke(
       }
 
       conversationItems = [...conversationItems, ...response.output, ...outputs];
-      if (response.id !== undefined) {
-        response = normalizeAgentResponse(
-          await openai.responses.create({
-            model: config.OPENAI_MODEL,
-            previous_response_id: response.id,
-            input: outputs as unknown as OpenAI.Responses.ResponseInput,
-            tools,
-            tool_choice: "auto",
-          }),
-        );
-      } else {
-        response = normalizeAgentResponse(
-          await openai.responses.create({
-            model: config.OPENAI_MODEL,
-            instructions:
-              "You are a connectivity smoke test. Use only the provided tool, then answer briefly.",
-            input: [
-              { role: "user", content: initialInput },
-              ...conversationItems,
-            ] as unknown as OpenAI.Responses.ResponseInput,
-            tools,
-            tool_choice: "auto",
-          }),
-        );
-      }
+      response = normalizeAgentResponse(
+        await openai.responses.create({
+          model: config.OPENAI_MODEL,
+          instructions:
+            "You are a connectivity smoke test. Use only the provided tool, then answer briefly.",
+          input: [
+            { role: "user", content: initialInput },
+            ...conversationItems,
+          ] as unknown as OpenAI.Responses.ResponseInput,
+          store: false,
+          tools,
+          tool_choice: "auto",
+        }),
+      );
     }
 
     throw new Error(`Smoke test exceeded ${MAX_TURNS} LLM turns`);

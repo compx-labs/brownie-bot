@@ -6,11 +6,13 @@ import {
   AlgorandExecutionService,
   applyUniqueTransactionNotes,
   buildQuoteRequests,
+  clampActionAmountToSpendable,
   collectPotentialReceiveAssetIds,
   collectReceiveAssetIdsFromQuoteMetadata,
   isSkippablePrerequisiteQuoteError,
   prependAssetOptInTransactions,
   quotesNeedSequentialConfirm,
+  resolveCapitalEnterSpendAssetId,
 } from "../src/integrations/algorand/execution.js";
 import { MemoryFolksEscrowStore } from "../src/integrations/algorand/folks-escrow-store.js";
 import type { Canix402Client } from "../src/integrations/canix402/client.js";
@@ -59,6 +61,16 @@ function dryRunService() {
     ),
     callManagedTool,
   };
+}
+
+/** Avoid live Algod reads when open/increase clamps to spendable. */
+function mockAbundantSpendable(executor: AlgorandExecutionService): void {
+  vi.spyOn(
+    executor as unknown as {
+      readSpendableAssetRaw: (assetId: number) => Promise<bigint>;
+    },
+    "readSpendableAssetRaw",
+  ).mockResolvedValue(10n ** 18n);
 }
 
 describe("AlgorandExecutionService dry-run", () => {
@@ -622,6 +634,7 @@ describe("AlgorandExecutionService multi-quote", () => {
       },
       "isAssetOptedIn",
     ).mockResolvedValue(true);
+    mockAbundantSpendable(executor);
 
     const candidate = opportunity({
       executionShapes: [
@@ -781,6 +794,7 @@ describe("AlgorandExecutionService multi-quote", () => {
       },
       "isAssetOptedIn",
     ).mockResolvedValue(true);
+    mockAbundantSpendable(executor);
 
     const candidate = opportunity({
       protocol: "folks-finance",
@@ -1013,6 +1027,189 @@ describe("AlgorandExecutionService multi-quote", () => {
     expect(withdrawInput).not.toHaveProperty("assetId");
     expect(withdrawInput).not.toHaveProperty("assetAmount");
     expect(result.outcome.status).toBe("confirmed");
+  });
+});
+
+describe("clampActionAmountToSpendable", () => {
+  it("resolves spend asset from executionInput.assetId", () => {
+    expect(
+      resolveCapitalEnterSpendAssetId({
+        ...action(),
+        fromAssetId: 0,
+        executionInput: { assetId: 3_160_000_000, amount: "3849222168" },
+        authorizedSpends: [
+          { assetId: 3_160_000_000, amountRaw: "3849222168" },
+        ],
+      }),
+    ).toBe(3_160_000_000);
+  });
+
+  it("clamps planned stake amount down to spendable after short fill", () => {
+    const planned = "3849222168";
+    const spendable = 3_846_637_084n;
+    const stake: PortfolioAction = {
+      ...action(),
+      id: "increase-haystack-hay",
+      type: "increase",
+      protocol: "haystack",
+      amountRaw: planned,
+      fromAssetId: 3_160_000_000,
+      executionShapeKey: "mainnet:haystack:v1:stake:hay",
+      executionInput: {
+        assetId: 3_160_000_000,
+        amount: planned,
+        maxSlippageBps: 100,
+      },
+      authorizedSpends: [{ assetId: 3_160_000_000, amountRaw: planned }],
+    };
+
+    const clamped = clampActionAmountToSpendable(stake, {
+      assetId: 3_160_000_000,
+      spendableRaw: spendable,
+    });
+
+    expect(clamped.amountRaw).toBe(spendable.toString());
+    expect(clamped.authorizedSpends).toEqual([
+      { assetId: 3_160_000_000, amountRaw: spendable.toString() },
+    ]);
+    expect(clamped.executionInput).toMatchObject({
+      assetId: 3_160_000_000,
+      amount: spendable.toString(),
+      maxSlippageBps: 100,
+    });
+  });
+
+  it("leaves amounts unchanged when spendable covers the plan", () => {
+    const stake: PortfolioAction = {
+      ...action(),
+      amountRaw: "1000",
+      fromAssetId: 3_160_000_000,
+      executionInput: { assetId: 3_160_000_000, amount: "1000" },
+      authorizedSpends: [{ assetId: 3_160_000_000, amountRaw: "1000" }],
+    };
+    expect(
+      clampActionAmountToSpendable(stake, {
+        assetId: 3_160_000_000,
+        spendableRaw: 1000n,
+      }),
+    ).toBe(stake);
+  });
+
+  it("quotes clamped amount when spendable is below the plan", async () => {
+    const account = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const hayAssetId = 3_160_000_000;
+    const planned = "3849222168";
+    const spendable = 3_846_637_084n;
+
+    const callManagedTool = vi.fn().mockResolvedValue({
+      data: {
+        data: [
+          {
+            shapeKey: "mainnet:haystack:v1:stake:hay",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            encodedTransactions: ["STAKE"],
+            warnings: [],
+            transactions: [],
+          },
+        ],
+        meta: { executionSubmitted: false, quoteCount: 1 },
+      },
+      payment: {
+        amountBaseUnits: "100000",
+        assetId: "31566704",
+        network: "algorand:mainnet",
+      },
+    });
+
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
+    );
+    vi.spyOn(
+      executor as unknown as {
+        readSpendableAssetRaw: (assetId: number) => Promise<bigint>;
+      },
+      "readSpendableAssetRaw",
+    ).mockResolvedValue(spendable);
+    vi.spyOn(
+      executor as unknown as {
+        isAssetOptedIn: (address: string, assetId: number) => Promise<boolean>;
+      },
+      "isAssetOptedIn",
+    ).mockResolvedValue(true);
+    vi.spyOn(
+      executor as unknown as {
+        signAndSubmitEncoded: (
+          actionId: string,
+          encoded: string[],
+        ) => Promise<{ outcome: { actionId: string; status: string } }>;
+      },
+      "signAndSubmitEncoded",
+    ).mockResolvedValue({
+      outcome: { actionId: "increase-haystack-hay", status: "confirmed" },
+    });
+
+    const candidate = opportunity({
+      protocol: "haystack",
+      opportunityId: "haystack-staking-hay",
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:haystack:v1:stake:hay",
+          protocol: "haystack",
+          action: "stake",
+          variant: "hay",
+          requiredInputs: ["assetId", "amount"],
+          requiredAssetIds: [hayAssetId],
+          inputHints: { assetId: hayAssetId },
+        }),
+      ],
+    });
+
+    await executor.executeAction(
+      {
+        ...action(),
+        id: "increase-haystack-hay",
+        type: "increase",
+        protocol: "haystack",
+        opportunityId: "haystack-staking-hay",
+        amountRaw: planned,
+        fromAssetId: hayAssetId,
+        executionShapeKey: "mainnet:haystack:v1:stake:hay",
+        executionInput: {
+          assetId: hayAssetId,
+          amount: planned,
+        },
+        authorizedSpends: [{ assetId: hayAssetId, amountRaw: planned }],
+        dependencies: ["swap-usdc-to-hay"],
+      },
+      { opportunities: [candidate] },
+    );
+
+    expect(callManagedTool).toHaveBeenCalledWith(
+      "canix_get_execution_quote",
+      {
+        quotes: [
+          {
+            shapeKey: "mainnet:haystack:v1:stake:hay",
+            input: {
+              assetId: hayAssetId,
+              amount: spendable.toString(),
+              maxSlippageBps: 100,
+            },
+          },
+        ],
+      },
+      managedAddress,
+    );
   });
 });
 

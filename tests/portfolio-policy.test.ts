@@ -424,6 +424,67 @@ describe("PortfolioPolicy", () => {
     );
   });
 
+  it("allows reduce without authorizedSpends when exit shape and position match", () => {
+    const held = {
+      protocol: "folks-finance" as const,
+      positionType: "supplied" as const,
+      positionId: "folks:usdc:1",
+      opportunityId: "folks:usdc:1",
+      assetId: 31_566_704,
+      assetSymbol: "USDC",
+      amountRaw: "10000000",
+      amount: "10",
+      usdValue: 10,
+      compatibleExitShapeKeys: ["mainnet:folks:v2:withdraw:escrow"],
+      compatibleManageShapeKeys: [] as string[],
+    };
+    const result = policy.validate(
+      portfolioSnapshot({
+        positions: [held],
+        liquidBalances: [
+          {
+            assetId: 31_566_704,
+            amountRaw: "5000000",
+            spendableAmountRaw: "5000000",
+            symbol: "USDC",
+            decimals: 6,
+            usdValue: 5,
+          },
+        ],
+      }),
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [liquid],
+        actions: [
+          {
+            id: "reduce-1",
+            type: "reduce",
+            protocol: "folks-finance",
+            opportunityId: held.opportunityId,
+            positionId: held.positionId,
+            amountRaw: "5000000",
+            fromAssetId: 31_566_704,
+            toAssetId: null,
+            targetWeightPct: null,
+            executionShapeKey: "mainnet:folks:v2:withdraw:escrow",
+            executionInput: {
+              amount: "5000000",
+              amountDenomination: "asset",
+            },
+            authorizedSpends: [],
+            rationale: "Withdraw $5 USDC to trim Folks concentration.",
+            dependencies: [],
+          },
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
   it("rejects duplicate action IDs", () => {
     const candidate = opportunity({
       sourceTimestamp: new Date().toISOString(),

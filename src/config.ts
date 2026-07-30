@@ -18,6 +18,55 @@ const optionalUrl = z.preprocess(
   z.url().optional(),
 );
 
+/** Preferred liquid/long-term hold: ASA id + soft target share of portfolio USD. */
+export interface PreferredHoldAsset {
+  assetId: number;
+  targetPortfolioPct: number;
+}
+
+/**
+ * Parse `PREFERRED_HOLD_ASSETS` as `assetId:targetPct` pairs.
+ * Example: `246516580:15,31566704:5` → GOLD$ ~15%, USDC ~5% of portfolio.
+ */
+export function parsePreferredHoldAssets(
+  raw: string | undefined,
+): PreferredHoldAsset[] {
+  if (!raw || raw.trim() === "") {
+    return [];
+  }
+  const entries: PreferredHoldAsset[] = [];
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const [idRaw, pctRaw] = trimmed.split(":");
+    if (!idRaw || pctRaw === undefined) {
+      throw new Error(
+        `PREFERRED_HOLD_ASSETS entry ${JSON.stringify(trimmed)} must be assetId:targetPct`,
+      );
+    }
+    const assetId = Number(idRaw.trim());
+    const targetPortfolioPct = Number(pctRaw.trim());
+    if (!Number.isInteger(assetId) || assetId < 0) {
+      throw new Error(
+        `PREFERRED_HOLD_ASSETS asset id must be a non-negative integer (got ${JSON.stringify(idRaw)})`,
+      );
+    }
+    if (
+      !Number.isFinite(targetPortfolioPct) ||
+      targetPortfolioPct < 0 ||
+      targetPortfolioPct > 100
+    ) {
+      throw new Error(
+        `PREFERRED_HOLD_ASSETS targetPct must be 0–100 (got ${JSON.stringify(pctRaw)})`,
+      );
+    }
+    entries.push({ assetId, targetPortfolioPct });
+  }
+  return entries;
+}
+
 const configSchema = z
   .object({
     NODE_ENV: z
@@ -78,6 +127,11 @@ const configSchema = z
       .number()
       .nonnegative()
       .default(1),
+    /**
+     * Soft operator steer: comma-separated `assetId:targetPortfolioPct` pairs.
+     * Example: `246516580:15` (hold ~15% GOLD$). Empty = no preferred holds.
+     */
+    PREFERRED_HOLD_ASSETS: optionalString(),
     TELEGRAM_BOT_TOKEN: optionalString(),
     TELEGRAM_CHAT_ID: optionalString(),
 
@@ -120,12 +174,28 @@ const configSchema = z
           "DO_SPACES_ENDPOINT, DO_SPACES_BUCKET, DO_SPACES_KEY, and DO_SPACES_SECRET must all be set or all omitted",
       });
     }
+
+    try {
+      parsePreferredHoldAssets(value.PREFERRED_HOLD_ASSETS);
+    } catch (error) {
+      context.addIssue({
+        code: "custom",
+        message:
+          error instanceof Error
+            ? error.message
+            : "PREFERRED_HOLD_ASSETS is invalid",
+      });
+    }
   });
 
 export type AppConfig = ReturnType<typeof loadConfig>;
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
-  return configSchema.parse(environment);
+  const parsed = configSchema.parse(environment);
+  return {
+    ...parsed,
+    preferredHoldAssets: parsePreferredHoldAssets(parsed.PREFERRED_HOLD_ASSETS),
+  };
 }
 
 export function isTelegramConfigured(config: AppConfig): boolean {

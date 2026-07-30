@@ -3,7 +3,8 @@ import { loadConfig } from "./config.js";
 import { startAccountingScheduler, startReviewScheduler } from "./scheduler.js";
 
 const config = loadConfig();
-const { app, reviewService, accountingService } = await createApp(config);
+const { app, reviewService, accountingService, telegramCommandLoop } =
+  await createApp(config);
 const reviewTask = config.RUN_CRON
   ? startReviewScheduler(
       reviewService,
@@ -19,10 +20,16 @@ const accountingTask = startAccountingScheduler(
   app.log,
 );
 
+if (telegramCommandLoop) {
+  telegramCommandLoop.start();
+  app.log.info("telegram command loop started");
+}
+
 async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
   await reviewTask?.stop();
   await accountingTask.stop();
+  await telegramCommandLoop?.stop();
   await app.close();
 }
 
@@ -40,6 +47,7 @@ try {
       cronEnabled: config.RUN_CRON,
       accountingCronEnabled: true,
       signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+      telegramCommandsEnabled: Boolean(telegramCommandLoop),
       cronSchedule: config.RUN_CRON ? config.CRON_SCHEDULE : undefined,
       cronTimezone: config.RUN_CRON ? config.CRON_TIMEZONE : undefined,
       accountingCronSchedule: config.ACCOUNTING_CRON_SCHEDULE,

@@ -110,6 +110,13 @@ several dry runs, and then set:
 ENABLE_TRANSACTION_SIGNING=true
 ```
 
+Optional soft steer for long-term liquid holds (not hard policy):
+
+```dotenv
+# assetId:targetPortfolioPct pairs — e.g. hold ~15% GOLD$
+PREFERRED_HOLD_ASSETS=246516580:15
+```
+
 Mainnet, USDC ASA `31566704`, the Canix402 API origin, and endpoint payment
 ceilings are code-level invariants rather than environment configuration.
 Current ceilings are 5,000 base units for positions and swap transaction
@@ -284,6 +291,20 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 ```
 
+When Telegram is configured, the **long-lived server** (`npm start` / Docker
+default `dist/index.js`) also long-polls for operator slash commands from
+`TELEGRAM_CHAT_ID` only:
+
+| Command | Behavior |
+|---|---|
+| `/help` | List commands |
+| `/status` | Health / busy / signing / last-run ages |
+| `/run` | Force a treasury review (same as `POST /runs`) |
+| `/accounting` | Force an accounting snapshot (same as `POST /accounting/run`) |
+
+One-shot entrypoints (`once`, smoke) do not start the command loop. On boot,
+pending updates are drained so a redeploy does not replay stale `/run`s.
+
 When Telegram is configured, review and accounting digests are sent as Telegram
 **rich messages** (`sendRichMessage`: `###` section headings, tables, collapsible
 details, Allo links). If rich delivery fails, the bot falls back to HTML
@@ -350,7 +371,8 @@ Canix x402 fees.
 
 Cases: Folks USDC deposit, Folks ALGO stake, Tinyman LP, CompX lending, Dorkfi
 USDC lending, PAct LP, Haystack ALGO↔USDC swap, **Réti pooling**, **Myth
-dualSTAKE (ORA)**. (Tinyman LP+farm deferred.)
+dualSTAKE (ORA)**. Tinyman farm **claimRewards** is live on reward positions;
+farm stake/unstake protocol-verify remains deferred.
 
 ## Container (DigitalOcean)
 
@@ -379,13 +401,14 @@ needed, rebuild if the entrypoint changed, then:
 # Safe connectivity smoke (LLM + one Canix research call; never signs)
 docker run --rm --env-file .env brownie-bot smoke
 
-# Full one-shot treasury review — set ENABLE_TRANSACTION_SIGNING=false first
-docker run --rm --env-file .env brownie-bot once
+# Full one-shot treasury review (build image + zs-proxy + run-once; uses .env as-is)
+npm run run-once-with-docker
 ```
 
 `smoke` starts zs-proxy, runs `dist/smoke-llm.js` (ZeroSignal +
-`canix_list_opportunities` only), prints JSON, and exits. `once` runs a full
-review plan; with signing enabled it can move treasury assets.
+`canix_list_opportunities` only), prints JSON, and exits. `run-once-with-docker`
+builds the image and runs `once` (full review); with signing enabled it can move
+treasury assets.
 
 For local non-Docker runs, install zs-proxy on the host instead — see
 [QUICKSTART.md](./QUICKSTART.md).

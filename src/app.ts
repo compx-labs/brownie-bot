@@ -51,6 +51,12 @@ import {
   type AccountingNotifier,
   type RunNotifier,
 } from "./services/telegram.js";
+import { TelegramBotClient } from "./services/telegram-bot.js";
+import {
+  createCommandDispatcher,
+  createOperatorCommandHandlers,
+  TelegramCommandLoop,
+} from "./services/telegram-commands.js";
 import {
   algodHealthUrl,
   buildHealthReport,
@@ -67,6 +73,8 @@ export interface AppContext {
   state: ReviewState;
   accountingState: AccountingState;
   coordinator: RunCoordinator;
+  /** Present when Telegram is configured; start from the long-lived server only. */
+  telegramCommandLoop?: TelegramCommandLoop;
 }
 
 const cashflowBodySchema = z.object({
@@ -124,6 +132,7 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     minTvlUsd: config.MIN_TVL_USD,
     maxSourceAgeHours: config.MAX_SOURCE_AGE_HOURS,
     minProjectedNetImprovementUsd: config.MIN_PROJECTED_NET_IMPROVEMENT_USD,
+    preferredHoldAssets: config.preferredHoldAssets,
   };
   const agent = createPortfolioAgent(
     config.OPEN_AI_API_KEY,
@@ -141,7 +150,12 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     config.OPENAI_BASE_URL,
   );
   const policy = new PortfolioPolicy({
-    ...hostGuidance,
+    maxPositionPct: hostGuidance.maxPositionPct,
+    maxProtocolPct: hostGuidance.maxProtocolPct,
+    minLiquidReservePct: hostGuidance.minLiquidReservePct,
+    minTvlUsd: hostGuidance.minTvlUsd,
+    maxSourceAgeHours: hostGuidance.maxSourceAgeHours,
+    minProjectedNetImprovementUsd: hostGuidance.minProjectedNetImprovementUsd,
     signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
   });
   const folksEscrowStore: FolksEscrowStore = isSpacesConfigured(config)
@@ -373,6 +387,35 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     await canix.close();
   });
 
+  let telegramCommandLoop: TelegramCommandLoop | undefined;
+  if (isTelegramConfigured(config)) {
+    const telegram = requireTelegramCredentials(config);
+    const storage = isSpacesConfigured(config) ? "spaces" : "local";
+    const handlers = createOperatorCommandHandlers({
+      reviewService,
+      accountingService,
+      getHealthInput: () => ({
+        signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+        telegramConfigured: true,
+        accountingStorage: storage,
+        folksEscrowStorage: storage,
+        busy: coordinator.isBusy,
+        latestReview: state.latest,
+        latestAccounting: accountingState.latest,
+      }),
+    });
+    telegramCommandLoop = new TelegramCommandLoop({
+      client: new TelegramBotClient(telegram.botToken),
+      allowedChatId: telegram.chatId,
+      dispatch: createCommandDispatcher(handlers),
+      logger: {
+        info: (obj, msg) => app.log.info(obj, msg),
+        warn: (obj, msg) => app.log.warn(obj, msg),
+        error: (obj, msg) => app.log.error(obj, msg),
+      },
+    });
+  }
+
   return {
     app,
     reviewService,
@@ -381,5 +424,6 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     state,
     accountingState,
     coordinator,
+    telegramCommandLoop,
   };
 }

@@ -107,4 +107,32 @@ describe("loadConfig", () => {
     expect(config.TELEGRAM_BOT_TOKEN).toBe("token");
     expect(config.DO_SPACES_BUCKET).toBe("bucket");
   });
+
+  it("defaults preferredHoldAssets to empty and parses PREFERRED_HOLD_ASSETS", () => {
+    expect(loadConfig(requiredEnvironment).preferredHoldAssets).toEqual([]);
+
+    const config = loadConfig({
+      ...requiredEnvironment,
+      PREFERRED_HOLD_ASSETS: "246516580:15, 31566704:5",
+    });
+    expect(config.preferredHoldAssets).toEqual([
+      { assetId: 246_516_580, targetPortfolioPct: 15 },
+      { assetId: 31_566_704, targetPortfolioPct: 5 },
+    ]);
+  });
+
+  it("rejects malformed PREFERRED_HOLD_ASSETS", () => {
+    expect(() =>
+      loadConfig({
+        ...requiredEnvironment,
+        PREFERRED_HOLD_ASSETS: "246516580",
+      }),
+    ).toThrow(/PREFERRED_HOLD_ASSETS/);
+    expect(() =>
+      loadConfig({
+        ...requiredEnvironment,
+        PREFERRED_HOLD_ASSETS: "246516580:150",
+      }),
+    ).toThrow(/0–100/);
+  });
 });

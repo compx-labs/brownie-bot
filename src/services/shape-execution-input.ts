@@ -9,6 +9,9 @@ import type {
 export const ALGO_ASSET_ID = 0;
 export const USDC_ASSET_ID = 31_566_704;
 
+export const TINYMAN_FARM_CLAIM_SHAPE =
+  "mainnet:tinyman:staking-v1:farm:claimRewards";
+
 /**
  * Infer requiredInputs when Canix only lists an exit shapeKey on the position
  * (common for Tinyman LP — enter shapes live on the opportunity, remove on the position).
@@ -40,6 +43,80 @@ export function inferExitRequiredInputs(exitShapeKey: string): string[] {
     return ["amount", "assetId"];
   }
   return ["amount"];
+}
+
+/** Infer requiredInputs for manage/claim shapes listed only on the position. */
+export function inferClaimRequiredInputs(claimShapeKey: string): string[] {
+  const key = claimShapeKey.toLowerCase();
+  if (
+    key.includes("claimrewards") ||
+    (key.includes("farm") && key.includes("claim"))
+  ) {
+    return ["userAddress", "programId", "poolAddress"];
+  }
+  if (key.includes("claim")) {
+    return ["userAddress"];
+  }
+  return ["amount"];
+}
+
+/**
+ * Parse Tinyman farm reward position identity into claim inputs.
+ * positionId: tinyman:reward:{poolAddress}:{programId}:{rewardAssetId}
+ * notes (optional): Farm programId=…; poolAddress=…
+ */
+export function parseTinymanRewardPositionHints(
+  position: Position | undefined,
+): Record<string, unknown> {
+  if (!position) {
+    return {};
+  }
+  const fromNotes = parseTinymanFarmNotes(position.notes);
+  const fromId = parseTinymanRewardPositionId(position.positionId);
+  // positionId wins over notes when both present.
+  return { ...fromNotes, ...fromId };
+}
+
+export function parseTinymanRewardPositionId(
+  positionId: string,
+): Record<string, unknown> {
+  const parts = positionId.split(":");
+  if (parts.length < 5 || parts[0] !== "tinyman" || parts[1] !== "reward") {
+    return {};
+  }
+  const poolAddress = parts[2];
+  const programIdRaw = parts[3];
+  if (!poolAddress || !programIdRaw) {
+    return {};
+  }
+  const programIdNumber = Number(programIdRaw);
+  const programId = Number.isFinite(programIdNumber)
+    ? programIdNumber
+    : programIdRaw;
+  return {
+    poolAddress,
+    poolId: poolAddress,
+    programId,
+  };
+}
+
+export function parseTinymanFarmNotes(
+  notes: string | undefined,
+): Record<string, unknown> {
+  if (!notes) {
+    return {};
+  }
+  const hints: Record<string, unknown> = {};
+  const programMatch = notes.match(/programId\s*=\s*(\d+)/i);
+  if (programMatch?.[1]) {
+    hints.programId = Number(programMatch[1]);
+  }
+  const poolMatch = notes.match(/poolAddress\s*=\s*([A-Z2-7]+)/i);
+  if (poolMatch?.[1]) {
+    hints.poolAddress = poolMatch[1];
+    hints.poolId = poolMatch[1];
+  }
+  return hints;
 }
 
 /** First ASA gate asset id from Réti-style entryRequirements, if any. */
@@ -116,8 +193,9 @@ export function findPositionForAction(
 }
 
 /**
- * Resolve the Canix execution shape for an action. Exit shapes are often only
- * present as position.compatibleExitShapeKeys; synthesize from enter hints.
+ * Resolve the Canix execution shape for an action. Exit/manage shapes are often
+ * only present as position compatibleExit/ManageShapeKeys; synthesize required
+ * inputs (and Tinyman claim hints) when the opportunity catalog lacks the shape.
  */
 export function resolveShapeForAction(
   action: PortfolioAction,
@@ -133,25 +211,29 @@ export function resolveShapeForAction(
     opportunities,
     snapshot,
   );
+  const position = findPositionForAction(action, snapshot);
+  const borrowedHints = borrowInputHints(opportunity);
+  const rewardHints = parseTinymanRewardPositionHints(position);
   const existing = opportunity?.executionShapes.find(
     (shape) => shape.shapeKey === shapeKey,
   );
-  const borrowedHints = borrowInputHints(opportunity);
   if (existing) {
     return {
       ...existing,
       inputHints: {
         ...(borrowedHints ?? {}),
+        ...rewardHints,
         ...(existing.inputHints ?? {}),
       },
     };
   }
 
-  if (!["close", "reduce"].includes(action.type)) {
+  if (!["close", "reduce", "claim"].includes(action.type)) {
     return undefined;
   }
 
   const segments = shapeKey.split(":");
+  const isClaim = action.type === "claim";
   return {
     shapeKey,
     protocol: action.protocol ?? opportunity?.protocol ?? "unknown",
@@ -159,11 +241,16 @@ export function resolveShapeForAction(
     action: segments[3] ?? action.type,
     variant: segments[4] ?? "default",
     title: shapeKey,
-    summary: `Exit via ${shapeKey}`,
+    summary: isClaim ? `Claim via ${shapeKey}` : `Exit via ${shapeKey}`,
     order: 99,
-    requiredInputs: inferExitRequiredInputs(shapeKey),
+    requiredInputs: isClaim
+      ? inferClaimRequiredInputs(shapeKey)
+      : inferExitRequiredInputs(shapeKey),
     requiredAssetIds: opportunity?.assetIds ?? [],
-    inputHints: borrowedHints,
+    inputHints: {
+      ...(borrowedHints ?? {}),
+      ...rewardHints,
+    },
   };
 }
 
@@ -196,8 +283,10 @@ export function completeExecutionInput(options: {
   position?: Position;
 }): Record<string, unknown> {
   const { action, shape, opportunity, position } = options;
+  const rewardHints = parseTinymanRewardPositionHints(position);
   const input: Record<string, unknown> = {
     ...(shape.inputHints ?? {}),
+    ...rewardHints,
     ...(action.executionInput ?? {}),
   };
   const amountsByAsset = amountsByAssetFromAction(action, position);
@@ -217,6 +306,14 @@ export function completeExecutionInput(options: {
     if (input[hintKey] === undefined && hintValue !== undefined) {
       input[hintKey] = hintValue;
     }
+  }
+
+  // Canix accepts poolId as an alias for poolAddress on Tinyman farm claim.
+  if (input.poolAddress === undefined && input.poolId !== undefined) {
+    input.poolAddress = input.poolId;
+  }
+  if (input.poolId === undefined && input.poolAddress !== undefined) {
+    input.poolId = input.poolAddress;
   }
 
   for (const key of shape.requiredInputs) {
@@ -270,6 +367,14 @@ export function completeExecutionInput(options: {
         input[key] = fromPool;
         continue;
       }
+    }
+    if (lower === "pooladdress" && input.poolId !== undefined) {
+      input[key] = input.poolId;
+      continue;
+    }
+    if (lower === "poolid" && input.poolAddress !== undefined) {
+      input[key] = input.poolAddress;
+      continue;
     }
     if (lower === "valuetoverify") {
       const gateAsa = firstAsaGateAssetId(opportunity);

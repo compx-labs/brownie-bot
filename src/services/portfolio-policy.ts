@@ -444,9 +444,8 @@ export class PortfolioPolicy {
         }
       }
       if (["reduce", "close", "claim"].includes(action.type)) {
-        if (action.type === "reduce" && action.authorizedSpends.length === 0) {
-          violations.push(`Action ${action.id} has no declared treasury spend`);
-        }
+        // reduce/close/claim withdraw or manage an existing position; sizing is
+        // amountRaw / executionInput, not treasury authorizedSpends.
         const position = action.positionId
           ? positions.get(action.positionId)
           : undefined;
