@@ -40,7 +40,7 @@ describe("backend routes", () => {
       latestAccounting: null,
       warnings: ["No treasury review has completed yet"],
     });
-    expect(response.json().deps).toBeUndefined();
+    expect(response.json()).not.toHaveProperty("deps");
   });
 
   it("includes last review summary on /health after hydrate", async () => {
@@ -88,9 +88,9 @@ describe("backend routes", () => {
           id: "persisted-run",
           status: "no-op",
           failed: false,
+          ageSeconds: expect.any(Number) as number,
         },
       });
-      expect(response.json().latestReview.ageSeconds).toBeGreaterThan(0);
     } finally {
       await context?.app.close();
       context = undefined;

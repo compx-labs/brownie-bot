@@ -74,6 +74,10 @@ export class TreasuryReviewService {
     private readonly portfolioReader?: SnapshotReader,
     private readonly coordinator?: RunCoordinator,
     private readonly reviewStore?: ReviewRunStore,
+    /** Fetch optional operator prefs at the start of each review. */
+    private readonly loadOperatorPreferences?: () => Promise<
+      string | undefined
+    >,
   ) {}
 
   async run(mode: CoordinatorMode = "wait"): Promise<ReviewRun> {
@@ -112,8 +116,12 @@ export class TreasuryReviewService {
           "Treasury wallet is not configured; set BOT_WALLET and WALLET_MNEMONIC",
         );
       }
+      const operatorPreferences = this.loadOperatorPreferences
+        ? await this.loadOperatorPreferences()
+        : undefined;
       const agentResult = await this.agent.run({
         priorReview: buildPriorReviewContext(this.state.latest),
+        operatorPreferences,
       });
       if (!agentResult.plan) {
         result = {

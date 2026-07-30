@@ -26,19 +26,30 @@ For architecture, HTTP API, and signing details, see [README.md](./README.md).
 
 ## 2a. DigitalOcean / Docker (recommended for cloud)
 
-The image downloads `zs-proxy`, imports `WALLET_MNEMONIC` on boot (file keyring),
-starts the proxy on `127.0.0.1:8080`, then runs Brownie. No host binary needed.
+Published image: `ghcr.io/compx-labs/brownie-bot:latest`. The image downloads
+`zs-proxy`, imports `WALLET_MNEMONIC` on boot (file keyring), starts the proxy on
+`127.0.0.1:8080`, then runs Brownie. No host binary needed.
 
 ```bash
 cp .env.example .env
 # set BOT_WALLET, WALLET_MNEMONIC
 # add ZEROSIGNAL_KEYSTORE_PASSPHRASE (encrypts the in-container wallet file)
 
-docker build -t brownie-bot .
+docker compose up -d
+# or:
+docker pull ghcr.io/compx-labs/brownie-bot:latest
 docker run --env-file .env \
   -e ZEROSIGNAL_KEYSTORE_PASSPHRASE='long-random-secret' \
-  -p 3000:3000 brownie-bot
+  -p 3000:3000 ghcr.io/compx-labs/brownie-bot:latest
 ```
+
+To build from source instead: `docker build -t brownie-bot .` then
+`docker run --env-file .env -p 3000:3000 brownie-bot`.
+
+Optional operator strategy markdown: upload to Spaces as
+`{DO_SPACES_PREFIX}/operator-preferences.md`, or (no Spaces) copy
+[`config/operator-preferences.example.md`](./config/operator-preferences.example.md)
+to `config/operator-preferences.md` (gitignored; compose can bind-mount it).
 
 Fund the shared wallet **before** the first review (USDC for inference/Canix,
 plus ~1.2 ALGO free for the ZeroSignal prepaid MBR pool). On Docker, the
@@ -99,6 +110,12 @@ ENABLE_TRANSACTION_SIGNING=false
 # Soft preferred holds (assetId:targetPortfolioPct): e.g. GOLD$ ~15%
 # PREFERRED_HOLD_ASSETS=246516580:15
 ```
+
+Optional prose strategy (no env var): when Spaces is set, put markdown at
+`{DO_SPACES_PREFIX}/operator-preferences.md`; otherwise
+`config/operator-preferences.md`. See
+[`config/operator-preferences.example.md`](./config/operator-preferences.example.md).
+Missing file is fine — the agent runs with a generic base prompt.
 
 Notes:
 
@@ -226,15 +243,15 @@ The same wallet also pays ZeroSignal per message through zs-proxy — set proxy
 
 ### Canix402 x402 ceilings
 
-| Endpoint / tool | Ceiling (base units) | Ceiling (USDC) | Typical use |
-| --- | ---: | ---: | --- |
-| Positions (`canix_get_positions`) | 5,000 | 0.005 | Every review + wallet scan |
-| List opportunities | 10,000 | 0.01 | Research |
-| Search / filter opportunities | 10,000 | 0.01 | Research (high-TVL discovery) |
-| Protocol opportunities | 10,000 | 0.01 | Per protocol query |
-| Personalized opportunities | 50,000 | 0.05 | Every review (usually) |
-| Swap transactions | 5,000 | 0.005 | **Signing only** |
-| Execution quotes | 100,000 | 0.10 | **Signing only** (flat per quote request) |
+| Endpoint / tool                   | Ceiling (base units) | Ceiling (USDC) | Typical use                               |
+| --------------------------------- | -------------------: | -------------: | ----------------------------------------- |
+| Positions (`canix_get_positions`) |                5,000 |          0.005 | Every review + wallet scan                |
+| List opportunities                |               10,000 |           0.01 | Research                                  |
+| Search / filter opportunities     |               10,000 |           0.01 | Research (high-TVL discovery)             |
+| Protocol opportunities            |               10,000 |           0.01 | Per protocol query                        |
+| Personalized opportunities        |               50,000 |           0.05 | Every review (usually)                    |
+| Swap transactions                 |                5,000 |          0.005 | **Signing only**                          |
+| Execution quotes                  |              100,000 |           0.10 | **Signing only** (flat per quote request) |
 
 Free (no x402 payment path): `canix_health`, `canix_get_token_prices` (used by
 accounting).
@@ -258,20 +275,20 @@ is usually much lower because there is no multi-turn tool loop. Prefer
 
 CLI one-shots (each spends real USDC; no LLM):
 
-| Command | Approx. cost |
-| --- | --- |
-| `npm run canix:wallet-scan` | ~0.005 USDC (positions) |
-| `npm run canix:opportunities` | ≤ 0.01 USDC |
-| `npm run canix:personalized` | ≤ 0.05 USDC |
+| Command                       | Approx. cost            |
+| ----------------------------- | ----------------------- |
+| `npm run canix:wallet-scan`   | ~0.005 USDC (positions) |
+| `npm run canix:opportunities` | ≤ 0.01 USDC             |
+| `npm run canix:personalized`  | ≤ 0.05 USDC             |
 
 ### Other costs
 
-| Cost | Notes |
-| --- | --- |
-| **ALGO fees** | Tiny network fees for each x402 payment txn; zs-proxy prepaid ticket pool (~ALGO); larger when signing/submitting portfolio txs |
-| **ZeroSignal** | Pay-per-message from the shared mnemonic via zs-proxy; use proxy `daily_cap_usdc` / `per_request_cap_usdc` |
-| **Daily Canix x402 cap** | Default `MAX_DAILY_X402_BASE_UNITS=5000000` (5 USDC/day); raise if needed |
-| **Telegram / Spaces** | Optional; Spaces only if you configure it |
+| Cost                     | Notes                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| **ALGO fees**            | Tiny network fees for each x402 payment txn; zs-proxy prepaid ticket pool (~ALGO); larger when signing/submitting portfolio txs |
+| **ZeroSignal**           | Pay-per-message from the shared mnemonic via zs-proxy; use proxy `daily_cap_usdc` / `per_request_cap_usdc`                      |
+| **Daily Canix x402 cap** | Default `MAX_DAILY_X402_BASE_UNITS=5000000` (5 USDC/day); raise if needed                                                       |
+| **Telegram / Spaces**    | Optional; Spaces only if you configure it                                                                                       |
 
 Canix ceilings and the Canix API origin are **code invariants** in
 `src/integrations/canix402/payment.ts`, not `.env` knobs.

@@ -166,14 +166,14 @@ export class SpacesFolksEscrowStore implements FolksEscrowStore {
 export class MemoryFolksEscrowStore implements FolksEscrowStore {
   private readonly records = new Map<string, FolksEscrowRecord>();
 
-  async get(
+  get(
     walletAddress: string,
     poolAppId: number,
   ): Promise<FolksEscrowRecord | undefined> {
-    return this.records.get(key(walletAddress, poolAppId));
+    return Promise.resolve(this.records.get(key(walletAddress, poolAppId)));
   }
 
-  async save(
+  save(
     record: Omit<FolksEscrowRecord, "updatedAt">,
   ): Promise<FolksEscrowRecord> {
     const stored: FolksEscrowRecord = {
@@ -181,7 +181,7 @@ export class MemoryFolksEscrowStore implements FolksEscrowStore {
       updatedAt: new Date().toISOString(),
     };
     this.records.set(key(record.walletAddress, record.poolAppId), stored);
-    return stored;
+    return Promise.resolve(stored);
   }
 }
 

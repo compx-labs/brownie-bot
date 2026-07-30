@@ -35,15 +35,18 @@ configuration and ops detail. Want to change the code? See
 ## Quick start
 
 See **[QUICKSTART.md](./QUICKSTART.md)** for the dry-run checklist and cost
-table. Short version (DigitalOcean / Docker):
+table. Short version (pull published image):
 
 ```bash
 cp .env.example .env
 # set BOT_WALLET, WALLET_MNEMONIC, ZEROSIGNAL_KEYSTORE_PASSPHRASE
 # fund the wallet on-chain once (see QUICKSTART)
-docker build -t brownie-bot .
-docker run --env-file .env -p 3000:3000 brownie-bot
+docker compose up -d
+# or: docker pull ghcr.io/compx-labs/brownie-bot:latest && docker run --env-file .env -p 3000:3000 ghcr.io/compx-labs/brownie-bot:latest
 ```
+
+To build locally instead: `docker build -t brownie-bot .` then
+`docker run --env-file .env -p 3000:3000 brownie-bot`.
 
 ## Setup
 
@@ -118,6 +121,13 @@ target, the agent should accumulate even if secondary liquidity is thin
 # assetId:targetPortfolioPct pairs — e.g. hold ~15% GOLD$
 PREFERRED_HOLD_ASSETS=246516580:15
 ```
+
+Optional **operator preferences** prose (CompX liquidity bias, exclusions, risk
+taste) is loaded by convention — there is no prefs env var. When Spaces is
+configured, each review reads `{DO_SPACES_PREFIX}/operator-preferences.md`.
+Otherwise it tries `config/operator-preferences.md` relative to the process cwd.
+Missing or empty → disregarded. See
+[`config/operator-preferences.example.md`](./config/operator-preferences.example.md).
 
 Mainnet, USDC ASA `31566704`, the Canix402 API origin, and endpoint payment
 ceilings are code-level invariants rather than environment configuration.
@@ -209,6 +219,11 @@ DO_SPACES_SECRET=
 DO_SPACES_PREFIX="brownie-bot"
 ```
 
+The same Spaces bucket/prefix also hosts optional
+`{DO_SPACES_PREFIX}/operator-preferences.md` (prose strategy for the portfolio
+agent). Without Spaces, drop `config/operator-preferences.md` (gitignored; copy
+from [`config/operator-preferences.example.md`](./config/operator-preferences.example.md)).
+
 Accounting uses free MCP tool `canix_get_token_prices` (`POST /pricing`) for
 wallet token USD prices (including ALGO) and Canix position valuations for DeFi
 holdings.
@@ -297,11 +312,11 @@ When Telegram is configured, the **long-lived server** (`npm start` / Docker
 default `dist/index.js`) also long-polls for operator slash commands from
 `TELEGRAM_CHAT_ID` only:
 
-| Command | Behavior |
-|---|---|
-| `/help` | List commands |
-| `/status` | Health / busy / signing / last-run ages |
-| `/run` | Force a treasury review (same as `POST /runs`) |
+| Command       | Behavior                                                      |
+| ------------- | ------------------------------------------------------------- |
+| `/help`       | List commands                                                 |
+| `/status`     | Health / busy / signing / last-run ages                       |
+| `/run`        | Force a treasury review (same as `POST /runs`)                |
 | `/accounting` | Force an accounting snapshot (same as `POST /accounting/run`) |
 
 One-shot entrypoints (`once`, smoke) do not start the command loop. On boot,
@@ -378,16 +393,25 @@ farm stake/unstake protocol-verify remains deferred.
 
 ## Container (DigitalOcean)
 
-The image bundles `zs-proxy` and starts it beside Brownie on loopback. Set the
-usual bot env vars plus a keystore passphrase (file backend — no OS keychain in
-containers):
+Published images: `ghcr.io/compx-labs/brownie-bot:latest` (also tagged with git
+sha / `v*` releases). The image bundles `zs-proxy` and starts it beside Brownie
+on loopback. Set the usual bot env vars plus a keystore passphrase (file backend
+— no OS keychain in containers):
 
 ```bash
-docker build -t brownie-bot .
+cp .env.example .env
+# set BOT_WALLET, WALLET_MNEMONIC, ZEROSIGNAL_KEYSTORE_PASSPHRASE
+docker compose up -d
+# or pull + run:
+docker pull ghcr.io/compx-labs/brownie-bot:latest
 docker run --env-file .env \
   -e ZEROSIGNAL_KEYSTORE_PASSPHRASE='long-random-secret' \
-  -p 3000:3000 brownie-bot
+  -p 3000:3000 ghcr.io/compx-labs/brownie-bot:latest
 ```
+
+Local-only prefs (no Spaces): bind-mount
+`./config/operator-preferences.md` (see `docker-compose.yml`). With Spaces,
+upload `{prefix}/operator-preferences.md` instead — no volume required.
 
 `docker/entrypoint.sh` imports `WALLET_MNEMONIC` into zs-proxy, waits for
 `/healthz`, then runs `node dist/index.js`. Spend caps default from
@@ -401,7 +425,7 @@ needed, rebuild if the entrypoint changed, then:
 
 ```bash
 # Safe connectivity smoke (LLM + one Canix research call; never signs)
-docker run --rm --env-file .env brownie-bot smoke
+docker run --rm --env-file .env ghcr.io/compx-labs/brownie-bot:latest smoke
 
 # Full one-shot treasury review (build image + zs-proxy + run-once; uses .env as-is)
 npm run run-once-with-docker

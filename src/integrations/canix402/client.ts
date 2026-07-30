@@ -436,6 +436,7 @@ function parseToolPayload(result: unknown, toolName?: string): unknown {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(
       `${label} returned invalid JSON (${reason}; length=${text.length}; preview=${truncateErrorDetail(text)})`,
+      { cause: error },
     );
   }
 }
@@ -518,7 +519,7 @@ function formatToolError(payload: {
       return base;
     }
   }
-  return `${base} (details=${truncateErrorDetail(String(payload.details))})`;
+  return `${base} (details=${truncateErrorDetail(JSON.stringify(payload.details))})`;
 }
 
 function truncateErrorDetail(text: string, maxLength = 500): string {

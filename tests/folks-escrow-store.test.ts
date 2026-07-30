@@ -10,7 +10,7 @@ describe("SpacesFolksEscrowStore", () => {
     const escrowAddress = algosdk.generateAccount().addr.toString();
     const sends: Array<{ Key?: string; Body?: string }> = [];
     const client = {
-      send: vi.fn(async (command: { input: Record<string, unknown> }) => {
+      send: vi.fn((command: { input: Record<string, unknown> }) => {
         const name = command.constructor.name;
         if (name === "GetObjectCommand") {
           const key = command.input.Key as string;
@@ -24,18 +24,18 @@ describe("SpacesFolksEscrowStore", () => {
             error.$metadata = { httpStatusCode: 404 };
             throw error;
           }
-          return {
+          return Promise.resolve({
             Body: {
-              transformToString: async () => match.Body,
+              transformToString: () => Promise.resolve(match.Body),
             },
-          };
+          });
         }
         if (name === "PutObjectCommand") {
           sends.push({
             Key: command.input.Key as string,
             Body: command.input.Body as string,
           });
-          return {};
+          return Promise.resolve({});
         }
         throw new Error(`unexpected command ${name}`);
       }),

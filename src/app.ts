@@ -32,6 +32,7 @@ import {
   SpacesReviewRunStore,
   type ReviewRunStore,
 } from "./integrations/storage/review-run-store.js";
+import { loadOperatorPreferences } from "./integrations/storage/operator-preferences.js";
 import {
   AccountingRunInProgressError,
   AccountingService,
@@ -228,6 +229,22 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     portfolioReader,
     coordinator,
     reviewStore,
+    async () => {
+      if (isSpacesConfigured(config)) {
+        const spaces = requireSpacesCredentials(config);
+        return loadOperatorPreferences({
+          spaces: {
+            endpoint: spaces.endpoint,
+            region: config.DO_SPACES_REGION,
+            bucket: spaces.bucket,
+            accessKeyId: spaces.key,
+            secretAccessKey: spaces.secret,
+            prefix: config.DO_SPACES_PREFIX,
+          },
+        });
+      }
+      return loadOperatorPreferences({});
+    },
   );
   const store: AccountingStore = isSpacesConfigured(config)
     ? (() => {

@@ -13,27 +13,27 @@ import {
   TreasuryReviewService,
 } from "../src/services/treasury-review.js";
 import type { RunNotifier } from "../src/services/telegram.js";
+import type { PortfolioAction } from "../src/domain.js";
 import { opportunity, portfolioPlan, portfolioSnapshot } from "./fixtures.js";
 
 function dependencies(agent: PortfolioAgent) {
-  const policy: PlanValidator = {
-    validate: vi.fn().mockReturnValue({
-      approved: true,
-      violations: [],
-      warnings: [],
-      metrics: {
-        maxPositionPct: 0,
-        maxProtocolPct: 0,
-        liquidReservePct: 100,
-        turnoverPct: 0,
-      },
-    }),
-  };
-  const executor: ActionExecutor = {
-    executeAction: vi.fn(),
-  };
-  const notifier: RunNotifier = { send: vi.fn() };
-  return { agent, policy, executor, notifier };
+  const validate = vi.fn().mockReturnValue({
+    approved: true,
+    violations: [],
+    warnings: [],
+    metrics: {
+      maxPositionPct: 0,
+      maxProtocolPct: 0,
+      liquidReservePct: 100,
+      turnoverPct: 0,
+    },
+  });
+  const executeAction = vi.fn();
+  const send = vi.fn();
+  const policy: PlanValidator = { validate };
+  const executor: ActionExecutor = { executeAction };
+  const notifier: RunNotifier = { send };
+  return { agent, policy, executor, notifier, validate, executeAction, send };
 }
 
 function service(
@@ -214,12 +214,12 @@ describe("TreasuryReviewService", () => {
       planRawText: "Useful narrative plan without schema.",
       planParseError: "invalid structured plan: summary: Required",
     });
-    expect(deps.notifier.send).toHaveBeenCalledOnce();
-    expect(deps.notifier.send).toHaveBeenCalledWith(
+    expect(deps.send).toHaveBeenCalledOnce();
+    expect(deps.send).toHaveBeenCalledWith(
       expect.objectContaining({ status: "reported" }),
     );
-    expect(deps.policy.validate).not.toHaveBeenCalled();
-    expect(deps.executor.executeAction).not.toHaveBeenCalled();
+    expect(deps.validate).not.toHaveBeenCalled();
+    expect(deps.executeAction).not.toHaveBeenCalled();
   });
 
   it("sanitizes HTML gateway timeouts from the portfolio agent", async () => {
@@ -545,14 +545,16 @@ describe("TreasuryReviewService", () => {
         toolCalls: [],
       }),
     };
-    const executeAction = vi.fn().mockImplementation(async (action) => ({
-      outcome: {
-        actionId: action.id,
-        status: "confirmed",
-        transactionId: `TX-${action.id}`,
-      },
-      payments: [],
-    }));
+    const executeAction = vi.fn().mockImplementation((action: PortfolioAction) =>
+      Promise.resolve({
+        outcome: {
+          actionId: action.id,
+          status: "confirmed",
+          transactionId: `TX-${action.id}`,
+        },
+        payments: [],
+      }),
+    );
     const deps = dependencies(agent);
     const instance = new TreasuryReviewService(
       deps.agent,

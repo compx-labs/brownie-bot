@@ -16,7 +16,11 @@ import type {
 } from "../integrations/canix402/client.js";
 import { prepareAgentTools } from "../integrations/canix402/client.js";
 import type { PortfolioReader } from "../integrations/algorand/portfolio.js";
-import { prefetchHostResearch, heldOpportunityIdsFromSnapshot, enrichOpportunitiesWithHeldPositions } from "./host-research.js";
+import {
+  prefetchHostResearch,
+  heldOpportunityIdsFromSnapshot,
+  enrichOpportunitiesWithHeldPositions,
+} from "./host-research.js";
 import {
   parseInferenceCostFromHeaders,
   summarizeInferenceCosts,
@@ -90,7 +94,7 @@ export function normalizeAgentResponse(raw: unknown): NormalizedAgentResponse {
     id,
     output: parsed.output,
     output_text,
-    raw: parsed as Record<string, unknown>,
+    raw: parsed,
   };
 }
 
@@ -171,6 +175,8 @@ export interface PriorReviewContext {
 
 export interface PortfolioAgentRunOptions {
   priorReview?: PriorReviewContext;
+  /** Optional prose strategy appended as OPERATOR PREFERENCES (loaded per review). */
+  operatorPreferences?: string;
 }
 
 export interface PortfolioAgent {
@@ -213,7 +219,7 @@ export interface PortfolioAgentOptions {
 const PORTFOLIO_AGENT_PROMPT_SHARED = `You are Brownie, an autonomous Algorand treasury portfolio manager (once per day).
 
 GOAL
-Deploy idle capital into high-TVL, execution-ready yield after fees/slippage/risk. Keep minLiquidReservePct liquid. Prefer deeper liquidity over peak APY for yield deployment (preferred holds below target are an exception—see below). A core mandate is to build CompX (ASA 1732165149) liquidity across protocols—DEX pools, farms, lending, and liquid holdings—so thin CompX markets are a reason to add carefully sized capital, not to skip. Host guidance numbers are in the task input—plan toward them; the host hard-enforces structure when signing.
+Deploy idle capital into high-TVL, execution-ready yield after fees/slippage/risk. Keep minLiquidReservePct liquid. Prefer deeper liquidity over peak APY for yield deployment (preferred holds below target are an exception—see below). Host guidance numbers are in the task input—plan toward them; the host hard-enforces structure when signing.
 
 SNAPSHOT
 Host already loaded positions + liquid balances. Treat null/partial protocol data as incomplete, not zero. For liquidBalances: use amount/spendableAmount/usdValue for judgment and summaries; use amountRaw/spendableAmountRaw only in authorizedSpends and executionInput. Never multiply amountRaw by a USD price. Never invent decimals.
@@ -221,7 +227,7 @@ Host already loaded positions + liquid balances. Treat null/partial protocol dat
 CAPITAL
 Deploy surplus above the reserve when eligible executable opportunities exist. Hold only with named rejected candidates (id, APY, TVL, why). Ending liquid USDC (asset 31566704) should be ~5+ for ops (Canix x402 + ZeroSignal); if short, end with a small consolidate-usdc-buffer swap. Do not invent secrets, mnemonics, or payment details.
 Swaps are not only precursors to deposits: use swap to rotate idle liquid ASAs into USDC/ALGO for yield, to rebalance toward hostGuidance.preferredHoldAssets targetPortfolioPct, or to free capital—when fees/slippage are justified. Do not swap preferred-hold assets that are already near their target %.
-Preferred holds (hostGuidance.preferredHoldAssets): soft long-term targets as % of portfolio USD. Treat listed assets as intentional holdings up to targetPortfolioPct; do not nag or force-rotate them when near target. Below target, prefer accumulating via surplus rather than liquidating productive yield. Thin/low secondary-market liquidity is NOT a reason to skip preferred-hold buys — accumulating below target helps build that liquidity and close the gap. For CompX (ASA 1732165149) and other preferred-hold buys below target: do NOT shrink, split, or pace the swap solely because of expected price impact/slippage — size toward closing the gap with available surplus; the host waives Haystack price-impact limits when buying preferred-hold ASAs. Above target, trim only when net benefit clearly exceeds costs. Unlisted idle ASAs may be rotated into yield or preferred holds when economics work.
+Preferred holds (hostGuidance.preferredHoldAssets): soft long-term targets as % of portfolio USD. Treat listed assets as intentional holdings up to targetPortfolioPct; do not nag or force-rotate them when near target. Below target, prefer accumulating via surplus rather than liquidating productive yield. Thin/low secondary-market liquidity is NOT a reason to skip preferred-hold buys — accumulating below target helps build that liquidity and close the gap. For preferred-hold buys below target: do NOT shrink, split, or pace the swap solely because of expected price impact/slippage — size toward closing the gap with available surplus; the host waives Haystack price-impact limits when buying preferred-hold ASAs. Above target, trim only when net benefit clearly exceeds costs. Unlisted idle ASAs may be rotated into yield or preferred holds when economics work.
 
 PLAN ACTIONS
 - Prefer executionReady with non-empty shapeKeys; empty shapeKeys = research-only—never invent keys.
@@ -269,6 +275,23 @@ export const PORTFOLIO_AGENT_PROMPT_LITE = `${PORTFOLIO_AGENT_PROMPT_SHARED}
 
 LITE MODE — NO TOOLS
 Host already researched (personalized + high-TVL). Use researchedOpportunities / candidates only. Prefer executionReady with non-empty shapeKeys. Rank by TVL, readiness, net benefit, concentration—not named protocols.`;
+
+/**
+ * Base prompt for the given AI mode, optionally appending operator prose.
+ * Empty / whitespace-only preferences leave the base prompt unchanged.
+ */
+export function buildPortfolioAgentInstructions(
+  aiMode: PortfolioAiMode,
+  operatorPreferences?: string,
+): string {
+  const base =
+    aiMode === "lite" ? PORTFOLIO_AGENT_PROMPT_LITE : PORTFOLIO_AGENT_PROMPT_V1;
+  const trimmed = operatorPreferences?.trim();
+  if (!trimmed) {
+    return base;
+  }
+  return `${base}\n\nOPERATOR PREFERENCES\n${trimmed}`;
+}
 
 const PLAN_JSON_REPAIR_USER_MESSAGE =
   "Your previous reply was not valid portfolio_plan JSON. Reply with ONLY one top-level JSON object (no portfolio_plan wrapper). " +
@@ -405,22 +428,33 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     const discoveredTools = await this.canix.listTools();
     assertRequiredCapabilities(discoveredTools, this.options.signingEnabled);
     const { snapshot, payments } = await this.portfolioReader.read();
+    const instructions = buildPortfolioAgentInstructions(
+      this.options.aiMode,
+      options.operatorPreferences,
+    );
 
     if (this.options.aiMode === "lite") {
-      return this.runLite(snapshot, payments, options.priorReview);
+      return this.runLite(
+        snapshot,
+        payments,
+        options.priorReview,
+        instructions,
+      );
     }
     return this.runFull(
       discoveredTools,
       snapshot,
       payments,
       options.priorReview,
+      instructions,
     );
   }
 
   private async runLite(
     snapshot: PortfolioSnapshot,
     payments: PaymentReceipt[],
-    priorReview?: PriorReviewContext,
+    priorReview: PriorReviewContext | undefined,
+    instructions: string,
   ): Promise<PortfolioAgentResult> {
     const research = await prefetchHostResearch(this.canix, {
       walletAddress: this.options.walletAddress,
@@ -452,7 +486,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
 
     const { data, headers } = await createAgentResponse(this.openai, {
       model: this.options.model,
-      instructions: PORTFOLIO_AGENT_PROMPT_LITE,
+      instructions,
       input: initialInput,
       store: false,
       reasoning: { effort: this.options.reasoningEffort },
@@ -473,7 +507,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     }
 
     const parsed = await this.parsePlanWithOptionalRepair(response, {
-      instructions: PORTFOLIO_AGENT_PROMPT_LITE,
+      instructions,
       initialInput,
       conversationItems: [],
       inferenceCharges,
@@ -512,12 +546,10 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     discoveredTools: McpToolDefinition[],
     snapshot: PortfolioSnapshot,
     payments: PaymentReceipt[],
-    priorReview?: PriorReviewContext,
+    priorReview: PriorReviewContext | undefined,
+    instructions: string,
   ): Promise<PortfolioAgentResult> {
-    const definitions = selectAgentTools(
-      prepareAgentTools(discoveredTools),
-      this.options.signingEnabled,
-    );
+    const definitions = selectAgentTools(prepareAgentTools(discoveredTools));
     const tools = definitions.map(toOpenAiTool);
     const toolCalls: string[] = ["canix_get_positions"];
     const opportunities: Opportunity[] = [];
@@ -535,7 +567,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     let conversationItems: unknown[] = [];
     const first = await createAgentResponse(this.openai, {
       model: this.options.model,
-      instructions: PORTFOLIO_AGENT_PROMPT_V1,
+      instructions,
       input: initialInput,
       store: false,
       reasoning: { effort: this.options.reasoningEffort },
@@ -567,7 +599,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
           );
         }
         const parsed = await this.parsePlanWithOptionalRepair(response, {
-          instructions: PORTFOLIO_AGENT_PROMPT_V1,
+          instructions,
           initialInput,
           conversationItems,
           inferenceCharges,
@@ -609,11 +641,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
         }
         return {
           snapshot,
-          plan: normalizePortfolioPlan(
-            parsed.plan,
-            opportunities,
-            snapshot,
-          ),
+          plan: normalizePortfolioPlan(parsed.plan, opportunities, snapshot),
           opportunities,
           payments,
           toolCalls,
@@ -714,14 +742,15 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
         }
       }
 
-      conversationItems = [...conversationItems, ...response.output, ...outputs];
+      conversationItems = [
+        ...conversationItems,
+        ...response.output,
+        ...outputs,
+      ];
       const next = await createAgentResponse(this.openai, {
         model: this.options.model,
-        instructions: PORTFOLIO_AGENT_PROMPT_V1,
-        input: [
-          { role: "user", content: initialInput },
-          ...conversationItems,
-        ],
+        instructions,
+        input: [{ role: "user", content: initialInput }, ...conversationItems],
         store: false,
         reasoning: { effort: this.options.reasoningEffort },
         tools,
@@ -782,9 +811,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
         return {
           ok: false,
           planRawText:
-            planRawText.length > 0
-              ? planRawText
-              : "(empty agent output)",
+            planRawText.length > 0 ? planRawText : "(empty agent output)",
           planParseError: safeErrorMessage(secondError),
         };
       }
@@ -909,7 +936,6 @@ function toOpenAiTool(tool: McpToolDefinition) {
 
 export function selectAgentTools(
   tools: McpToolDefinition[],
-  _signingEnabled: boolean,
 ): McpToolDefinition[] {
   return tools.filter(
     (tool) =>
@@ -931,10 +957,7 @@ export function clampOpportunityToolArgs(
       : MAX_OPPORTUNITY_TOOL_LIMIT;
   return {
     ...args,
-    limit: Math.min(
-      Math.max(1, requested),
-      MAX_OPPORTUNITY_TOOL_LIMIT,
-    ),
+    limit: Math.min(Math.max(1, requested), MAX_OPPORTUNITY_TOOL_LIMIT),
   };
 }
 
@@ -1043,9 +1066,8 @@ export function compactOpportunitiesForModel(
       sourceCount: opportunities.length,
       returnedCount: selected.length,
       truncated: opportunities.length > selected.length,
-      pinnedHeldCount: selected.filter((item) =>
-        pinIds.has(item.opportunityId),
-      ).length,
+      pinnedHeldCount: selected.filter((item) => pinIds.has(item.opportunityId))
+        .length,
       hostNote:
         "Compacted by host: pinned held positions first, then executionReady/TVL, capped rows, shapeKeys only (full shapes kept host-side).",
     },
@@ -1221,7 +1243,9 @@ function parseArguments(text: string): Record<string, unknown> {
     console.error(
       `[portfolio-agent] Failed to parse tool arguments JSON: ${message}`,
     );
-    console.error(`[portfolio-agent] Raw tool arguments: ${truncateForLog(text)}`);
+    console.error(
+      `[portfolio-agent] Raw tool arguments: ${truncateForLog(text)}`,
+    );
     throw new Error(
       `Portfolio agent returned invalid tool arguments (JSON parse failed: ${message})`,
       { cause: error },
@@ -1233,7 +1257,9 @@ function parseArguments(text: string): Record<string, unknown> {
     console.error(
       `[portfolio-agent] Tool arguments schema validation failed: ${details}`,
     );
-    console.error(`[portfolio-agent] Raw tool arguments: ${truncateForLog(text)}`);
+    console.error(
+      `[portfolio-agent] Raw tool arguments: ${truncateForLog(text)}`,
+    );
     throw new Error(
       `Portfolio agent returned invalid tool arguments: ${details}`,
     );
@@ -1269,11 +1295,7 @@ type ParsePlanOutcome =
   | { ok: true; plan: PortfolioPlan }
   | { ok: false; planRawText: string; planParseError: string };
 
-const PLAN_WRAPPER_KEYS = new Set([
-  "portfolio_plan",
-  "plan",
-  "portfolioPlan",
-]);
+const PLAN_WRAPPER_KEYS = new Set(["portfolio_plan", "plan", "portfolioPlan"]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

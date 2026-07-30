@@ -858,7 +858,9 @@ describe("AlgorandExecutionService multi-quote", () => {
       quotes: [
         expect.objectContaining({
           shapeKey: "mainnet:folks-finance:v2:setup:optEscrowAsset",
-          input: expect.objectContaining({ escrowAddress }),
+          input: expect.objectContaining({
+            escrowAddress,
+          }) as Record<string, unknown>,
         }),
       ],
     });
@@ -869,7 +871,7 @@ describe("AlgorandExecutionService multi-quote", () => {
           input: expect.objectContaining({
             assetAmount: "1000000",
             escrowAddress,
-          }),
+          }) as Record<string, unknown>,
         }),
       ],
     });
@@ -1015,7 +1017,7 @@ describe("AlgorandExecutionService multi-quote", () => {
             escrowAddress,
             poolAppId: 971_372_237,
             maxSlippageBps: 100,
-          }),
+          }) as Record<string, unknown>,
         },
       ],
     });
