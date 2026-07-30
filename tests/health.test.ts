@@ -56,6 +56,7 @@ describe("buildHealthReport", () => {
       latestAccounting: accounting(),
     });
     expect(report.status).toBe("ok");
+    expect(report.paused).toBe(false);
     expect(report.warnings).toEqual([]);
     expect(report.latestReview).toMatchObject({
       id: "review-1",
@@ -63,6 +64,18 @@ describe("buildHealthReport", () => {
       failed: false,
       ageSeconds: 7_199,
     });
+  });
+
+  it("flags paused trading as degraded", () => {
+    const report = buildHealthReport({
+      ...base,
+      paused: true,
+      latestReview: review(),
+      latestAccounting: accounting(),
+    });
+    expect(report.status).toBe("degraded");
+    expect(report.paused).toBe(true);
+    expect(report.warnings).toContain("Trading paused (plan-only)");
   });
 
   it("flags failed and stale reviews", () => {

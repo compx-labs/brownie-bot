@@ -277,6 +277,57 @@ describe("TreasuryReviewService", () => {
     expect(executeAction).not.toHaveBeenCalled();
   });
 
+  it("forces plan-only dry-run when paused even if signing is enabled", async () => {
+    const action = {
+      id: "open-1",
+      type: "open" as const,
+      protocol: "tinyman",
+      opportunityId: "tinyman:pool:1",
+      positionId: null,
+      amountRaw: "100000000",
+      fromAssetId: 31_566_704,
+      toAssetId: null,
+      targetWeightPct: 10,
+      executionShapeKey: "tinyman:open",
+      executionInput: {},
+      authorizedSpends: [{ assetId: 31_566_704, amountRaw: "100000000" }],
+      rationale: "Test",
+      dependencies: [],
+    };
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot(),
+        plan: portfolioPlan({ actions: [action], projectedNetBenefitUsd: 5 }),
+        opportunities: [opportunity()],
+        payments: [],
+        toolCalls: ["canix_list_opportunities"],
+      }),
+    };
+    const executeAction = vi.fn();
+    const deps = dependencies(agent);
+    const instance = new TreasuryReviewService(
+      deps.agent,
+      deps.policy,
+      { executeAction },
+      deps.notifier,
+      {},
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => true,
+    );
+
+    await expect(instance.run()).resolves.toMatchObject({
+      status: "validated-dry-run",
+      signingEnabled: false,
+      executions: [{ actionId: "open-1", status: "validated-dry-run" }],
+    });
+    expect(executeAction).not.toHaveBeenCalled();
+  });
+
   it("stops before execution when deterministic policy rejects the plan", async () => {
     const action = {
       id: "open-1",

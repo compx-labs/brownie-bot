@@ -315,9 +315,15 @@ default `dist/index.js`) also long-polls for operator slash commands from
 | Command       | Behavior                                                      |
 | ------------- | ------------------------------------------------------------- |
 | `/help`       | List commands                                                 |
-| `/status`     | Health / busy / signing / last-run ages                       |
+| `/status`     | Health / busy / paused / signing / last-run ages              |
 | `/run`        | Force a treasury review (same as `POST /runs`)                |
 | `/accounting` | Force an accounting snapshot (same as `POST /accounting/run`) |
+| `/pause`      | Hold trading; reviews continue as plan-only                   |
+| `/resume`     | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`) |
+
+Pause is a durable runtime kill-switch (wallet-scoped JSON under
+`ACCOUNTING_DATA_DIR`). It does not change the env signing flag; `/resume`
+only restores trading when signing is already enabled.
 
 One-shot entrypoints (`once`, smoke) do not start the command loop. On boot,
 pending updates are drained so a redeploy does not replay stale `/run`s.

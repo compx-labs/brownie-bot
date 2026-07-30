@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AccountingRunInProgressError } from "../src/services/accounting.js";
+import type { OperatorPauseStore } from "../src/services/operator-pause.js";
 import { RunCoordinatorBusyError } from "../src/services/run-coordinator.js";
 import {
   TelegramBotClient,
@@ -16,6 +17,59 @@ import {
 } from "../src/services/telegram-commands.js";
 import { RunInProgressError } from "../src/services/treasury-review.js";
 import type { HealthReport } from "../src/services/health.js";
+
+function mockPauseStore(): OperatorPauseStore {
+  let paused = false;
+  return {
+    isPaused: () => paused,
+    getState: () => ({
+      paused,
+      updatedAt: null,
+      source: null,
+    }),
+    hydrate: vi.fn(),
+    pause: vi.fn(async () => {
+      paused = true;
+      return {
+        paused: true,
+        updatedAt: "2026-07-30T00:00:00.000Z",
+        source: "telegram" as const,
+      };
+    }),
+    resume: vi.fn(async () => {
+      paused = false;
+      return {
+        paused: false,
+        updatedAt: "2026-07-30T00:00:00.000Z",
+        source: "telegram" as const,
+      };
+    }),
+  } as unknown as OperatorPauseStore;
+}
+
+function baseHandlerDeps(
+  overrides: Partial<Parameters<typeof createOperatorCommandHandlers>[0]> = {},
+) {
+  return {
+    reviewService: {
+      run: vi.fn().mockRejectedValue(new RunInProgressError()),
+    } as never,
+    accountingService: {
+      run: vi.fn().mockRejectedValue(new AccountingRunInProgressError()),
+    } as never,
+    pauseStore: mockPauseStore(),
+    signingEnabled: false,
+    getHealthInput: () => ({
+      signingEnabled: false,
+      paused: false,
+      telegramConfigured: true,
+      accountingStorage: "local" as const,
+      folksEscrowStorage: "local" as const,
+      busy: true,
+    }),
+    ...overrides,
+  };
+}
 
 describe("parseTelegramCommand", () => {
   it("parses slash commands and strips bot username", () => {
@@ -75,34 +129,21 @@ describe("createCommandDispatcher", () => {
 
 describe("createOperatorCommandHandlers", () => {
   it("returns help, status, and busy-friendly run errors", async () => {
-    const handlers = createOperatorCommandHandlers({
-      reviewService: {
-        run: vi.fn().mockRejectedValue(new RunInProgressError()),
-      } as never,
-      accountingService: {
-        run: vi.fn().mockRejectedValue(new AccountingRunInProgressError()),
-      } as never,
-      getHealthInput: () => ({
-        signingEnabled: false,
-        telegramConfigured: true,
-        accountingStorage: "local",
-        folksEscrowStorage: "local",
-        busy: true,
-      }),
-    });
+    const handlers = createOperatorCommandHandlers(baseHandlerDeps());
 
     await expect(
       handlers.help!({
         chatId: "1",
         command: { name: "help", args: "", raw: "/help" },
       }),
-    ).resolves.toContain("/run");
+    ).resolves.toContain("/pause");
 
     const status = await handlers.status!({
       chatId: "1",
       command: { name: "status", args: "", raw: "/status" },
     });
     expect(status).toContain("Busy: yes");
+    expect(status).toContain("Paused: no");
     expect(status).toContain("Signing: disabled");
 
     await expect(
@@ -121,21 +162,22 @@ describe("createOperatorCommandHandlers", () => {
   });
 
   it("maps coordinator busy errors the same way", async () => {
-    const handlers = createOperatorCommandHandlers({
-      reviewService: {
-        run: vi.fn().mockRejectedValue(new RunCoordinatorBusyError()),
-      } as never,
-      accountingService: {
-        run: vi.fn(),
-      } as never,
-      getHealthInput: () => ({
+    const handlers = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        reviewService: {
+          run: vi.fn().mockRejectedValue(new RunCoordinatorBusyError()),
+        } as never,
         signingEnabled: true,
-        telegramConfigured: true,
-        accountingStorage: "local",
-        folksEscrowStorage: "local",
-        busy: true,
+        getHealthInput: () => ({
+          signingEnabled: true,
+          paused: false,
+          telegramConfigured: true,
+          accountingStorage: "local",
+          folksEscrowStorage: "local",
+          busy: true,
+        }),
       }),
-    });
+    );
 
     await expect(
       handlers.run!({
@@ -146,27 +188,31 @@ describe("createOperatorCommandHandlers", () => {
   });
 
   it("acks successful runs", async () => {
-    const handlers = createOperatorCommandHandlers({
-      reviewService: {
-        run: vi.fn().mockResolvedValue({
-          id: "rev-1",
-          status: "no-op",
-        }),
-      } as never,
-      accountingService: {
-        run: vi.fn().mockResolvedValue({
-          id: "acc-1",
-          status: "reported",
-        }),
-      } as never,
-      getHealthInput: () => ({
+    const handlers = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        reviewService: {
+          run: vi.fn().mockResolvedValue({
+            id: "rev-1",
+            status: "no-op",
+          }),
+        } as never,
+        accountingService: {
+          run: vi.fn().mockResolvedValue({
+            id: "acc-1",
+            status: "reported",
+          }),
+        } as never,
         signingEnabled: true,
-        telegramConfigured: true,
-        accountingStorage: "local",
-        folksEscrowStorage: "local",
-        busy: false,
+        getHealthInput: () => ({
+          signingEnabled: true,
+          paused: false,
+          telegramConfigured: true,
+          accountingStorage: "local",
+          folksEscrowStorage: "local",
+          busy: false,
+        }),
       }),
-    });
+    );
 
     await expect(
       handlers.run!({
@@ -182,6 +228,56 @@ describe("createOperatorCommandHandlers", () => {
       }),
     ).resolves.toContain("Accounting acc-1 finished: reported");
   });
+
+  it("pauses and resumes trading with idempotent replies", async () => {
+    const pauseStore = mockPauseStore();
+    const handlers = createOperatorCommandHandlers(
+      baseHandlerDeps({ pauseStore, signingEnabled: true }),
+    );
+
+    await expect(
+      handlers.pause!({
+        chatId: "1",
+        command: { name: "pause", args: "", raw: "/pause" },
+      }),
+    ).resolves.toContain("Paused. Reviews continue as plan-only");
+
+    await expect(
+      handlers.pause!({
+        chatId: "1",
+        command: { name: "pause", args: "", raw: "/pause" },
+      }),
+    ).resolves.toContain("Already paused");
+
+    await expect(
+      handlers.resume!({
+        chatId: "1",
+        command: { name: "resume", args: "", raw: "/resume" },
+      }),
+    ).resolves.toContain("Resumed. Trading is enabled");
+
+    await expect(
+      handlers.resume!({
+        chatId: "1",
+        command: { name: "resume", args: "", raw: "/resume" },
+      }),
+    ).resolves.toContain("Already active. Trading is enabled");
+  });
+
+  it("notes when resume cannot enable signing", async () => {
+    const pauseStore = mockPauseStore();
+    await pauseStore.pause("telegram");
+    const handlers = createOperatorCommandHandlers(
+      baseHandlerDeps({ pauseStore, signingEnabled: false }),
+    );
+
+    await expect(
+      handlers.resume!({
+        chatId: "1",
+        command: { name: "resume", args: "", raw: "/resume" },
+      }),
+    ).resolves.toContain("still disabled by ENABLE_TRANSACTION_SIGNING");
+  });
 });
 
 describe("formatStatusReply", () => {
@@ -190,6 +286,7 @@ describe("formatStatusReply", () => {
       status: "degraded",
       mode: "autonomous",
       signingEnabled: true,
+      paused: true,
       walletConfigured: true,
       telegramConfigured: true,
       accountingEnabled: true,
@@ -204,10 +301,11 @@ describe("formatStatusReply", () => {
         failed: false,
       },
       latestAccounting: null,
-      warnings: ["Latest accounting is missing"],
+      warnings: ["Trading paused (plan-only)"],
     };
     const text = formatStatusReply(report);
     expect(text).toContain("Status: degraded");
+    expect(text).toContain("Paused: yes");
     expect(text).toContain("Latest review: confirmed (r1)");
     expect(text).toContain("Latest accounting: none");
     expect(text).toContain("Warnings:");

@@ -125,7 +125,9 @@ Notes:
   it. Admission is the wallet imported into the proxy.
 - Leave Telegram and Spaces unset for the lightest setup.
 - With Telegram set, the long-lived server (`npm run dev` / Docker default) also
-  accepts `/help`, `/status`, `/run`, and `/accounting` from `TELEGRAM_CHAT_ID`.
+  accepts `/help`, `/status`, `/run`, `/accounting`, `/pause`, and `/resume`
+  from `TELEGRAM_CHAT_ID`. `/pause` holds trading (plan-only reviews); `/resume`
+  clears the hold.
   One-shot `run-once` does not poll for commands.
 
 ## 4. Sanity checks

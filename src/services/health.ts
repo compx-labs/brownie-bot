@@ -26,6 +26,7 @@ export interface HealthReport {
   status: HealthStatus;
   mode: "autonomous";
   signingEnabled: boolean;
+  paused: boolean;
   walletConfigured: boolean;
   telegramConfigured: boolean;
   accountingEnabled: boolean;
@@ -44,6 +45,7 @@ export interface HealthReport {
 
 export interface BuildHealthReportInput {
   signingEnabled: boolean;
+  paused?: boolean;
   telegramConfigured: boolean;
   accountingStorage: "spaces" | "local";
   folksEscrowStorage: "spaces" | "local";
@@ -62,7 +64,12 @@ export function buildHealthReport(input: BuildHealthReportInput): HealthReport {
     input.staleReviewHours ?? DEFAULT_STALE_REVIEW_HOURS;
   const staleAccountingHours =
     input.staleAccountingHours ?? DEFAULT_STALE_ACCOUNTING_HOURS;
+  const paused = input.paused ?? false;
   const warnings: string[] = [];
+
+  if (paused) {
+    warnings.push("Trading paused (plan-only)");
+  }
 
   const latestReview = summarizeReview(input.latestReview, now);
   const latestAccounting = summarizeAccounting(input.latestAccounting, now);
@@ -133,6 +140,7 @@ export function buildHealthReport(input: BuildHealthReportInput): HealthReport {
     status,
     mode: "autonomous",
     signingEnabled: input.signingEnabled,
+    paused,
     walletConfigured: true,
     telegramConfigured: input.telegramConfigured,
     accountingEnabled: true,
