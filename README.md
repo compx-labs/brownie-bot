@@ -241,8 +241,10 @@ Each run stores a snapshot, compares totals to the previous summary when one
 exists, and reports DeFi value by protocol, wallet token total (including ALGO
 USD), ALGO balance in token units, and account minimum balance. Missing prices,
 empty DeFi books, and a missing prior baseline are reported as notes — they do
-not fail the run. Optional external cashflows can still be recorded through
-`POST /accounting/cashflows`.
+not fail the run. P&L is cashflow-aware: recorded external deposits/withdrawals
+in the window adjust the NAV delta so funding is not profit. Prefer Telegram
+`/deposit <txid>` / `/withdraw <txid>` (or `POST /accounting/cashflows` for
+manual overrides including profit-share withdrawals).
 
 ## HTTP API
 
@@ -316,14 +318,23 @@ default `dist/index.js`) also long-polls for operator slash commands from
 | ------------- | ------------------------------------------------------------- |
 | `/help`       | List commands                                                 |
 | `/status`     | Health / busy / paused / signing / last-run ages              |
-| `/run`        | Force a treasury review (same as `POST /runs`)                |
-| `/accounting` | Force an accounting snapshot (same as `POST /accounting/run`) |
+| `/run`        | Force a treasury review (acks immediately; digest follows)    |
+| `/accounting` | Force an accounting snapshot (acks immediately; digest follows) |
+| `/deposit <txid>` | Record external funding from a pay/axfer transaction      |
+| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction |
 | `/pause`      | Hold trading; reviews continue as plan-only                   |
 | `/resume`     | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`) |
 
 Pause is a durable runtime kill-switch (wallet-scoped JSON under
 `ACCOUNTING_DATA_DIR`). It does not change the env signing flag; `/resume`
 only restores trading when signing is already enabled.
+
+`/deposit` and `/withdraw` look up the confirmed Algorand transaction via
+`X402_INDEXER_URL` (default AlgoNode indexer), infer ALGO/ASA amount, price it
+to USD, and store an immutable cashflow keyed by txid. Paste the **payment or
+ASA transfer** txid (not an unrelated group sibling). Accounting P&L then
+subtracts deposits and adds withdrawals so funding is not treated as profit or
+loss.
 
 One-shot entrypoints (`once`, smoke) do not start the command loop. On boot,
 pending updates are drained so a redeploy does not replay stale `/run`s.
@@ -337,9 +348,10 @@ Review reports include the portfolio plan, expected net benefit, policy blocks
 or notes, signing mode, action outcomes, transaction IDs, x402 totals, and
 failures.
 Accounting reports include DeFi value by protocol, wallet token total (including
-ALGO USD), ALGO and minimum balance in token units, P&L versus the previous
-snapshot when available, unpriced assets, and the Spaces snapshot key. Telegram
-delivery errors are stored without replacing the underlying result.
+ALGO USD), ALGO and minimum balance in token units, cashflow-aware P&L versus the
+previous snapshot (plus net external funding when non-zero), unpriced assets,
+and the Spaces snapshot key. Telegram delivery errors are stored without
+replacing the underlying result.
 
 ## Verification
 

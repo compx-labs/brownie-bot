@@ -439,6 +439,14 @@ export const accountingSummarySchema = z.object({
   previousTotalValueUsd: moneyStringSchema.nullable(),
   pnlUsd: moneyStringSchema.nullable(),
   pnlAvailable: z.boolean(),
+  /** Raw NAV delta before cashflow adjustment (optional for older summaries). */
+  navDeltaUsd: moneyStringSchema.nullable().optional(),
+  /**
+   * Net external funding in the P&L window: deposits positive, withdrawals
+   * positive as capital out (economic P&L adds them back). Optional for older
+   * summaries.
+   */
+  netExternalCashflowUsd: moneyStringSchema.nullable().optional(),
   defiByProtocol: z.array(protocolValueSchema),
   defiValueUsd: moneyStringSchema.nullable(),
   walletAsaValueUsd: moneyStringSchema.nullable(),

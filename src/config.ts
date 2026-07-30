@@ -83,6 +83,8 @@ const configSchema = z
     BOT_WALLET: z.string().min(1),
     WALLET_MNEMONIC: z.string().min(1),
     X402_ALGOD_URL: z.url().default("https://mainnet-api.algonode.cloud"),
+    /** Indexer for cashflow tx lookup (`/deposit` `/withdraw`). */
+    X402_INDEXER_URL: z.url().default("https://mainnet-idx.algonode.cloud"),
 
     /** OpenAI-compatible base URL. Default is host-local ZeroSignal zs-proxy. */
     OPENAI_BASE_URL: z.preprocess(

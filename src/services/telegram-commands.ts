@@ -1,7 +1,9 @@
 import type { AccountingRun, ReviewRun } from "../domain.js";
+import { CashflowTxError } from "../integrations/algorand/cashflow-tx.js";
 import { sanitizeErrorMessage, sanitizeErrorText } from "../util/errors.js";
 import {
   AccountingRunInProgressError,
+  CashflowAlreadyRecordedError,
   type AccountingService,
 } from "./accounting.js";
 import {
@@ -29,6 +31,8 @@ export interface ParsedTelegramCommand {
 export interface TelegramCommandContext {
   chatId: string;
   command: ParsedTelegramCommand;
+  /** Send an extra message (e.g. completion follow-up after an immediate start ack). */
+  reply: (text: string) => Promise<void>;
 }
 
 export type TelegramCommandHandler = (
@@ -45,8 +49,10 @@ const HELP_TEXT = [
   "Brownie operator commands:",
   "/help — list commands",
   "/status — health and last-run summary",
-  "/run — start a treasury review now",
-  "/accounting — start an accounting snapshot now",
+  "/run — start a treasury review now (acks immediately; digest follows)",
+  "/accounting — start an accounting snapshot now (acks immediately)",
+  "/deposit <txid> — record external funding (paste pay/axfer txid)",
+  "/withdraw <txid> — record external withdrawal (paste pay/axfer txid)",
   "/pause — hold trading (reviews stay plan-only)",
   "/resume — allow trading again (if signing is enabled)",
 ].join("\n");
@@ -118,22 +124,32 @@ export function createOperatorCommandHandlers(
     start: () => Promise.resolve(HELP_TEXT),
     status: () =>
       Promise.resolve(formatStatusReply(buildHealthReport(deps.getHealthInput()))),
-    run: async () => {
-      try {
-        const run = await deps.reviewService.run("fail");
-        return formatReviewAck(run);
-      } catch (error) {
-        throw mapBusyError(error);
+    run: async (ctx) => {
+      if (deps.getHealthInput().busy) {
+        throw new Error("A run is already in progress. Try again shortly.");
       }
+      void runReviewInBackground(deps, ctx);
+      return "Treasury review starting… Digest will follow when it finishes.";
     },
-    accounting: async () => {
-      try {
-        const run = await deps.accountingService.run("fail");
-        return formatAccountingAck(run);
-      } catch (error) {
-        throw mapBusyError(error);
+    accounting: async (ctx) => {
+      if (deps.getHealthInput().busy) {
+        throw new Error("A run is already in progress. Try again shortly.");
       }
+      void runAccountingInBackground(deps, ctx);
+      return "Accounting snapshot starting… Digest will follow when it finishes.";
     },
+    deposit: async (ctx) =>
+      recordCashflowCommand(
+        deps.accountingService,
+        "external_deposit",
+        ctx.command.args,
+      ),
+    withdraw: async (ctx) =>
+      recordCashflowCommand(
+        deps.accountingService,
+        "external_withdrawal",
+        ctx.command.args,
+      ),
     pause: async () => {
       const already = deps.pauseStore.isPaused();
       await deps.pauseStore.pause("telegram");
@@ -155,6 +171,97 @@ export function createOperatorCommandHandlers(
       return `Resumed. Trading is ${trading}.`;
     },
   };
+}
+
+async function runReviewInBackground(
+  deps: OperatorCommandDeps,
+  ctx: TelegramCommandContext,
+): Promise<void> {
+  try {
+    const run = await deps.reviewService.run("fail");
+    await ctx.reply(formatReviewAck(run));
+  } catch (error) {
+    const mapped = mapBusyError(error);
+    await safeBackgroundReply(
+      ctx,
+      `Review failed: ${sanitizeErrorMessage(mapped, { maxLength: 350 })}`,
+    );
+  }
+}
+
+async function runAccountingInBackground(
+  deps: OperatorCommandDeps,
+  ctx: TelegramCommandContext,
+): Promise<void> {
+  try {
+    const run = await deps.accountingService.run("fail");
+    await ctx.reply(formatAccountingAck(run));
+  } catch (error) {
+    const mapped = mapBusyError(error);
+    await safeBackgroundReply(
+      ctx,
+      `Accounting failed: ${sanitizeErrorMessage(mapped, { maxLength: 350 })}`,
+    );
+  }
+}
+
+async function safeBackgroundReply(
+  ctx: TelegramCommandContext,
+  text: string,
+): Promise<void> {
+  try {
+    await ctx.reply(text);
+  } catch (error) {
+    console.error(
+      `[telegram-commands] Background reply failed: ${sanitizeErrorMessage(error, { maxLength: 200 })}`,
+    );
+  }
+}
+
+async function recordCashflowCommand(
+  accountingService: AccountingService,
+  type: "external_deposit" | "external_withdrawal",
+  args: string,
+): Promise<string> {
+  const txid = args.trim().split(/\s+/)[0] ?? "";
+  const verb = type === "external_deposit" ? "deposit" : "withdraw";
+  if (!txid) {
+    return `Usage: /${verb} <txid>\nPaste the payment or ASA transfer transaction id (not an unrelated group sibling).`;
+  }
+  try {
+    const result = await accountingService.recordCashflowFromTx({
+      type,
+      transactionId: txid,
+    });
+    const label = type === "external_deposit" ? "deposit" : "withdrawal";
+    return `Recorded ${label}: $${result.cashflow.amountUsd} (${result.amountLabel}) · tx ${shortTxid(txid)}`;
+  } catch (error) {
+    if (error instanceof CashflowAlreadyRecordedError) {
+      const label = type === "external_deposit" ? "deposit" : "withdrawal";
+      return `Already recorded ${label}: $${error.cashflow.amountUsd}${
+        error.cashflow.notes ? ` (${error.cashflow.notes})` : ""
+      } · tx ${shortTxid(txid)}`;
+    }
+    if (error instanceof CashflowTxError) {
+      throw new Error(error.message);
+    }
+    if (
+      error instanceof Error &&
+      /Conflicting cashflow already exists/i.test(error.message)
+    ) {
+      throw new Error(
+        `A different cashflow is already stored for tx ${shortTxid(txid)}`,
+      );
+    }
+    throw error;
+  }
+}
+
+function shortTxid(txid: string): string {
+  if (txid.length <= 16) {
+    return txid;
+  }
+  return `${txid.slice(0, 8)}…${txid.slice(-6)}`;
 }
 
 export function formatStatusReply(report: HealthReport): string {
@@ -299,8 +406,11 @@ export class TelegramCommandLoop {
     }
 
     try {
-      const reply = await this.dispatch({ chatId, command });
-      await this.client.sendText(chatId, truncateReply(reply));
+      const reply = async (text: string) => {
+        await this.client.sendText(chatId, truncateReply(text));
+      };
+      const messageText = await this.dispatch({ chatId, command, reply });
+      await reply(messageText);
     } catch (error) {
       const text = sanitizeErrorMessage(error, { maxLength: 400 });
       this.logger.error({ err: text, command: command.name }, "telegram command failed");

@@ -21,6 +21,7 @@ describe("loadConfig", () => {
     const config = loadConfig(requiredEnvironment);
     expect(config.CANIX402_MCP_URL).toBe("https://canix402-mcp.compx.io/mcp");
     expect(config.X402_ALGOD_URL).toBe("https://mainnet-api.algonode.cloud");
+    expect(config.X402_INDEXER_URL).toBe("https://mainnet-idx.algonode.cloud");
     expect(config.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
     expect(config.OPEN_AI_API_KEY).toBe("zerosignal");
     expect(config.OPENAI_MODEL).toBe("glm-5.2");

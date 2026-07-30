@@ -1,27 +1,38 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AccountingSnapshot, AccountingSummary } from "../src/domain.js";
+import type {
+  AccountingCashflow,
+  AccountingSnapshot,
+  AccountingSummary,
+} from "../src/domain.js";
 import type { AccountingStore } from "../src/integrations/storage/accounting-store.js";
-import { AccountingService } from "../src/services/accounting.js";
+import {
+  AccountingService,
+  CashflowAlreadyRecordedError,
+  computeCashflowAdjustment,
+} from "../src/services/accounting.js";
 import { RunCoordinator } from "../src/services/run-coordinator.js";
 import { portfolioSnapshot } from "./fixtures.js";
 
-function memoryStore(): AccountingStore & {
+function memoryStore(cashflows: AccountingCashflow[] = []): AccountingStore & {
   snapshots: AccountingSnapshot[];
   summaries: AccountingSummary[];
+  cashflows: AccountingCashflow[];
 } {
   const snapshots: AccountingSnapshot[] = [];
   const summaries: AccountingSummary[] = [];
   return {
     snapshots,
     summaries,
+    cashflows,
     putSnapshot(snapshot) {
       snapshots.push(snapshot);
       return Promise.resolve(
         `wallets/${snapshot.walletAddress}/snapshots/${snapshot.id}.json`,
       );
     },
-    putCashflow() {
+    putCashflow(cashflow) {
+      cashflows.push(cashflow);
       return Promise.resolve("cashflow");
     },
     getLatestSummary() {
@@ -38,17 +49,68 @@ function memoryStore(): AccountingStore & {
       summaries.push(summary);
       return Promise.resolve("monthly");
     },
-    listCashflows() {
-      return Promise.resolve([]);
+    listCashflows(_wallet, fromInclusive, toExclusive) {
+      const from = new Date(fromInclusive).getTime();
+      const to = new Date(toExclusive).getTime();
+      return Promise.resolve(
+        cashflows.filter((cashflow) => {
+          const occurred = new Date(cashflow.occurredAt).getTime();
+          return occurred >= from && occurred < to;
+        }),
+      );
     },
     listSnapshots() {
       return Promise.resolve(snapshots);
     },
-    getCashflowByEventId() {
-      return Promise.resolve(undefined);
+    getCashflowByEventId(_wallet, eventId) {
+      return Promise.resolve(
+        cashflows.find((cashflow) => cashflow.eventId === eventId),
+      );
     },
   };
 }
+
+describe("computeCashflowAdjustment", () => {
+  it("nets deposits against withdrawals", () => {
+    const result = computeCashflowAdjustment([
+      {
+        schemaVersion: 1,
+        eventId: "d1",
+        walletAddress: "WALLET",
+        type: "external_deposit",
+        amountUsd: "100.00",
+        occurredAt: "2026-07-15T09:00:00.000Z",
+        recordedAt: "2026-07-15T09:00:00.000Z",
+        checksum: "a",
+      },
+      {
+        schemaVersion: 1,
+        eventId: "w1",
+        walletAddress: "WALLET",
+        type: "external_withdrawal",
+        amountUsd: "25.00",
+        occurredAt: "2026-07-15T10:00:00.000Z",
+        recordedAt: "2026-07-15T10:00:00.000Z",
+        checksum: "b",
+      },
+      {
+        schemaVersion: 1,
+        eventId: "p1",
+        walletAddress: "WALLET",
+        type: "profit_share_withdrawal",
+        amountUsd: "5.00",
+        occurredAt: "2026-07-15T11:00:00.000Z",
+        recordedAt: "2026-07-15T11:00:00.000Z",
+        checksum: "c",
+      },
+    ]);
+    expect(result.depositCount).toBe(1);
+    expect(result.withdrawalCount).toBe(2);
+    expect(result.depositsUsd.toFixed(2)).toBe("100.00");
+    expect(result.withdrawalsUsd.toFixed(2)).toBe("30.00");
+    expect(result.netExternalCashflowUsd.toFixed(2)).toBe("70.00");
+  });
+});
 
 describe("AccountingService", () => {
   it("completes a first snapshot without a previous baseline", async () => {
@@ -215,5 +277,136 @@ describe("AccountingService", () => {
     expect(run.status).toBe("completed");
     expect(run.summary?.pnlAvailable).toBe(true);
     expect(run.summary?.pnlUsd).toBe("1.00");
+    expect(run.summary?.navDeltaUsd).toBe("1.00");
+    expect(run.summary?.netExternalCashflowUsd).toBe("0.00");
+  });
+
+  it("adjusts P&L for deposits and withdrawals in the window", async () => {
+    const store = memoryStore([
+      {
+        schemaVersion: 1,
+        eventId: "dep-1",
+        walletAddress: "WALLET",
+        type: "external_deposit",
+        amountUsd: "10.00",
+        occurredAt: "2026-07-15T12:00:00.000Z",
+        recordedAt: "2026-07-15T12:00:00.000Z",
+        checksum: "dep",
+      },
+    ]);
+    store.summaries.push({
+      schemaVersion: 2,
+      walletAddress: "WALLET",
+      asOf: "2026-07-15T08:00:00.000Z",
+      latestSnapshotId: "prev",
+      latestSnapshotKey: "prev",
+      latestTotalValueUsd: "2",
+      previousTotalValueUsd: null,
+      pnlUsd: null,
+      pnlAvailable: false,
+      defiByProtocol: [],
+      defiValueUsd: "0",
+      walletAsaValueUsd: "2",
+      unpricedAssetIds: [],
+      algoBalance: "1",
+      minimumBalance: "0.1",
+      notes: [],
+      checksum: "prev",
+    });
+    const service = new AccountingService(
+      {
+        read: vi.fn().mockResolvedValue({
+          snapshot: portfolioSnapshot({
+            liquidBalances: [
+              {
+                assetId: 31_566_704,
+                amountRaw: "13000000",
+                decimals: 6,
+                symbol: "USDC",
+              },
+            ],
+            positions: [],
+          }),
+          payments: [],
+        }),
+      },
+      {
+        getTokenPrices: vi.fn().mockResolvedValue([
+          {
+            assetId: 31_566_704,
+            priceUsd: "1",
+            source: "compx",
+            fetchedAt: new Date().toISOString(),
+            stale: false,
+          },
+        ]),
+      },
+      store,
+      { sendAccounting: vi.fn().mockResolvedValue(undefined) },
+      new RunCoordinator(),
+      {},
+      { walletAddress: "WALLET", maxSourceAgeHours: 24 },
+    );
+
+    // NAV 13 − previous 2 = +11 raw; deposit 10 → economic P&L = 1
+    const run = await service.run("wait");
+    expect(run.summary?.navDeltaUsd).toBe("11.00");
+    expect(run.summary?.netExternalCashflowUsd).toBe("10.00");
+    expect(run.summary?.pnlUsd).toBe("1.00");
+    expect(
+      run.summary?.notes.some((note) => note.includes("P&L adjusted")),
+    ).toBe(true);
+  });
+
+  it("records cashflows from resolved transactions and is idempotent", async () => {
+    const store = memoryStore();
+    const resolver = {
+      resolve: vi.fn().mockResolvedValue({
+        transactionId: "TXDEPOSIT",
+        assetId: 31_566_704,
+        amountRaw: "1000000",
+        decimals: 6,
+        symbol: "USDC",
+        occurredAt: "2026-07-15T12:00:00.000Z",
+        counterparty: "COUNTERPARTY",
+        sender: "COUNTERPARTY",
+        receiver: "WALLET",
+      }),
+    };
+    const service = new AccountingService(
+      { read: vi.fn() },
+      {
+        getTokenPrices: vi.fn().mockResolvedValue([
+          {
+            assetId: 31_566_704,
+            priceUsd: "1",
+            source: "compx",
+            fetchedAt: new Date().toISOString(),
+            stale: false,
+          },
+        ]),
+      },
+      store,
+      { sendAccounting: vi.fn() },
+      new RunCoordinator(),
+      {},
+      { walletAddress: "WALLET", maxSourceAgeHours: 24 },
+      resolver as never,
+    );
+
+    const first = await service.recordCashflowFromTx({
+      type: "external_deposit",
+      transactionId: "TXDEPOSIT",
+    });
+    expect(first.cashflow.amountUsd).toBe("1.00");
+    expect(first.amountLabel).toBe("1 USDC");
+    expect(store.cashflows).toHaveLength(1);
+
+    await expect(
+      service.recordCashflowFromTx({
+        type: "external_deposit",
+        transactionId: "TXDEPOSIT",
+      }),
+    ).rejects.toBeInstanceOf(CashflowAlreadyRecordedError);
   });
 });

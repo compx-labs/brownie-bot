@@ -11,6 +11,12 @@ import type {
   ProtocolValue,
 } from "../domain.js";
 import type { PortfolioReader } from "../integrations/algorand/portfolio.js";
+import {
+  CashflowTxError,
+  type CashflowTxDirection,
+  type CashflowTxResolver,
+  type ResolvedCashflowTransfer,
+} from "../integrations/algorand/cashflow-tx.js";
 import type { Canix402Client } from "../integrations/canix402/client.js";
 import {
   canonicalChecksum,
@@ -20,6 +26,7 @@ import type { CoordinatorMode, RunCoordinator } from "./run-coordinator.js";
 import { RunCoordinatorBusyError } from "./run-coordinator.js";
 import type { AccountingNotifier } from "./telegram.js";
 import {
+  formatBaseUnits,
   formatMoney,
   formatUsd,
   money,
@@ -43,6 +50,16 @@ export class AccountingRunInProgressError extends Error {
   }
 }
 
+export class CashflowAlreadyRecordedError extends Error {
+  readonly cashflow: AccountingCashflow;
+
+  constructor(cashflow: AccountingCashflow) {
+    super(`Cashflow ${cashflow.eventId} is already recorded`);
+    this.name = "CashflowAlreadyRecordedError";
+    this.cashflow = cashflow;
+  }
+}
+
 export interface AccountingState {
   latest?: AccountingRun;
 }
@@ -50,6 +67,13 @@ export interface AccountingState {
 export interface AccountingServiceOptions {
   walletAddress: string;
   maxSourceAgeHours: number;
+}
+
+export interface RecordCashflowFromTxResult {
+  cashflow: AccountingCashflow;
+  transfer: ResolvedCashflowTransfer;
+  amountLabel: string;
+  alreadyRecorded: boolean;
 }
 
 export class AccountingService {
@@ -63,6 +87,7 @@ export class AccountingService {
     private readonly coordinator: RunCoordinator,
     private readonly state: AccountingState,
     private readonly options: AccountingServiceOptions,
+    private readonly cashflowTxResolver?: CashflowTxResolver,
   ) {}
 
   async run(mode: CoordinatorMode = "wait"): Promise<AccountingRun> {
@@ -140,6 +165,69 @@ export class AccountingService {
     return cashflow;
   }
 
+  /**
+   * Resolve an on-chain pay/axfer by txid, price to USD, and record as an
+   * external deposit or withdrawal. `eventId` is the transaction id.
+   */
+  async recordCashflowFromTx(input: {
+    type: "external_deposit" | "external_withdrawal";
+    transactionId: string;
+  }): Promise<RecordCashflowFromTxResult> {
+    if (!this.cashflowTxResolver) {
+      throw new CashflowTxError(
+        "Cashflow transaction lookup is not configured",
+      );
+    }
+    const txid = input.transactionId.trim();
+    if (!txid) {
+      throw new CashflowTxError("Transaction id is required");
+    }
+
+    const existing = await this.store.getCashflowByEventId(
+      this.options.walletAddress,
+      txid,
+    );
+    if (existing) {
+      throw new CashflowAlreadyRecordedError(existing);
+    }
+
+    const direction: CashflowTxDirection =
+      input.type === "external_deposit" ? "deposit" : "withdraw";
+    const transfer = await this.cashflowTxResolver.resolve(txid, direction);
+    const prices = await this.canix.getTokenPrices([transfer.assetId]);
+    const price = prices.find((entry) => entry.assetId === transfer.assetId);
+    if (!price || price.priceUsd === null) {
+      throw new CashflowTxError(
+        `No USD price available for ${transfer.symbol} (asset ${transfer.assetId})`,
+      );
+    }
+
+    const tokenAmount = money(transfer.amountRaw).div(
+      money(10).pow(transfer.decimals),
+    );
+    const amountUsd = formatUsd(tokenAmount.times(money(price.priceUsd)));
+    const amountLabel = `${formatBaseUnits(transfer.amountRaw, transfer.decimals)} ${transfer.symbol}`;
+    const partyLabel =
+      input.type === "external_deposit" ? "from" : "to";
+    const notes = `${amountLabel} (asset ${transfer.assetId}) ${partyLabel} ${transfer.counterparty}`;
+
+    const cashflow = await this.recordCashflow({
+      eventId: txid,
+      type: input.type,
+      amountUsd,
+      occurredAt: transfer.occurredAt,
+      transactionId: txid,
+      notes,
+    });
+
+    return {
+      cashflow,
+      transfer,
+      amountLabel,
+      alreadyRecorded: false,
+    };
+  }
+
   private async execute(id: string, startedAt: string): Promise<AccountingRun> {
     const previous = await this.store.getLatestSummary(
       this.options.walletAddress,
@@ -188,6 +276,28 @@ export class AccountingService {
     }
 
     const asOf = new Date().toISOString();
+    const previousTotal = moneyOrNull(previous?.latestTotalValueUsd);
+    const navDeltaUsd = subtractMoney(totalValueUsd, previousTotal);
+
+    let cashflows: AccountingCashflow[] = [];
+    let netExternalCashflowUsd: Money | null = null;
+    let pnlUsd = navDeltaUsd;
+    if (previous && navDeltaUsd !== null && totalValueUsd !== null) {
+      cashflows = await this.store.listCashflows(
+        this.options.walletAddress,
+        cashflowWindowFrom(previous.asOf),
+        cashflowWindowTo(asOf),
+      );
+      const adjustment = computeCashflowAdjustment(cashflows);
+      netExternalCashflowUsd = adjustment.netExternalCashflowUsd;
+      pnlUsd = navDeltaUsd.minus(adjustment.depositsUsd).plus(adjustment.withdrawalsUsd);
+      if (cashflows.length > 0) {
+        notes.push(
+          `P&L adjusted for ${adjustment.depositCount} deposit(s) (−$${formatUsd(adjustment.depositsUsd)}) and ${adjustment.withdrawalCount} withdrawal(s) (+$${formatUsd(adjustment.withdrawalsUsd)})`,
+        );
+      }
+    }
+
     const snapshotBody = {
       schemaVersion: 2 as const,
       id,
@@ -211,8 +321,6 @@ export class AccountingService {
       checksum: canonicalChecksum(snapshotBody),
     };
 
-    const previousTotal = moneyOrNull(previous?.latestTotalValueUsd);
-    const pnlUsd = subtractMoney(totalValueUsd, previousTotal);
     const summaryBody = {
       schemaVersion: 2 as const,
       walletAddress: this.options.walletAddress,
@@ -223,6 +331,8 @@ export class AccountingService {
       previousTotalValueUsd: moneyToString(previousTotal),
       pnlUsd: moneyToString(pnlUsd),
       pnlAvailable: previousTotal !== null && totalValueUsd !== null,
+      navDeltaUsd: moneyToString(navDeltaUsd),
+      netExternalCashflowUsd: moneyToString(netExternalCashflowUsd),
       defiByProtocol,
       defiValueUsd: moneyToString(defiValueUsd),
       walletAsaValueUsd: moneyToString(walletAsaValueUsd),
@@ -261,6 +371,49 @@ export class AccountingService {
       snapshotKey,
     };
   }
+}
+
+/**
+ * Store listCashflows uses [fromInclusive, toExclusive).
+ * Map plan window (previous.asOf, asOf] onto that API.
+ */
+export function cashflowWindowFrom(previousAsOf: string): string {
+  return new Date(new Date(previousAsOf).getTime() + 1).toISOString();
+}
+
+export function cashflowWindowTo(asOf: string): string {
+  return new Date(new Date(asOf).getTime() + 1).toISOString();
+}
+
+export function computeCashflowAdjustment(cashflows: AccountingCashflow[]): {
+  depositsUsd: Money;
+  withdrawalsUsd: Money;
+  netExternalCashflowUsd: Money;
+  depositCount: number;
+  withdrawalCount: number;
+} {
+  let depositsUsd = money(0);
+  let withdrawalsUsd = money(0);
+  let depositCount = 0;
+  let withdrawalCount = 0;
+  for (const cashflow of cashflows) {
+    const amount = money(cashflow.amountUsd).abs();
+    if (cashflow.type === "external_deposit") {
+      depositsUsd = depositsUsd.plus(amount);
+      depositCount += 1;
+    } else {
+      withdrawalsUsd = withdrawalsUsd.plus(amount);
+      withdrawalCount += 1;
+    }
+  }
+  return {
+    depositsUsd,
+    withdrawalsUsd,
+    // Positive = net capital in (deposits − withdrawals) for report clarity.
+    netExternalCashflowUsd: depositsUsd.minus(withdrawalsUsd),
+    depositCount,
+    withdrawalCount,
+  };
 }
 
 /** Liquid wallet balances to USD-price, including ALGO. */
