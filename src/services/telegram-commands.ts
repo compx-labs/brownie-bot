@@ -9,6 +9,7 @@ import {
   type BuildHealthReportInput,
   type HealthReport,
 } from "./health.js";
+import type { OperatorPauseStore } from "./operator-pause.js";
 import { RunCoordinatorBusyError } from "./run-coordinator.js";
 import {
   TelegramBotClient,
@@ -46,6 +47,8 @@ const HELP_TEXT = [
   "/status — health and last-run summary",
   "/run — start a treasury review now",
   "/accounting — start an accounting snapshot now",
+  "/pause — hold trading (reviews stay plan-only)",
+  "/resume — allow trading again (if signing is enabled)",
 ].join("\n");
 
 /**
@@ -102,6 +105,9 @@ export interface OperatorCommandDeps {
   reviewService: TreasuryReviewService;
   accountingService: AccountingService;
   getHealthInput: () => BuildHealthReportInput;
+  pauseStore: OperatorPauseStore;
+  /** Env signing flag; /resume reports whether trading is actually effective. */
+  signingEnabled: boolean;
 }
 
 export function createOperatorCommandHandlers(
@@ -128,6 +134,26 @@ export function createOperatorCommandHandlers(
         throw mapBusyError(error);
       }
     },
+    pause: async () => {
+      const already = deps.pauseStore.isPaused();
+      await deps.pauseStore.pause("telegram");
+      if (already) {
+        return "Already paused. Reviews continue as plan-only until /resume.";
+      }
+      return "Paused. Reviews continue as plan-only until /resume.";
+    },
+    resume: async () => {
+      const wasPaused = deps.pauseStore.isPaused();
+      await deps.pauseStore.resume("telegram");
+      const trading =
+        deps.signingEnabled && !deps.pauseStore.isPaused()
+          ? "enabled"
+          : "still disabled by ENABLE_TRANSACTION_SIGNING";
+      if (!wasPaused) {
+        return `Already active. Trading is ${trading}.`;
+      }
+      return `Resumed. Trading is ${trading}.`;
+    },
   };
 }
 
@@ -135,6 +161,7 @@ export function formatStatusReply(report: HealthReport): string {
   const lines = [
     `Status: ${report.status}`,
     `Busy: ${report.busy ? "yes" : "no"}`,
+    `Paused: ${report.paused ? "yes" : "no"}`,
     `Signing: ${report.signingEnabled ? "enabled" : "disabled"}`,
     `Telegram: configured`,
   ];

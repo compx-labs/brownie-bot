@@ -65,6 +65,7 @@ import {
   probeHttpDependency,
   zsProxyHealthzUrl,
 } from "./services/health.js";
+import { OperatorPauseStore } from "./services/operator-pause.js";
 
 export interface AppContext {
   app: FastifyInstance;
@@ -218,6 +219,12 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
   if (persistedLatest) {
     state.latest = persistedLatest;
   }
+  const pauseStore = new OperatorPauseStore({
+    rootDir: config.ACCOUNTING_DATA_DIR,
+    walletAddress: config.BOT_WALLET,
+    prefix: config.DO_SPACES_PREFIX,
+  });
+  await pauseStore.hydrate();
   const reviewService = new TreasuryReviewService(
     agent,
     policy,
@@ -245,6 +252,7 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
       }
       return loadOperatorPreferences({});
     },
+    () => pauseStore.isPaused(),
   );
   const store: AccountingStore = isSpacesConfigured(config)
     ? (() => {
@@ -291,6 +299,7 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
 
     return buildHealthReport({
       signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+      paused: pauseStore.isPaused(),
       telegramConfigured: isTelegramConfigured(config),
       accountingStorage: storage,
       folksEscrowStorage: storage,
@@ -414,8 +423,11 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     const handlers = createOperatorCommandHandlers({
       reviewService,
       accountingService,
+      pauseStore,
+      signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
       getHealthInput: () => ({
         signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+        paused: pauseStore.isPaused(),
         telegramConfigured: true,
         accountingStorage: storage,
         folksEscrowStorage: storage,

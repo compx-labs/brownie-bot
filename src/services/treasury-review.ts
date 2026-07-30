@@ -78,6 +78,8 @@ export class TreasuryReviewService {
     private readonly loadOperatorPreferences?: () => Promise<
       string | undefined
     >,
+    /** Runtime kill-switch: when true, force plan-only (no signing). */
+    private readonly isPaused?: () => boolean,
   ) {}
 
   async run(mode: CoordinatorMode = "wait"): Promise<ReviewRun> {
@@ -108,6 +110,7 @@ export class TreasuryReviewService {
   private async execute(): Promise<ReviewRun> {
     const id = randomUUID();
     const startedAt = new Date().toISOString();
+    const tradingEnabled = this.signingEnabled && !this.isPaused?.();
     let result: ReviewRun;
 
     try {
@@ -130,7 +133,7 @@ export class TreasuryReviewService {
           completedAt: new Date().toISOString(),
           status: "reported",
           mode: "autonomous",
-          signingEnabled: this.signingEnabled,
+          signingEnabled: tradingEnabled,
           walletAddress: this.walletAddress,
           snapshot: agentResult.snapshot,
           planRawText: agentResult.planRawText,
@@ -149,7 +152,7 @@ export class TreasuryReviewService {
           (action) => action.type !== "hold",
         );
         const executions: ExecutionOutcome[] = [];
-        if (policy.approved && !this.signingEnabled) {
+        if (policy.approved && !tradingEnabled) {
           for (const action of agentResult.plan.actions) {
             executions.push(
               action.type === "hold"
@@ -202,12 +205,12 @@ export class TreasuryReviewService {
           actionable.length,
           policy.approved,
           executions,
-          this.signingEnabled,
+          tradingEnabled,
         );
         let reconciledSnapshot: PortfolioSnapshot | undefined;
         let reconciliationError: string | undefined;
         if (
-          this.signingEnabled &&
+          tradingEnabled &&
           executions.some((outcome) => outcome.status === "confirmed") &&
           this.portfolioReader
         ) {
@@ -225,7 +228,7 @@ export class TreasuryReviewService {
           completedAt: new Date().toISOString(),
           status,
           mode: "autonomous",
-          signingEnabled: this.signingEnabled,
+          signingEnabled: tradingEnabled,
           walletAddress: this.walletAddress,
           snapshot: agentResult.snapshot,
           reconciledSnapshot,
@@ -250,7 +253,7 @@ export class TreasuryReviewService {
         completedAt: new Date().toISOString(),
         status: "failed",
         mode: "autonomous",
-        signingEnabled: this.signingEnabled,
+        signingEnabled: tradingEnabled,
         walletAddress: this.walletAddress,
         opportunities: [],
         error: message,
