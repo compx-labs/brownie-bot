@@ -96,6 +96,8 @@ ENABLE_TRANSACTION_SIGNING=false
 # OPENAI_BASE_URL=http://127.0.0.1:8080/v1
 # OPEN_AI_API_KEY=zerosignal
 # OPENAI_MODEL=glm-5.2
+# Soft preferred holds (assetId:targetPortfolioPct): e.g. GOLD$ ~15%
+# PREFERRED_HOLD_ASSETS=246516580:15
 ```
 
 Notes:
@@ -144,7 +146,11 @@ docker run --rm --env-file .env brownie-bot smoke
 ## 5. First dry-run review
 
 ```bash
+# Host Node (zs-proxy must already be running):
 npm run run-once
+
+# Or full prod-like path (builds image, starts in-container zs-proxy, one review):
+npm run run-once-with-docker
 ```
 
 You should get a plan report on Telegram or in the terminal. With signing
@@ -204,7 +210,8 @@ RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify
 
 Cases covered: Folks USDC deposit, Folks ALGO stake, Tinyman LP, CompX lending,
 Dorkfi USDC lending, PAct LP, Haystack ALGO↔USDC swap, Réti pooling, Myth
-dualSTAKE (ORA). (Tinyman LP+farm deferred.)
+dualSTAKE (ORA). Tinyman farm claimRewards is live on reward positions; farm
+stake/unstake protocol-verify remains deferred.
 
 ---
 

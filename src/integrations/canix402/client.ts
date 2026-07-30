@@ -128,6 +128,24 @@ export class Canix402Client {
     walletAddress: string,
   ): Promise<ManagedToolResult> {
     const args = injectManagedWallet(name, rawArgs, walletAddress);
+    try {
+      return await this.callManagedToolOnce(name, args, walletAddress);
+    } catch (error) {
+      if (!isRetryableGatewayTimeout(error)) {
+        throw error;
+      }
+      console.error(
+        `[canix402] Retrying ${name} once after gateway timeout (504)`,
+      );
+      return await this.callManagedToolOnce(name, args, walletAddress);
+    }
+  }
+
+  private async callManagedToolOnce(
+    name: string,
+    args: Record<string, unknown>,
+    walletAddress: string,
+  ): Promise<ManagedToolResult> {
     const preflight = parseToolPayload(
       await this.caller.callTool(name, args),
       name,
@@ -431,6 +449,18 @@ function isToolError(payload: unknown): payload is {
     payload &&
     typeof payload === "object" &&
     typeof (payload as Record<string, unknown>).error === "string",
+  );
+}
+
+/** Transient CDN/edge timeouts from Canix gateway (e.g. /swaps/quote 504). */
+export function isRetryableGatewayTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message;
+  return (
+    message.includes("GATEWAY_CLIENT_ERROR") &&
+    (/\bstatus=504\b/.test(message) || /\bgot 504\b/.test(message))
   );
 }
 

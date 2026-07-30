@@ -110,6 +110,13 @@ several dry runs, and then set:
 ENABLE_TRANSACTION_SIGNING=true
 ```
 
+Optional soft steer for long-term liquid holds (not hard policy):
+
+```dotenv
+# assetId:targetPortfolioPct pairs — e.g. hold ~15% GOLD$
+PREFERRED_HOLD_ASSETS=246516580:15
+```
+
 Mainnet, USDC ASA `31566704`, the Canix402 API origin, and endpoint payment
 ceilings are code-level invariants rather than environment configuration.
 Current ceilings are 5,000 base units for positions and swap transaction
@@ -364,7 +371,8 @@ Canix x402 fees.
 
 Cases: Folks USDC deposit, Folks ALGO stake, Tinyman LP, CompX lending, Dorkfi
 USDC lending, PAct LP, Haystack ALGO↔USDC swap, **Réti pooling**, **Myth
-dualSTAKE (ORA)**. (Tinyman LP+farm deferred.)
+dualSTAKE (ORA)**. Tinyman farm **claimRewards** is live on reward positions;
+farm stake/unstake protocol-verify remains deferred.
 
 ## Container (DigitalOcean)
 
@@ -393,13 +401,14 @@ needed, rebuild if the entrypoint changed, then:
 # Safe connectivity smoke (LLM + one Canix research call; never signs)
 docker run --rm --env-file .env brownie-bot smoke
 
-# Full one-shot treasury review — set ENABLE_TRANSACTION_SIGNING=false first
-docker run --rm --env-file .env brownie-bot once
+# Full one-shot treasury review (build image + zs-proxy + run-once; uses .env as-is)
+npm run run-once-with-docker
 ```
 
 `smoke` starts zs-proxy, runs `dist/smoke-llm.js` (ZeroSignal +
-`canix_list_opportunities` only), prints JSON, and exits. `once` runs a full
-review plan; with signing enabled it can move treasury assets.
+`canix_list_opportunities` only), prints JSON, and exits. `run-once-with-docker`
+builds the image and runs `once` (full review); with signing enabled it can move
+treasury assets.
 
 For local non-Docker runs, install zs-proxy on the host instead — see
 [QUICKSTART.md](./QUICKSTART.md).

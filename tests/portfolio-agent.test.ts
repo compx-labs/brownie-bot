@@ -13,6 +13,7 @@ import {
   extractOutputText,
   extractStructuredPlanText,
   normalizeAgentResponse,
+  normalizeAgentToolArgs,
   selectAgentTools,
   type ResponsesClient,
 } from "../src/services/portfolio-agent.js";
@@ -120,6 +121,7 @@ function setup(
         minTvlUsd: 100_000,
         maxSourceAgeHours: 24,
         minProjectedNetImprovementUsd: 1,
+        preferredHoldAssets: [],
       },
       signingEnabled: options?.signingEnabled ?? false,
     }),
@@ -436,6 +438,22 @@ describe("OpenAiPortfolioAgent", () => {
       .toEqual({ limit: MAX_OPPORTUNITY_TOOL_LIMIT });
   });
 
+  it("coerces canix_get_quote asset ids from strings to integers", () => {
+    expect(
+      normalizeAgentToolArgs("canix_get_quote", {
+        fromAssetId: "246516580",
+        toAssetId: "31566704",
+        amount: "200000",
+        type: "fixed-input",
+      }),
+    ).toEqual({
+      fromAssetId: 246_516_580,
+      toAssetId: 31_566_704,
+      amount: "200000",
+      type: "fixed-input",
+    });
+  });
+
   it("scales liquid balance base units for the model input", async () => {
     const { agent, create, reader } = setup([
       {
@@ -656,9 +674,76 @@ describe("OpenAiPortfolioAgent", () => {
       (item) => item.type === "function_call_output",
     );
     expect(skippedOutput?.call_id).toBe("call-1");
-    expect(skippedOutput?.output).toContain("TOOL_UNAVAILABLE");
+    expect(skippedOutput?.output).toContain("TOOL_ERROR");
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("canix_get_protocol_opportunities"),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("returns canix_get_quote gateway timeouts to the model and continues", async () => {
+    const finalPlan = portfolioPlan();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { agent, create, callManagedTool } = setup([
+      {
+        id: "response-1",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-list",
+            name: "canix_list_opportunities",
+            arguments: JSON.stringify({ limit: MAX_OPPORTUNITY_TOOL_LIMIT }),
+          },
+        ],
+      },
+      {
+        id: "response-2",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-quote",
+            name: "canix_get_quote",
+            arguments: JSON.stringify({
+              fromAssetId: 246_516_580,
+              toAssetId: 760_037_151,
+              amount: "1000000",
+            }),
+          },
+        ],
+      },
+      {
+        id: "response-3",
+        output: [],
+        output_text: JSON.stringify(finalPlan),
+      },
+    ]);
+    callManagedTool
+      .mockResolvedValueOnce({ data: { data: [opportunity()] } })
+      .mockRejectedValueOnce(
+        new Error(
+          "Canix402 GATEWAY_CLIENT_ERROR: /swaps/quote: expected 200, got 504 (status=504, body=error code: 504)",
+        ),
+      );
+
+    const result = await agent.run();
+
+    expect(result.plan).toEqual(finalPlan);
+    expect(callManagedTool).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(3);
+    const followUpInput = (
+      create.mock.calls[2]?.[0] as {
+        input: Array<{ type?: string; call_id?: string; output?: string }>;
+      }
+    ).input;
+    const quoteError = followUpInput.find(
+      (item) =>
+        item.type === "function_call_output" && item.call_id === "call-quote",
+    );
+    expect(quoteError?.output).toContain("GATEWAY_TIMEOUT");
+    expect(quoteError?.output).toContain("246516580");
+    expect(quoteError?.output).toMatch(/Retry with a different size/i);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Tool args:"),
     );
     errorSpy.mockRestore();
   });
@@ -767,6 +852,64 @@ describe("OpenAiPortfolioAgent", () => {
     expect(parsed.data.projectedNetBenefitUsd).toBe(12.5);
     expect(typeof parsed.data.summary).toBe("string");
     expect(parsed.data.summary).toContain("Deploy idle USDC");
+  });
+
+  it("coerces numeric strings for confidence and other plan scalars", () => {
+    const drifted = {
+      currentAllocations: [
+        {
+          key: "liquid-usdc",
+          protocol: null,
+          opportunityId: null,
+          assetIds: [31_566_704],
+          weightPct: "7.2",
+          expectedApyPct: "0",
+        },
+      ],
+      targetAllocations: [],
+      actions: [],
+      holdDecisions: ["Keep reserve"],
+      currentAnnualizedReturnPct: "1.93",
+      targetAnnualizedReturnPct: "4.18",
+      estimatedOneTimeCostsUsd: "0.05",
+      projectedNetBenefitUsd: "1.78",
+      holdingHorizonDays: "90",
+      evidence: [],
+      assumptions: [],
+      risks: [],
+      confidence: "0.7",
+      summary: "Deploy idle capital.",
+    };
+
+    const coerced = coercePortfolioPlanValue(drifted);
+    const parsed = portfolioPlanSchema.safeParse(coerced);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      return;
+    }
+    expect(parsed.data.confidence).toBe(0.7);
+    expect(parsed.data.projectedNetBenefitUsd).toBe(1.78);
+    expect(parsed.data.holdingHorizonDays).toBe(90);
+    expect(parsed.data.currentAllocations[0]?.weightPct).toBe(7.2);
+    expect(parsed.data.currentAnnualizedReturnPct).toBe(1.93);
+  });
+
+  it("coerces percent-style confidence strings into 0-1", () => {
+    const coerced = coercePortfolioPlanValue({
+      currentAllocations: [],
+      targetAllocations: [],
+      actions: [],
+      holdDecisions: [],
+      projectedNetBenefitUsd: 0,
+      summary: "Hold.",
+      confidence: "70%",
+    });
+    const parsed = portfolioPlanSchema.safeParse(coerced);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      return;
+    }
+    expect(parsed.data.confidence).toBe(0.7);
   });
 
   it("coerces allocation label/usdValue drift into key-based allocations", () => {

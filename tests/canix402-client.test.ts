@@ -343,6 +343,93 @@ describe("Canix402Client", () => {
     expect(prices).toHaveLength(101);
   });
 
+  it("retries once on GATEWAY_CLIENT_ERROR 504 then succeeds", async () => {
+    const address =
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+    const callTool = vi
+      .fn<ToolCaller["callTool"]>()
+      .mockResolvedValueOnce(
+        toolResult({
+          error: "GATEWAY_CLIENT_ERROR",
+          message: "/swaps/quote: expected 200, got 504",
+          status: 504,
+          bodySnippet: "error code: 504",
+        }),
+      )
+      .mockResolvedValueOnce(
+        toolResult({
+          quote: { amountOut: "1000000", fromAssetId: 0, toAssetId: 31566704 },
+        }),
+      );
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+    );
+
+    const result = await client.callManagedTool(
+      "canix_get_quote",
+      { fromAssetId: 0, toAssetId: 31566704, amount: "1000000" },
+      address,
+    );
+
+    expect(callTool).toHaveBeenCalledTimes(2);
+    expect(result.data).toEqual({
+      quote: { amountOut: "1000000", fromAssetId: 0, toAssetId: 31566704 },
+    });
+  });
+
+  it("does not retry GATEWAY_CLIENT_ERROR that is not a 504", async () => {
+    const address =
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+    const callTool = vi.fn<ToolCaller["callTool"]>().mockResolvedValue(
+      toolResult({
+        error: "GATEWAY_CLIENT_ERROR",
+        message: "/swaps/quote: expected 200, got 500",
+        status: 500,
+      }),
+    );
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+    );
+
+    await expect(
+      client.callManagedTool(
+        "canix_get_quote",
+        { fromAssetId: 0, toAssetId: 31566704, amount: "1000000" },
+        address,
+      ),
+    ).rejects.toThrow(/GATEWAY_CLIENT_ERROR.*got 500/);
+    expect(callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries GATEWAY_CLIENT_ERROR 504 only once", async () => {
+    const address =
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+    const timeoutPayload = {
+      error: "GATEWAY_CLIENT_ERROR",
+      message: "/swaps/quote: expected 200, got 504",
+      status: 504,
+      bodySnippet: "error code: 504",
+    };
+    const callTool = vi
+      .fn<ToolCaller["callTool"]>()
+      .mockResolvedValue(toolResult(timeoutPayload));
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+    );
+
+    await expect(
+      client.callManagedTool(
+        "canix_get_quote",
+        { fromAssetId: 0, toAssetId: 31566704, amount: "1000000" },
+        address,
+      ),
+    ).rejects.toThrow(/GATEWAY_CLIENT_ERROR.*got 504/);
+    expect(callTool).toHaveBeenCalledTimes(2);
+  });
+
   it("removes wallet and payment fields from model-visible tool schemas", async () => {
     const caller: ToolCaller = {
       callTool: vi.fn(),

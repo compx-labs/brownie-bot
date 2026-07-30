@@ -132,6 +132,7 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     minTvlUsd: config.MIN_TVL_USD,
     maxSourceAgeHours: config.MAX_SOURCE_AGE_HOURS,
     minProjectedNetImprovementUsd: config.MIN_PROJECTED_NET_IMPROVEMENT_USD,
+    preferredHoldAssets: config.preferredHoldAssets,
   };
   const agent = createPortfolioAgent(
     config.OPEN_AI_API_KEY,
@@ -149,7 +150,12 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     config.OPENAI_BASE_URL,
   );
   const policy = new PortfolioPolicy({
-    ...hostGuidance,
+    maxPositionPct: hostGuidance.maxPositionPct,
+    maxProtocolPct: hostGuidance.maxProtocolPct,
+    minLiquidReservePct: hostGuidance.minLiquidReservePct,
+    minTvlUsd: hostGuidance.minTvlUsd,
+    maxSourceAgeHours: hostGuidance.maxSourceAgeHours,
+    minProjectedNetImprovementUsd: hostGuidance.minProjectedNetImprovementUsd,
     signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
   });
   const folksEscrowStore: FolksEscrowStore = isSpacesConfigured(config)

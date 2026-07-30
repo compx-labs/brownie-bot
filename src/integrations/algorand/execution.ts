@@ -174,14 +174,80 @@ export class AlgorandExecutionService {
           (candidate) => candidate.opportunityId === action.opportunityId,
         )
       : undefined;
+    const clamped = await this.clampCapitalEnterToSpendable(action);
     if (
       opportunity &&
-      ["open", "increase"].includes(action.type) &&
+      ["open", "increase"].includes(clamped.type) &&
       needsSequentialEscrowExecution(opportunity.executionShapes)
     ) {
-      return this.executeSequentialEscrowShapes(action, opportunity);
+      return this.executeSequentialEscrowShapes(clamped, opportunity);
     }
-    return this.executeBatchedShapes(action, opportunities);
+    return this.executeBatchedShapes(clamped, opportunities);
+  }
+
+  /**
+   * After swaps (or any fill shortfall), planned stake/deposit amounts can exceed
+   * spendable balance. Clamp open/increase sizes to on-chain spendable before quoting.
+   */
+  private async clampCapitalEnterToSpendable(
+    action: PortfolioAction,
+  ): Promise<PortfolioAction> {
+    if (!["open", "increase"].includes(action.type)) {
+      return action;
+    }
+    const assetId = resolveCapitalEnterSpendAssetId(action);
+    if (assetId === null) {
+      return action;
+    }
+    const spendableRaw = await this.readSpendableAssetRaw(assetId);
+    const clamped = clampActionAmountToSpendable(action, {
+      assetId,
+      spendableRaw,
+    });
+    if (clamped !== action) {
+      const planned = resolvePlannedSpendAmountRaw(action, assetId);
+      console.error(
+        `[execution] Clamped ${action.id} asset ${assetId} amount ${planned} → ${spendableRaw.toString()} (spendable after prior fills)`,
+      );
+    }
+    if (
+      spendableRaw === 0n &&
+      resolvePlannedSpendAmountRaw(action, assetId) !== null
+    ) {
+      throw new Error(
+        `Action ${action.id} needs asset ${assetId} but spendable balance is 0`,
+      );
+    }
+    return clamped;
+  }
+
+  private async readSpendableAssetRaw(assetId: number): Promise<bigint> {
+    if (assetId === 0) {
+      const account = (await this.algod
+        .accountInformation(this.managedAddress)
+        .do()) as {
+        amount: bigint | number;
+        minBalance?: bigint | number;
+      };
+      const amount = BigInt(account.amount);
+      const minimum = BigInt(account.minBalance ?? 0);
+      return amount > minimum ? amount - minimum : 0n;
+    }
+    try {
+      const info = (await this.algod
+        .accountAssetInformation(this.managedAddress, assetId)
+        .do()) as {
+        assetHolding?: { amount?: bigint | number };
+        amount?: bigint | number;
+      };
+      const raw = info.assetHolding?.amount ?? info.amount ?? 0;
+      return BigInt(raw);
+    } catch (error) {
+      if (isAccountAssetMissing(error)) {
+        return 0n;
+      }
+      throw error;
+    }
   }
 
   private async executeBatchedShapes(
@@ -1168,6 +1234,124 @@ export function prependAssetOptInTransactions(
       "base64",
     ),
   );
+}
+
+/**
+ * Asset whose planned deposit/stake amount may overshoot after a prior swap fill.
+ * Prefer explicit executionInput.assetId, else a single authorizedSpend, else fromAssetId.
+ */
+export function resolveCapitalEnterSpendAssetId(
+  action: PortfolioAction,
+): number | null {
+  const input = action.executionInput ?? {};
+  if (typeof input.assetId === "number" && Number.isInteger(input.assetId)) {
+    return input.assetId;
+  }
+  if (action.authorizedSpends.length === 1) {
+    return action.authorizedSpends[0]!.assetId;
+  }
+  if (action.fromAssetId !== null) {
+    return action.fromAssetId;
+  }
+  return null;
+}
+
+/** Planned raw amount for a spend asset from amountRaw / authorizedSpends / executionInput.amount. */
+export function resolvePlannedSpendAmountRaw(
+  action: PortfolioAction,
+  assetId: number,
+): string | null {
+  const spend = action.authorizedSpends.find(
+    (candidate) => candidate.assetId === assetId,
+  );
+  if (spend) {
+    return spend.amountRaw;
+  }
+  if (
+    action.amountRaw !== null &&
+    (action.fromAssetId === assetId ||
+      (action.executionInput &&
+        action.executionInput.assetId === assetId))
+  ) {
+    return action.amountRaw;
+  }
+  const inputAmount = action.executionInput?.amount;
+  if (typeof inputAmount === "string" && /^[0-9]+$/.test(inputAmount)) {
+    return inputAmount;
+  }
+  if (
+    typeof inputAmount === "number" &&
+    Number.isInteger(inputAmount) &&
+    inputAmount >= 0
+  ) {
+    return String(inputAmount);
+  }
+  return null;
+}
+
+/**
+ * Shrink open/increase sizes so they never exceed on-chain spendable for the
+ * spend asset (e.g. stake amount after a swap filled short of the quote).
+ */
+export function clampActionAmountToSpendable(
+  action: PortfolioAction,
+  options: { assetId: number; spendableRaw: bigint },
+): PortfolioAction {
+  const { assetId, spendableRaw } = options;
+  if (spendableRaw < 0n) {
+    throw new Error(`Spendable balance for asset ${assetId} cannot be negative`);
+  }
+  const planned = resolvePlannedSpendAmountRaw(action, assetId);
+  if (planned === null) {
+    return action;
+  }
+  let plannedRaw: bigint;
+  try {
+    plannedRaw = BigInt(planned);
+  } catch {
+    return action;
+  }
+  if (plannedRaw <= spendableRaw) {
+    return action;
+  }
+  if (spendableRaw === 0n) {
+    return action;
+  }
+  const clamped = spendableRaw.toString();
+  const executionInput = { ...(action.executionInput ?? {}) };
+  for (const [key, value] of Object.entries(executionInput)) {
+    if (!/amount/i.test(key)) {
+      continue;
+    }
+    const asString =
+      typeof value === "string"
+        ? value
+        : typeof value === "number" && Number.isInteger(value)
+          ? String(value)
+          : null;
+    if (asString === planned) {
+      executionInput[key] = clamped;
+    }
+  }
+  if (
+    typeof executionInput.amount === "undefined" &&
+    action.amountRaw === planned
+  ) {
+    executionInput.amount = clamped;
+  }
+  return {
+    ...action,
+    amountRaw: action.amountRaw === planned ? clamped : action.amountRaw,
+    authorizedSpends: action.authorizedSpends.map((spend) =>
+      spend.assetId === assetId && spend.amountRaw === planned
+        ? { ...spend, amountRaw: clamped }
+        : spend,
+    ),
+    executionInput:
+      Object.keys(executionInput).length > 0
+        ? executionInput
+        : action.executionInput,
+  };
 }
 
 /** Per-shape inputs only: hints + required fields from the action, not the full deposit blob. */

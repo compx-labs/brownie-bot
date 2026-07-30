@@ -132,12 +132,133 @@ export function escapeHtml(text: string): string {
     .replaceAll(">", "&gt;");
 }
 
+export interface ReviewExecutionGateSummary {
+  /** What happened to on-chain submission. */
+  execution: string;
+  /** Policy gate result. */
+  policy: string;
+  /** Signing config at run time. */
+  signing: string;
+  /** One-line operator explanation. */
+  reason: string;
+}
+
+/**
+ * Explicit operator-facing summary of whether txs were (or could be) submitted.
+ * Keeps signing vs policy vs dry-run from collapsing into a vague "planned".
+ */
+export function describeReviewExecutionGate(
+  run: ReviewRun,
+): ReviewExecutionGateSummary {
+  const signing = run.signingEnabled ? "enabled" : "disabled";
+
+  if (run.error && !run.plan) {
+    return {
+      execution: "not submitted",
+      policy: run.policy
+        ? run.policy.approved
+          ? "approved"
+          : "blocked"
+        : "n/a",
+      signing,
+      reason: "Run failed before submission",
+    };
+  }
+
+  if (!run.plan) {
+    return {
+      execution: "not submitted",
+      policy: "n/a",
+      signing,
+      reason: "No structured plan to submit",
+    };
+  }
+
+  if (!run.policy) {
+    return {
+      execution: "not submitted",
+      policy: "unknown",
+      signing,
+      reason: "Policy result missing; nothing was signed",
+    };
+  }
+
+  if (!run.policy.approved) {
+    const firstViolation = run.policy.violations[0];
+    return {
+      execution: "not submitted",
+      policy: "blocked",
+      signing,
+      reason: firstViolation
+        ? `Policy blocked — ${truncate(firstViolation, 200)}`
+        : "Policy blocked the plan; no transactions were signed",
+    };
+  }
+
+  if (!run.signingEnabled) {
+    return {
+      execution: "dry-run only (no txs)",
+      policy: "approved",
+      signing,
+      reason:
+        "Policy approved, but signing is disabled — actions were validated only",
+    };
+  }
+
+  const executions = run.executions ?? [];
+  const confirmed = executions.filter(
+    (outcome) => outcome.status === "confirmed",
+  ).length;
+  const failed = executions.filter(
+    (outcome) => outcome.status === "failed",
+  ).length;
+  const actionable = (run.plan.actions ?? []).filter(
+    (action) => action.type !== "hold",
+  ).length;
+
+  if (confirmed > 0 && failed > 0) {
+    return {
+      execution: `partially submitted (${confirmed}/${actionable} confirmed)`,
+      policy: "approved",
+      signing,
+      reason: "Signing enabled; some actions confirmed and some failed",
+    };
+  }
+  if (confirmed > 0) {
+    return {
+      execution: `submitted (${confirmed} confirmed)`,
+      policy: "approved",
+      signing,
+      reason: "Policy approved and signing enabled — transactions submitted",
+    };
+  }
+  if (failed > 0) {
+    return {
+      execution: "not submitted (execution failed)",
+      policy: "approved",
+      signing,
+      reason: "Signing was enabled but execution failed before confirmation",
+    };
+  }
+
+  return {
+    execution: "not submitted",
+    policy: "approved",
+    signing,
+    reason: "Policy approved and signing enabled, but no actions were executed",
+  };
+}
+
 export function formatTelegramReport(run: ReviewRun): string {
+  const gate = describeReviewExecutionGate(run);
   const heading = `Treasury portfolio run: ${run.status}`;
   const lines = [
     heading,
     `Mode: ${run.mode}`,
-    `Signing: ${run.signingEnabled ? "enabled" : "disabled"}`,
+    `Signing: ${gate.signing}`,
+    `Policy: ${gate.policy}`,
+    `Execution: ${gate.execution}`,
+    `Why: ${gate.reason}`,
     `Run: ${run.id}`,
     `Completed: ${run.completedAt}`,
   ];
@@ -210,9 +331,12 @@ export function formatTelegramReport(run: ReviewRun): string {
  * Uses ### headings (not #) so tables parse as blocks while staying closer to body type.
  */
 export function formatTelegramReportRich(run: ReviewRun): string {
+  const gate = describeReviewExecutionGate(run);
   const sections: string[] = [
     `### Treasury review · ${run.status}`,
-    `**Signing** ${run.signingEnabled ? "enabled" : "disabled"} · **Mode** ${run.mode}`,
+    `**Signing** ${gate.signing} · **Policy** ${gate.policy} · **Mode** ${run.mode}`,
+    `**Execution** ${gate.execution}`,
+    `**Why:** ${escapeRichMarkdown(gate.reason)}`,
     `Run \`${run.id}\` · Completed ${run.completedAt}`,
   ];
 
@@ -221,6 +345,20 @@ export function formatTelegramReportRich(run: ReviewRun): string {
       "",
       `**Error:** ${escapeRichMarkdown(formatReportError(run.error, 500))}`,
     );
+  }
+
+  if (run.policy && !run.policy.approved && run.policy.violations.length > 0) {
+    sections.push("", "### Policy blocked");
+    for (const violation of run.policy.violations.slice(0, 5)) {
+      sections.push(
+        `- ${escapeRichMarkdown(truncate(violation, 240))}`,
+      );
+    }
+    if (run.policy.violations.length > 5) {
+      sections.push(
+        `- _+${run.policy.violations.length - 5} more violation(s)_`,
+      );
+    }
   }
 
   if (run.opportunities.length > 0) {
@@ -272,7 +410,7 @@ export function formatTelegramReportRich(run: ReviewRun): string {
     sections.push(
       "",
       "<details>",
-      "<summary>Risks / policy</summary>",
+      "<summary>Risks / policy notes</summary>",
       "",
       riskPolicyBody,
       "",
@@ -302,9 +440,12 @@ export function formatTelegramReportRich(run: ReviewRun): string {
 
 /** HTML fallback for classic sendMessage parse_mode=HTML. */
 export function formatTelegramReportHtml(run: ReviewRun): string {
+  const gate = describeReviewExecutionGate(run);
   const sections: string[] = [
     `<b>Treasury review · ${escapeHtml(run.status)}</b>`,
-    `<b>Signing</b> ${run.signingEnabled ? "enabled" : "disabled"} · <b>Mode</b> ${escapeHtml(run.mode)}`,
+    `<b>Signing</b> ${escapeHtml(gate.signing)} · <b>Policy</b> ${escapeHtml(gate.policy)} · <b>Mode</b> ${escapeHtml(run.mode)}`,
+    `<b>Execution</b> ${escapeHtml(gate.execution)}`,
+    `<b>Why:</b> ${escapeHtml(gate.reason)}`,
     `Run <code>${escapeHtml(run.id)}</code> · Completed ${escapeHtml(run.completedAt)}`,
   ];
 
@@ -313,6 +454,12 @@ export function formatTelegramReportHtml(run: ReviewRun): string {
       "",
       `<b>Error:</b> ${escapeHtml(formatReportError(run.error, 500))}`,
     );
+  }
+  if (run.policy && !run.policy.approved && run.policy.violations.length > 0) {
+    sections.push("", "<b>Policy blocked</b>");
+    for (const violation of run.policy.violations.slice(0, 5)) {
+      sections.push(`• ${escapeHtml(truncate(violation, 240))}`);
+    }
   }
   if (run.opportunities.length > 0) {
     sections.push(`Candidates reviewed: <b>${run.opportunities.length}</b>`);
@@ -343,7 +490,7 @@ export function formatTelegramReportHtml(run: ReviewRun): string {
 
   const riskPolicyLines = buildRiskPolicyHtmlLines(run);
   if (riskPolicyLines.length > 0) {
-    sections.push("", "<b>Risks / policy</b>", ...riskPolicyLines);
+    sections.push("", "<b>Risks / policy notes</b>", ...riskPolicyLines);
   }
 
   const spendLines = buildSpendHtmlLines(run);
@@ -520,14 +667,17 @@ function buildActionRows(
     (run.executions ?? []).map((execution) => [execution.actionId, execution]),
   );
   const planActions = run.plan?.actions ?? [];
+  const notExecuted = describeNotExecutedAction(run);
 
   if (planActions.length > 0) {
     return planActions.slice(0, MAX_ACTIONS_IN_REPORT).map((action) => {
       const execution = executionsById.get(action.id);
       return {
         action: escapeRichMarkdown(formatPlanActionLabel(action)),
-        status: escapeRichMarkdown(execution?.status ?? "planned"),
-        detail: formatActionDetailMarkdown(execution),
+        status: escapeRichMarkdown(execution?.status ?? notExecuted.status),
+        detail: execution
+          ? formatActionDetailMarkdown(execution)
+          : escapeRichMarkdown(notExecuted.detail),
       };
     });
   }
@@ -539,6 +689,19 @@ function buildActionRows(
       status: escapeRichMarkdown(execution.status),
       detail: formatActionDetailMarkdown(execution),
     }));
+}
+
+function describeNotExecutedAction(run: ReviewRun): {
+  status: string;
+  detail: string;
+} {
+  if (run.policy && !run.policy.approved) {
+    return { status: "not executed", detail: "policy blocked" };
+  }
+  if (!run.signingEnabled) {
+    return { status: "not executed", detail: "signing disabled" };
+  }
+  return { status: "not executed", detail: "no execution outcome" };
 }
 
 function formatPlanActionLabel(action: PortfolioAction): string {
@@ -569,7 +732,14 @@ function buildRiskPolicyDetailsBody(run: ReviewRun): string | undefined {
   for (const risk of run.plan?.risks ?? []) {
     lines.push(`- ${escapeRichMarkdown(truncate(risk, 240))}`);
   }
-  if (run.policy && !run.policy.approved && run.policy.violations.length > 0) {
+  // Violations are shown above the fold when blocked; keep them here too for
+  // the collapsed notes section when there are also risks/warnings.
+  if (
+    run.policy &&
+    !run.policy.approved &&
+    run.policy.violations.length > 0 &&
+    (run.plan?.risks?.length ?? 0) + (run.policy.warnings.length ?? 0) > 0
+  ) {
     for (const violation of run.policy.violations) {
       lines.push(
         `- **Blocked:** ${escapeRichMarkdown(truncate(violation, 240))}`,
@@ -622,12 +792,15 @@ function buildActionHtmlLines(run: ReviewRun): string[] {
     (run.executions ?? []).map((execution) => [execution.actionId, execution]),
   );
   const planActions = run.plan?.actions ?? [];
+  const notExecuted = describeNotExecutedAction(run);
 
   if (planActions.length > 0) {
     return planActions.slice(0, MAX_ACTIONS_IN_REPORT).map((action) => {
       const execution = executionsById.get(action.id);
-      const status = escapeHtml(execution?.status ?? "planned");
-      const detail = formatActionDetailHtml(execution);
+      const status = escapeHtml(execution?.status ?? notExecuted.status);
+      const detail = execution
+        ? formatActionDetailHtml(execution)
+        : escapeHtml(notExecuted.detail);
       return `• ${escapeHtml(formatPlanActionLabel(action))} — <i>${status}</i>${detail ? ` · ${detail}` : ""}`;
     });
   }
@@ -662,7 +835,12 @@ function buildRiskPolicyHtmlLines(run: ReviewRun): string[] {
   for (const risk of run.plan?.risks ?? []) {
     lines.push(`• ${escapeHtml(truncate(risk, 240))}`);
   }
-  if (run.policy && !run.policy.approved && run.policy.violations.length > 0) {
+  if (
+    run.policy &&
+    !run.policy.approved &&
+    run.policy.violations.length > 0 &&
+    (run.plan?.risks?.length ?? 0) + (run.policy.warnings.length ?? 0) > 0
+  ) {
     for (const violation of run.policy.violations) {
       lines.push(`• <b>Blocked:</b> ${escapeHtml(truncate(violation, 240))}`);
     }

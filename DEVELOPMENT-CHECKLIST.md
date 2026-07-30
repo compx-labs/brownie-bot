@@ -10,6 +10,8 @@ Keep this file updated when priorities change so work does not get lost across c
 - [x] **Sanitize upstream errors for humans** — ZeroSignal/Canix 502/504 HTML bodies → short classified messages (Telegram, logs, persisted `ReviewRun.error`); Docker also filters zs-proxy `err_body=` HTML dumps via `docker/sanitize-zs-logs.mjs`
 - [x] **Real `/health`** — last review/accounting age + status; optional `?deps=1` probes for zs-proxy, Algod, Canix
 - [x] **Telegram inbound commands** — long-poll `/help` `/status` `/run` `/accounting` from `TELEGRAM_CHAT_ID` on the long-lived server
+- [x] **Tinyman farm claim host path** — synthesize `claim` executionInput from reward `positionId` / notes; claim must bind reward row not farmed LP
+- [x] **Preferred hold steer** — `PREFERRED_HOLD_ASSETS=assetId:pct,…` soft targets in hostGuidance + prompt guidance that swaps can rotate idle non-preferred ASAs
 
 ## Next (recommended order)
 

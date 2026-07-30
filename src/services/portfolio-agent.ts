@@ -155,6 +155,11 @@ export interface PortfolioAgent {
   run(): Promise<PortfolioAgentResult>;
 }
 
+export interface PreferredHoldAsset {
+  assetId: number;
+  targetPortfolioPct: number;
+}
+
 export interface PortfolioHostGuidance {
   maxPositionPct: number;
   maxProtocolPct: number;
@@ -162,6 +167,11 @@ export interface PortfolioHostGuidance {
   minTvlUsd: number;
   maxSourceAgeHours: number;
   minProjectedNetImprovementUsd: number;
+  /**
+   * Soft operator preferences: hold these ASAs near targetPortfolioPct of
+   * portfolio USD. Not hard-enforced by policy.
+   */
+  preferredHoldAssets: PreferredHoldAsset[];
 }
 
 export type PortfolioAiMode = "full" | "lite";
@@ -187,11 +197,15 @@ Host already loaded positions + liquid balances. Treat null/partial protocol dat
 
 CAPITAL
 Deploy surplus above the reserve when eligible executable opportunities exist. Hold only with named rejected candidates (id, APY, TVL, why). Ending liquid USDC (asset 31566704) should be ~5+ for ops (Canix x402 + ZeroSignal); if short, end with a small consolidate-usdc-buffer swap. Do not invent secrets, mnemonics, or payment details.
+Swaps are not only precursors to deposits: use swap to rotate idle liquid ASAs into USDC/ALGO for yield, to rebalance toward hostGuidance.preferredHoldAssets targetPortfolioPct, or to free capital—when fees/slippage are justified. Do not swap preferred-hold assets that are already near their target %.
+Preferred holds (hostGuidance.preferredHoldAssets): soft long-term targets as % of portfolio USD. Treat listed assets as intentional holdings up to targetPortfolioPct; do not nag or force-rotate them when near target. Below target, prefer accumulating via surplus rather than liquidating productive yield. Above target, trim only when net benefit clearly exceeds costs. Unlisted idle ASAs may be rotated into yield or preferred holds when economics work.
 
 PLAN ACTIONS
 - Prefer executionReady with non-empty shapeKeys; empty shapeKeys = research-only—never invent keys.
 - open/increase: one capital action per opportunity; executionShapeKey from shapeKeys (deposit/addLiquidity-style); authorizedSpends + amountRaw/fromAssetId; executionInput may be null (host completes). No separate setup/escrow/opt-in plan actions.
-- close/reduce/claim: executionShapeKey from position compatibleExitShapeKeys / compatibleManageShapeKeys.
+- close/reduce/claim: executionShapeKey from position compatibleExitShapeKeys / compatibleManageShapeKeys; size with amountRaw / executionInput; authorizedSpends may be []. Never invent keys; empty catalogs = no supported path.
+- Tinyman farm rewards: claim against the reward position (positionType reward / opportunityId ending :farm) using that row's compatibleManageShapeKeys (e.g. mainnet:tinyman:staking-v1:farm:claimRewards). Do NOT claim against the farmed LP row — its manage keys are empty by design (exit is removeLiquidity + farm:uncommit only).
+- Swaps: (1) unlock required assets for a following open/increase, (2) consolidate USDC ops buffer, (3) rotate non-preferred idle liquid into deployable capital or preferred holds. Prefer canix_get_quote before sizing. If a quote tool returns an error (timeout, liquidity, impact), retry with a different size/pair or skip that swap and continue the plan—do not stop the whole review.
 - Missing required assets: prior swap action(s), then depend on those action ids only.
 - dependencies: only other action ids in this plan.
 - projectedNetBenefitUsd: honest yield-vs-idle over holdingHorizonDays (often 30–90) minus one-time costs; use base supply/deposit APY, not reward boosts.
@@ -556,7 +570,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       }
       const outputs: Array<Record<string, unknown>> = [];
       for (const call of functionCalls) {
-        const args = clampOpportunityToolArgs(
+        const args = normalizeAgentToolArgs(
           call.name,
           parseArguments(call.arguments),
         );
@@ -607,20 +621,35 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
             ),
           });
         } catch (error) {
-          if (!SKIPPABLE_RESEARCH_TOOLS.has(call.name)) {
+          // Allowlisted research/quote tools: return the failure to the model so
+          // it can retry, change pair/size, or continue without aborting the run.
+          if (!AGENT_TOOL_ALLOWLIST.has(call.name)) {
             throw error;
           }
           const message = safeErrorMessage(error);
-          console.error(`[portfolio-agent] Skipping ${call.name}: ${message}`);
+          const argsForLog = sanitizeToolArgsForLog(args);
+          const gatewayTimeout = isGatewayTimeoutToolError(error);
+          console.error(
+            `[portfolio-agent] Tool ${call.name} failed; returning error to model: ${message}`,
+          );
+          console.error(
+            `[portfolio-agent] Tool args: ${JSON.stringify(argsForLog)}`,
+          );
           toolCalls.push(call.name);
           outputs.push({
             type: "function_call_output",
             call_id: call.call_id,
             output: JSON.stringify({
-              error: "TOOL_UNAVAILABLE",
+              error: gatewayTimeout ? "GATEWAY_TIMEOUT" : "TOOL_ERROR",
               tool: call.name,
               message,
-              skipped: true,
+              args: argsForLog,
+              retryable: gatewayTimeout,
+              skipped: SKIPPABLE_RESEARCH_TOOLS.has(call.name),
+              hint:
+                call.name === "canix_get_quote"
+                  ? "Quote failed. Retry with a different size or pair, or skip this swap and continue the plan with other actions."
+                  : "Tool failed. Continue with other research or plan without this result.",
             }),
           });
         }
@@ -814,6 +843,49 @@ export function clampOpportunityToolArgs(
       MAX_OPPORTUNITY_TOOL_LIMIT,
     ),
   };
+}
+
+/**
+ * Normalize LLM tool args before Canix calls.
+ * Models often emit asset ids as strings; execution uses numbers.
+ */
+export function normalizeAgentToolArgs(
+  toolName: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = clampOpportunityToolArgs(toolName, args);
+  if (toolName !== "canix_get_quote") {
+    return next;
+  }
+  const fromAssetId = coerceNonNegativeInt(next.fromAssetId);
+  const toAssetId = coerceNonNegativeInt(next.toAssetId);
+  const amount = coerceAmountString(next.amount);
+  return {
+    ...next,
+    ...(fromAssetId !== undefined ? { fromAssetId } : {}),
+    ...(toAssetId !== undefined ? { toAssetId } : {}),
+    ...(amount !== undefined ? { amount } : {}),
+  };
+}
+
+function coerceNonNegativeInt(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return Number(value.trim());
+  }
+  return undefined;
+}
+
+function coerceAmountString(value: unknown): string | undefined {
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return value.trim();
+  }
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return String(Math.trunc(value));
+  }
+  return undefined;
 }
 
 export function compactToolResultForModel(
@@ -1102,10 +1174,37 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/**
+ * Accept finite numbers and numeric strings models often emit ("0.72", "12.5").
+ * Strips a trailing % before parsing.
+ */
 function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim().replace(/%$/, "");
+    if (trimmed.length === 0) {
+      return undefined;
+    }
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+/** Confidence is 0–1; coerce "0.7", "70%", or 70 → 0.7. */
+function asConfidence(value: unknown): number | undefined {
+  const raw = asNumber(value);
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw > 1 && raw <= 100) {
+    return raw / 100;
+  }
+  return raw;
 }
 
 function coerceHoldDecisions(value: unknown): string[] | undefined {
@@ -1170,15 +1269,16 @@ function coerceAllocation(allocation: unknown): unknown {
   if (!Array.isArray(next.assetIds)) {
     next.assetIds = [];
   }
-  if (!("expectedApyPct" in next)) {
+  if (!("expectedApyPct" in next) || typeof next.expectedApyPct === "string") {
     const apy =
       asNumber(next.expectedApyPct) ??
       asNumber(next.apy) ??
       asNumber(next.apyPct);
     next.expectedApyPct = apy ?? null;
   }
-  if (next.weightPct === undefined) {
-    const weight = asNumber(next.weight) ?? asNumber(next.pct);
+  if (next.weightPct === undefined || typeof next.weightPct === "string") {
+    const weight =
+      asNumber(next.weightPct) ?? asNumber(next.weight) ?? asNumber(next.pct);
     if (weight !== undefined) {
       next.weightPct = weight;
     }
@@ -1307,21 +1407,43 @@ export function coercePortfolioPlanValue(raw: unknown): unknown {
 
   if (next.holdingHorizonDays === undefined) {
     next.holdingHorizonDays = 30;
+  } else {
+    const horizon = asNumber(next.holdingHorizonDays);
+    if (horizon !== undefined) {
+      next.holdingHorizonDays = Math.max(1, Math.round(horizon));
+    }
   }
   if (next.estimatedOneTimeCostsUsd === undefined) {
     next.estimatedOneTimeCostsUsd = 0;
+  } else {
+    const costs = asNumber(next.estimatedOneTimeCostsUsd);
+    if (costs !== undefined) {
+      next.estimatedOneTimeCostsUsd = costs;
+    }
   }
-  if (next.confidence === undefined) {
-    next.confidence = 0.5;
-  }
+  const confidence = asConfidence(next.confidence);
+  next.confidence = confidence ?? 0.5;
   if (!("currentAnnualizedReturnPct" in next)) {
     next.currentAnnualizedReturnPct = null;
+  } else if (next.currentAnnualizedReturnPct !== null) {
+    const current = asNumber(next.currentAnnualizedReturnPct);
+    next.currentAnnualizedReturnPct =
+      current !== undefined ? current : next.currentAnnualizedReturnPct;
   }
   if (!("targetAnnualizedReturnPct" in next)) {
     next.targetAnnualizedReturnPct = null;
+  } else if (next.targetAnnualizedReturnPct !== null) {
+    const target = asNumber(next.targetAnnualizedReturnPct);
+    next.targetAnnualizedReturnPct =
+      target !== undefined ? target : next.targetAnnualizedReturnPct;
   }
   if (next.projectedNetBenefitUsd === undefined) {
     next.projectedNetBenefitUsd = 0;
+  } else {
+    const benefit = asNumber(next.projectedNetBenefitUsd);
+    if (benefit !== undefined) {
+      next.projectedNetBenefitUsd = benefit;
+    }
   }
   if (typeof next.summary !== "string" || next.summary.length === 0) {
     next.summary = "Agent returned a plan without a string summary.";
@@ -1405,6 +1527,37 @@ function collectOpportunities(payload: unknown, target: Opportunity[]): void {
       target.push(parsed.data);
     }
   }
+}
+
+/** Log-safe tool args: drop payment signatures and truncate long strings. */
+export function sanitizeToolArgsForLog(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (/payment|signature|mnemonic|private/i.test(key)) {
+      next[key] = "[redacted]";
+      continue;
+    }
+    if (typeof value === "string" && value.length > 200) {
+      next[key] = `${value.slice(0, 200)}…`;
+      continue;
+    }
+    next[key] = value;
+  }
+  return next;
+}
+
+/** Match Canix CDN/edge 504 timeouts already retried by the client. */
+function isGatewayTimeoutToolError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message;
+  return (
+    message.includes("GATEWAY_CLIENT_ERROR") &&
+    (/\bstatus=504\b/.test(message) || /\bgot 504\b/.test(message))
+  );
 }
 
 function allocationJsonSchema() {
