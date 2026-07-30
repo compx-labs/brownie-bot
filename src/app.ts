@@ -180,6 +180,9 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
       signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
       maxSlippageBps: config.MAX_SLIPPAGE_BPS,
       maxPriceImpactPct: config.MAX_PRICE_IMPACT_PCT,
+      priceImpactExemptToAssetIds: config.preferredHoldAssets.map(
+        (asset) => asset.assetId,
+      ),
     },
     folksEscrowStore,
   );

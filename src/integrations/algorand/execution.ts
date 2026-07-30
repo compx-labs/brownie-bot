@@ -99,6 +99,11 @@ export interface ExecutionPolicy {
   signingEnabled: boolean;
   maxSlippageBps: number;
   maxPriceImpactPct: number;
+  /**
+   * Destination ASAs for which Haystack userPriceImpact may exceed
+   * maxPriceImpactPct (preferred-hold accumulation into thin markets).
+   */
+  priceImpactExemptToAssetIds?: number[];
 }
 
 export interface ExecuteActionContext {
@@ -726,7 +731,13 @@ export class AlgorandExecutionService {
     );
     let quote = haystackQuoteSchema.parse(quoteResult.data);
     assertFresh(quote.data.expiresAt);
-    if ((quote.data.userPriceImpact ?? 0) > this.policy.maxPriceImpactPct) {
+    const impactExempt = (this.policy.priceImpactExemptToAssetIds ?? []).includes(
+      action.toAssetId,
+    );
+    if (
+      !impactExempt &&
+      (quote.data.userPriceImpact ?? 0) > this.policy.maxPriceImpactPct
+    ) {
       throw new Error(
         `Haystack price impact exceeds ${this.policy.maxPriceImpactPct}%`,
       );

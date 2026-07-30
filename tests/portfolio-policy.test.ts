@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { PortfolioAction } from "../src/domain.js";
-import { PortfolioPolicy, normalizePortfolioPlan } from "../src/services/portfolio-policy.js";
+import { PortfolioPolicy, normalizePortfolioPlan, syncSwapAuthorizedSpend } from "../src/services/portfolio-policy.js";
 import {
   enterShape,
   opportunity,
@@ -92,6 +92,36 @@ describe("PortfolioPolicy", () => {
     expect(result.approved).toBe(true);
     expect(result.violations).toEqual([]);
     expect(result.warnings).toEqual([]);
+  });
+
+  it("does not hard-block when allocation weights are near but not exactly 100%", () => {
+    const candidate = opportunity({
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+    });
+    const result = policy.validate(
+      portfolioSnapshot(),
+      portfolioPlan({
+        currentAllocations: [{ ...liquid, weightPct: 99.2 }],
+        targetAllocations: [
+          { ...liquid, weightPct: 58.8 },
+          {
+            key: "opportunity:tinyman:pool:1",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: candidate.assetIds ?? [],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [openAction()],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations.join("\n")).not.toMatch(/allocations total/);
   });
 
   it("blocks actions when the on-chain snapshot is incomplete and signing is enabled", () => {
@@ -930,5 +960,159 @@ describe("PortfolioPolicy", () => {
     expect(result.warnings.join("\n")).toMatch(
       /Would block if signing enabled:.*missing executionShapeKey and executionInput/,
     );
+  });
+
+  it("allows increase on a held position when the opportunity catalog missed it", () => {
+    const held = {
+      protocol: "reti",
+      positionType: "staked" as const,
+      positionId: "reti:staked:220:99",
+      opportunityId: "reti-staking-220",
+      assetId: 0,
+      assetSymbol: "ALGO",
+      amountRaw: "1000000000",
+      amount: "1000",
+      usdValue: 200,
+      compatibleExitShapeKeys: ["mainnet:reti:v1:unstake:algo"],
+      compatibleManageShapeKeys: [] as string[],
+      inputHints: { validatorId: 220, poolAppId: 99, assetId: 0 },
+    };
+    const rawPlan = portfolioPlan({
+      currentAllocations: [
+        { ...liquid, weightPct: 80 },
+        {
+          key: "reti:staked",
+          protocol: "reti",
+          opportunityId: held.opportunityId,
+          assetIds: [0],
+          weightPct: 20,
+          expectedApyPct: 4.5,
+        },
+      ],
+      targetAllocations: [
+        { ...liquid, weightPct: 60 },
+        {
+          key: "reti:staked",
+          protocol: "reti",
+          opportunityId: held.opportunityId,
+          assetIds: [0],
+          weightPct: 40,
+          expectedApyPct: 4.5,
+        },
+      ],
+      actions: [
+        openAction({
+          id: "a5",
+          type: "increase",
+          protocol: "reti",
+          opportunityId: null,
+          positionId: held.positionId,
+          amountRaw: "2500000000",
+          fromAssetId: 0,
+          executionShapeKey: "mainnet:reti:v1:stake:algo",
+          executionInput: null,
+          authorizedSpends: [{ assetId: 0, amountRaw: "2500000000" }],
+        }),
+      ],
+      projectedNetBenefitUsd: 10,
+    });
+    const snapshot = portfolioSnapshot({
+      positions: [held],
+      liquidBalances: [
+        {
+          assetId: 0,
+          amountRaw: "5000000000",
+          spendableAmountRaw: "5000000000",
+          decimals: 6,
+          symbol: "ALGO",
+          usdValue: 1000,
+        },
+      ],
+    });
+    const plan = normalizePortfolioPlan(rawPlan, [], snapshot);
+
+    expect(plan.actions[0]?.opportunityId).toBe("reti-staking-220");
+    expect(plan.actions[0]?.executionInput).toMatchObject({
+      validatorId: 220,
+      amount: "2500000000",
+    });
+
+    const result = policy.validate(snapshot, plan, []);
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.warnings.join("\n")).toMatch(
+      /increases held position reti:staked:220:99 without a researched opportunity/,
+    );
+  });
+});
+
+describe("syncSwapAuthorizedSpend", () => {
+  const hayAssetId = 3_160_000_000;
+  const amountRaw = "2053000000";
+
+  function swapAction(
+    overrides: Partial<PortfolioAction> = {},
+  ): PortfolioAction {
+    return {
+      id: "a1",
+      type: "swap",
+      protocol: "haystack",
+      opportunityId: null,
+      positionId: null,
+      amountRaw,
+      fromAssetId: hayAssetId,
+      toAssetId: 31_566_704,
+      targetWeightPct: null,
+      executionShapeKey: null,
+      executionInput: null,
+      authorizedSpends: [],
+      rationale: "Rotate idle HAY into USDC.",
+      dependencies: [],
+      ...overrides,
+    };
+  }
+
+  it("rewrites empty or mismatched authorizedSpends from swap input", () => {
+    expect(syncSwapAuthorizedSpend(swapAction()).authorizedSpends).toEqual([
+      { assetId: hayAssetId, amountRaw },
+    ]);
+    expect(
+      syncSwapAuthorizedSpend(
+        swapAction({
+          authorizedSpends: [{ assetId: 31_566_704, amountRaw: "1" }],
+        }),
+      ).authorizedSpends,
+    ).toEqual([{ assetId: hayAssetId, amountRaw }]);
+  });
+
+  it("leaves an already-matching spend unchanged", () => {
+    const action = swapAction({
+      authorizedSpends: [{ assetId: hayAssetId, amountRaw }],
+    });
+    expect(syncSwapAuthorizedSpend(action)).toBe(action);
+  });
+
+  it("normalizes drift so policy accepts the swap", () => {
+    const plan = normalizePortfolioPlan(
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [liquid],
+        actions: [
+          swapAction({
+            authorizedSpends: [{ assetId: 31_566_704, amountRaw: "999" }],
+          }),
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [],
+    );
+
+    expect(plan.actions[0]?.authorizedSpends).toEqual([
+      { assetId: hayAssetId, amountRaw },
+    ]);
+
+    const result = policy.validate(portfolioSnapshot(), plan, []);
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
   });
 });

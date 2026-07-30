@@ -276,6 +276,54 @@ describe("OpenAiPortfolioAgent", () => {
     });
   });
 
+  it("includes priorReview in the task input when provided", async () => {
+    const { agent, create } = setup(
+      [
+        {
+          id: "response-1",
+          output: [],
+          output_text: JSON.stringify(portfolioPlan()),
+        },
+      ],
+      { aiMode: "lite" },
+    );
+
+    await agent.run({
+      priorReview: {
+        id: "prior-1",
+        status: "partially-executed",
+        completedAt: "2026-07-30T12:00:00.000Z",
+        actions: [
+          {
+            actionId: "reduce-1",
+            type: "reduce",
+            protocol: "tinyman",
+            status: "confirmed",
+            transactionId: "TX1",
+          },
+        ],
+      },
+    });
+
+    const input = JSON.parse(
+      (create.mock.calls[0]?.[0] as { input: string }).input,
+    ) as { priorReview?: { id: string; actions: unknown[] } };
+    expect(input.priorReview).toEqual({
+      id: "prior-1",
+      status: "partially-executed",
+      completedAt: "2026-07-30T12:00:00.000Z",
+      actions: [
+        {
+          actionId: "reduce-1",
+          type: "reduce",
+          protocol: "tinyman",
+          status: "confirmed",
+          transactionId: "TX1",
+        },
+      ],
+    });
+  });
+
   it("does not expose or invoke final execution tools even when signing is enabled", async () => {
     const { agent, create, callManagedTool } = setup(
       [
@@ -852,6 +900,70 @@ describe("OpenAiPortfolioAgent", () => {
     expect(parsed.data.projectedNetBenefitUsd).toBe(12.5);
     expect(typeof parsed.data.summary).toBe("string");
     expect(parsed.data.summary).toContain("Deploy idle USDC");
+  });
+
+  it("coerces numeric amountRaw fields into digit strings", () => {
+    const drifted = {
+      currentAllocations: [],
+      targetAllocations: [],
+      actions: [
+        {
+          id: "swap-1",
+          type: "swap",
+          protocol: null,
+          opportunityId: null,
+          positionId: null,
+          amountRaw: 50_000_000,
+          fromAssetId: 31_566_704,
+          toAssetId: 0,
+          targetWeightPct: null,
+          executionShapeKey: null,
+          executionInput: null,
+          authorizedSpends: [{ assetId: 31_566_704, amountRaw: 50_000_000 }],
+          rationale: "Swap USDC to ALGO",
+          dependencies: [],
+        },
+        {
+          id: "increase-1",
+          type: "increase",
+          protocol: "reti",
+          opportunityId: "reti:validator:1",
+          positionId: "reti:1",
+          amountRaw: 3_830_300_000,
+          fromAssetId: "0",
+          toAssetId: null,
+          targetWeightPct: "12.5",
+          executionShapeKey: "mainnet:reti:stake",
+          executionInput: { amount: 3_830_300_000 },
+          authorizedSpends: [{ assetId: "0", amountRaw: 3_830_300_000 }],
+          rationale: "Stake ALGO",
+          dependencies: ["swap-1"],
+        },
+      ],
+      holdDecisions: [],
+      projectedNetBenefitUsd: 2,
+      summary: "Accumulate COMPX and stake ALGO.",
+      confidence: 0.8,
+    };
+
+    const coerced = coercePortfolioPlanValue(drifted);
+    const parsed = portfolioPlanSchema.safeParse(coerced);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      return;
+    }
+    expect(parsed.data.actions[0]?.amountRaw).toBe("50000000");
+    expect(parsed.data.actions[0]?.authorizedSpends[0]).toEqual({
+      assetId: 31_566_704,
+      amountRaw: "50000000",
+    });
+    expect(parsed.data.actions[1]?.amountRaw).toBe("3830300000");
+    expect(parsed.data.actions[1]?.fromAssetId).toBe(0);
+    expect(parsed.data.actions[1]?.targetWeightPct).toBe(12.5);
+    expect(parsed.data.actions[1]?.authorizedSpends[0]).toEqual({
+      assetId: 0,
+      amountRaw: "3830300000",
+    });
   });
 
   it("coerces numeric strings for confidence and other plan scalars", () => {

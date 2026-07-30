@@ -110,7 +110,9 @@ several dry runs, and then set:
 ENABLE_TRANSACTION_SIGNING=true
 ```
 
-Optional soft steer for long-term liquid holds (not hard policy):
+Optional soft steer for long-term liquid holds (not hard policy). When below
+target, the agent should accumulate even if secondary liquidity is thin
+(builds that market); buys into these ASAs waive the Haystack price-impact cap:
 
 ```dotenv
 # assetId:targetPortfolioPct pairs — e.g. hold ~15% GOLD$

@@ -8,6 +8,7 @@ import {
   type PaymentReceipt,
   type PortfolioPlan,
   type PortfolioSnapshot,
+  type ReviewRun,
 } from "../domain.js";
 import type {
   Canix402Client,
@@ -15,7 +16,7 @@ import type {
 } from "../integrations/canix402/client.js";
 import { prepareAgentTools } from "../integrations/canix402/client.js";
 import type { PortfolioReader } from "../integrations/algorand/portfolio.js";
-import { prefetchHostResearch } from "./host-research.js";
+import { prefetchHostResearch, heldOpportunityIdsFromSnapshot, enrichOpportunitiesWithHeldPositions } from "./host-research.js";
 import {
   parseInferenceCostFromHeaders,
   summarizeInferenceCosts,
@@ -151,8 +152,29 @@ export interface PortfolioAgentResult {
   inferenceCost?: InferenceCostSummary;
 }
 
+/** Compact prior-run continuity for the agent task input. */
+export interface PriorReviewActionSummary {
+  actionId: string;
+  type?: string;
+  protocol?: string | null;
+  status: string;
+  error?: string;
+  transactionId?: string;
+}
+
+export interface PriorReviewContext {
+  id: string;
+  status: string;
+  completedAt?: string;
+  actions: PriorReviewActionSummary[];
+}
+
+export interface PortfolioAgentRunOptions {
+  priorReview?: PriorReviewContext;
+}
+
 export interface PortfolioAgent {
-  run(): Promise<PortfolioAgentResult>;
+  run(options?: PortfolioAgentRunOptions): Promise<PortfolioAgentResult>;
 }
 
 export interface PreferredHoldAsset {
@@ -169,7 +191,8 @@ export interface PortfolioHostGuidance {
   minProjectedNetImprovementUsd: number;
   /**
    * Soft operator preferences: hold these ASAs near targetPortfolioPct of
-   * portfolio USD. Not hard-enforced by policy.
+   * portfolio USD. Not hard-enforced by policy. Below-target preferred holds
+   * should still accumulate even when secondary liquidity is thin.
    */
   preferredHoldAssets: PreferredHoldAsset[];
 }
@@ -190,7 +213,7 @@ export interface PortfolioAgentOptions {
 const PORTFOLIO_AGENT_PROMPT_SHARED = `You are Brownie, an autonomous Algorand treasury portfolio manager (once per day).
 
 GOAL
-Deploy idle capital into high-TVL, execution-ready yield after fees/slippage/risk. Keep minLiquidReservePct liquid. Prefer deeper liquidity over peak APY. Host guidance numbers are in the task input—plan toward them; the host hard-enforces structure when signing.
+Deploy idle capital into high-TVL, execution-ready yield after fees/slippage/risk. Keep minLiquidReservePct liquid. Prefer deeper liquidity over peak APY for yield deployment (preferred holds below target are an exception—see below). A core mandate is to build CompX (ASA 1732165149) liquidity across protocols—DEX pools, farms, lending, and liquid holdings—so thin CompX markets are a reason to add carefully sized capital, not to skip. Host guidance numbers are in the task input—plan toward them; the host hard-enforces structure when signing.
 
 SNAPSHOT
 Host already loaded positions + liquid balances. Treat null/partial protocol data as incomplete, not zero. For liquidBalances: use amount/spendableAmount/usdValue for judgment and summaries; use amountRaw/spendableAmountRaw only in authorizedSpends and executionInput. Never multiply amountRaw by a USD price. Never invent decimals.
@@ -198,7 +221,7 @@ Host already loaded positions + liquid balances. Treat null/partial protocol dat
 CAPITAL
 Deploy surplus above the reserve when eligible executable opportunities exist. Hold only with named rejected candidates (id, APY, TVL, why). Ending liquid USDC (asset 31566704) should be ~5+ for ops (Canix x402 + ZeroSignal); if short, end with a small consolidate-usdc-buffer swap. Do not invent secrets, mnemonics, or payment details.
 Swaps are not only precursors to deposits: use swap to rotate idle liquid ASAs into USDC/ALGO for yield, to rebalance toward hostGuidance.preferredHoldAssets targetPortfolioPct, or to free capital—when fees/slippage are justified. Do not swap preferred-hold assets that are already near their target %.
-Preferred holds (hostGuidance.preferredHoldAssets): soft long-term targets as % of portfolio USD. Treat listed assets as intentional holdings up to targetPortfolioPct; do not nag or force-rotate them when near target. Below target, prefer accumulating via surplus rather than liquidating productive yield. Above target, trim only when net benefit clearly exceeds costs. Unlisted idle ASAs may be rotated into yield or preferred holds when economics work.
+Preferred holds (hostGuidance.preferredHoldAssets): soft long-term targets as % of portfolio USD. Treat listed assets as intentional holdings up to targetPortfolioPct; do not nag or force-rotate them when near target. Below target, prefer accumulating via surplus rather than liquidating productive yield. Thin/low secondary-market liquidity is NOT a reason to skip preferred-hold buys — accumulating below target helps build that liquidity and close the gap. For CompX (ASA 1732165149) and other preferred-hold buys below target: do NOT shrink, split, or pace the swap solely because of expected price impact/slippage — size toward closing the gap with available surplus; the host waives Haystack price-impact limits when buying preferred-hold ASAs. Above target, trim only when net benefit clearly exceeds costs. Unlisted idle ASAs may be rotated into yield or preferred holds when economics work.
 
 PLAN ACTIONS
 - Prefer executionReady with non-empty shapeKeys; empty shapeKeys = research-only—never invent keys.
@@ -207,7 +230,8 @@ PLAN ACTIONS
 - Tinyman farm rewards: claim against the reward position (positionType reward / opportunityId ending :farm) using that row's compatibleManageShapeKeys (e.g. mainnet:tinyman:staking-v1:farm:claimRewards). Do NOT claim against the farmed LP row — its manage keys are empty by design (exit is removeLiquidity + farm:uncommit only).
 - Swaps: (1) unlock required assets for a following open/increase, (2) consolidate USDC ops buffer, (3) rotate non-preferred idle liquid into deployable capital or preferred holds. Prefer canix_get_quote before sizing. If a quote tool returns an error (timeout, liquidity, impact), retry with a different size/pair or skip that swap and continue the plan—do not stop the whole review.
 - Missing required assets: prior swap action(s), then depend on those action ids only.
-- dependencies: only other action ids in this plan.
+- dependencies: only other action ids in this plan. Host signing runs execute only foundation actions (empty dependencies); dependents are deferred to the next review after balances refresh—so size each action to current spendable balances, not hoped-for proceeds from earlier steps in the same plan.
+- priorReview (when present): what already landed or was deferred/failed last run. Use it as continuity context, not a mandate to replay the same chain blindly.
 - projectedNetBenefitUsd: honest yield-vs-idle over holdingHorizonDays (often 30–90) minus one-time costs; use base supply/deposit APY, not reward boosts.
 - Re-evaluate every position each run; avoid churn only when net improvement is small vs costs.
 
@@ -375,32 +399,43 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     private readonly options: PortfolioAgentOptions,
   ) {}
 
-  async run(): Promise<PortfolioAgentResult> {
+  async run(
+    options: PortfolioAgentRunOptions = {},
+  ): Promise<PortfolioAgentResult> {
     const discoveredTools = await this.canix.listTools();
     assertRequiredCapabilities(discoveredTools, this.options.signingEnabled);
     const { snapshot, payments } = await this.portfolioReader.read();
 
     if (this.options.aiMode === "lite") {
-      return this.runLite(snapshot, payments);
+      return this.runLite(snapshot, payments, options.priorReview);
     }
-    return this.runFull(discoveredTools, snapshot, payments);
+    return this.runFull(
+      discoveredTools,
+      snapshot,
+      payments,
+      options.priorReview,
+    );
   }
 
   private async runLite(
     snapshot: PortfolioSnapshot,
     payments: PaymentReceipt[],
+    priorReview?: PriorReviewContext,
   ): Promise<PortfolioAgentResult> {
     const research = await prefetchHostResearch(this.canix, {
       walletAddress: this.options.walletAddress,
+      snapshot,
     });
     payments.push(...research.payments);
     const toolCalls = ["canix_get_positions", ...research.toolCalls];
     const inferenceCharges: InferenceCostCharge[] = [];
+    const heldOpportunityIds = heldOpportunityIdsFromSnapshot(snapshot);
     const researchedOpportunities = compactOpportunitiesForModel(
       research.opportunities,
       {
         minTvlUsd: this.options.hostGuidance.minTvlUsd,
         maxRows: MAX_OPPORTUNITY_TOOL_LIMIT,
+        pinOpportunityIds: heldOpportunityIds,
       },
     );
     const initialInput = JSON.stringify({
@@ -412,6 +447,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       portfolioSnapshot: compactSnapshotForModel(snapshot),
       researchedOpportunities,
       candidates: researchedOpportunities,
+      ...(priorReview ? { priorReview } : {}),
     });
 
     const { data, headers } = await createAgentResponse(this.openai, {
@@ -476,6 +512,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     discoveredTools: McpToolDefinition[],
     snapshot: PortfolioSnapshot,
     payments: PaymentReceipt[],
+    priorReview?: PriorReviewContext,
   ): Promise<PortfolioAgentResult> {
     const definitions = selectAgentTools(
       prepareAgentTools(discoveredTools),
@@ -492,6 +529,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       aiMode: "full",
       hostGuidance: this.options.hostGuidance,
       portfolioSnapshot: compactSnapshotForModel(snapshot),
+      ...(priorReview ? { priorReview } : {}),
     });
     /** Explicit client-side transcript; never use previous_response_id (ZS/privacy). */
     let conversationItems: unknown[] = [];
@@ -547,6 +585,27 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
             toolCalls,
             inferenceCost: summarizeInferenceCosts(inferenceCharges),
           };
+        }
+        const held = await enrichOpportunitiesWithHeldPositions(
+          this.canix,
+          this.options.walletAddress,
+          snapshot,
+          opportunities,
+        );
+        if (held.opportunities.length > 0) {
+          for (const item of held.opportunities) {
+            if (
+              !opportunities.some(
+                (candidate) =>
+                  candidate.opportunityId === item.opportunityId &&
+                  candidate.protocol === item.protocol,
+              )
+            ) {
+              opportunities.push(item);
+            }
+          }
+          toolCalls.push(...held.toolCalls);
+          payments.push(...held.payments);
         }
         return {
           snapshot,
@@ -754,6 +813,40 @@ export function createPortfolioAgent(
   return new OpenAiPortfolioAgent(client, canix, portfolioReader, options);
 }
 
+/**
+ * Slim last-run summary for agent continuity. Omits empty / report-only noise.
+ */
+export function buildPriorReviewContext(
+  run: ReviewRun | undefined,
+): PriorReviewContext | undefined {
+  if (!run?.executions || run.executions.length === 0) {
+    return undefined;
+  }
+  const planById = new Map(
+    (run.plan?.actions ?? []).map((action) => [action.id, action]),
+  );
+  return {
+    id: run.id,
+    status: run.status,
+    completedAt: run.completedAt,
+    actions: run.executions.map((execution) => {
+      const planned = planById.get(execution.actionId);
+      return {
+        actionId: execution.actionId,
+        ...(planned?.type ? { type: planned.type } : {}),
+        ...(planned ? { protocol: planned.protocol } : {}),
+        status: execution.status,
+        ...(execution.error
+          ? { error: truncateForLog(execution.error, 160) }
+          : {}),
+        ...(execution.transactionId
+          ? { transactionId: execution.transactionId }
+          : {}),
+      };
+    }),
+  };
+}
+
 /** Normalize OpenAI SDK / test mocks into body + optional HTTP headers. */
 export async function createAgentResponse(
   openai: ResponsesClient,
@@ -914,14 +1007,27 @@ export function compactToolResultForModel(
 /** Compact a host-collected opportunity list for a decide-only LLM turn. */
 export function compactOpportunitiesForModel(
   opportunities: Opportunity[],
-  options: { minTvlUsd: number; maxRows: number },
+  options: {
+    minTvlUsd: number;
+    maxRows: number;
+    pinOpportunityIds?: string[];
+  },
   meta?: unknown,
 ): unknown {
+  const pinIds = new Set(options.pinOpportunityIds ?? []);
   const eligible = opportunities
     .filter(
-      (item) => item.tvlUsd >= options.minTvlUsd || item.executionReady,
+      (item) =>
+        pinIds.has(item.opportunityId) ||
+        item.tvlUsd >= options.minTvlUsd ||
+        item.executionReady,
     )
     .sort((left, right) => {
+      const leftPinned = pinIds.has(left.opportunityId) ? 1 : 0;
+      const rightPinned = pinIds.has(right.opportunityId) ? 1 : 0;
+      if (leftPinned !== rightPinned) {
+        return rightPinned - leftPinned;
+      }
       if (left.executionReady !== right.executionReady) {
         return left.executionReady ? -1 : 1;
       }
@@ -937,8 +1043,11 @@ export function compactOpportunitiesForModel(
       sourceCount: opportunities.length,
       returnedCount: selected.length,
       truncated: opportunities.length > selected.length,
+      pinnedHeldCount: selected.filter((item) =>
+        pinIds.has(item.opportunityId),
+      ).length,
       hostNote:
-        "Compacted by host: sorted executionReady then TVL, capped rows, shapeKeys only (full shapes kept host-side).",
+        "Compacted by host: pinned held positions first, then executionReady/TVL, capped rows, shapeKeys only (full shapes kept host-side).",
     },
   };
 }
@@ -1245,6 +1354,14 @@ function coerceAuthorizedSpend(
   if (next.assetId === undefined && next.fromAssetId !== undefined) {
     next.assetId = next.fromAssetId;
   }
+  const assetId = coerceNonNegativeInt(next.assetId);
+  if (assetId !== undefined) {
+    next.assetId = assetId;
+  }
+  const amountRaw = coerceAmountString(next.amountRaw);
+  if (amountRaw !== undefined) {
+    next.amountRaw = amountRaw;
+  }
   return next;
 }
 
@@ -1316,6 +1433,25 @@ function coerceAction(action: unknown): unknown {
   ] as const) {
     if (!(key in next)) {
       next[key] = null;
+    }
+  }
+  // Models often emit base-unit amounts as JSON numbers; schema requires strings.
+  const amountRaw = coerceAmountString(next.amountRaw);
+  if (amountRaw !== undefined) {
+    next.amountRaw = amountRaw;
+  }
+  const fromAssetId = coerceNonNegativeInt(next.fromAssetId);
+  if (fromAssetId !== undefined) {
+    next.fromAssetId = fromAssetId;
+  }
+  const toAssetId = coerceNonNegativeInt(next.toAssetId);
+  if (toAssetId !== undefined) {
+    next.toAssetId = toAssetId;
+  }
+  if (next.targetWeightPct !== null && next.targetWeightPct !== undefined) {
+    const weight = asNumber(next.targetWeightPct);
+    if (weight !== undefined) {
+      next.targetWeightPct = weight;
     }
   }
   if (!Array.isArray(next.dependencies)) {
