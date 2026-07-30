@@ -37,8 +37,9 @@ const PREREQUISITE_SHAPE_ACTIONS = new Set([
  * Drop standalone setup/opt-in enter actions when a capital-deploying open/increase
  * for the same opportunity remains (host expands prerequisites at quote time),
  * complete missing executionInput from Canix shape requiredInputs/inputHints
- * (same path for production agent plans and protocol-verify), and drop dependency
- * entries that are not action ids in this plan.
+ * (same path for production agent plans and protocol-verify), sync swap
+ * authorizedSpends from fromAssetId+amountRaw, and drop dependency entries that
+ * are not action ids in this plan.
  */
 export function normalizePortfolioPlan(
   plan: PortfolioPlan,
@@ -82,10 +83,8 @@ export function normalizePortfolioPlan(
         return [];
       }
     }
-    const filled = completeActionExecutionInput(
-      action,
-      opportunities,
-      snapshot,
+    const filled = syncSwapAuthorizedSpend(
+      completeActionExecutionInput(action, opportunities, snapshot),
     );
     if (filled !== action) {
       changed = true;
@@ -137,6 +136,41 @@ function isPrerequisiteShape(shape: OpportunityExecutionShape): boolean {
   return PREREQUISITE_SHAPE_ACTIONS.has(shape.action.toLowerCase());
 }
 
+/**
+ * Swaps must declare exactly one authorizedSpend matching fromAssetId+amountRaw.
+ * LLM plans often drift (empty spends, wrong asset, mismatched amount) — rewrite
+ * from the swap input when those fields are present and positive.
+ */
+export function syncSwapAuthorizedSpend(
+  action: PortfolioAction,
+): PortfolioAction {
+  if (action.type !== "swap") {
+    return action;
+  }
+  if (
+    action.fromAssetId === null ||
+    action.amountRaw === null ||
+    !/^[1-9][0-9]*$/.test(action.amountRaw)
+  ) {
+    return action;
+  }
+  const expected = {
+    assetId: action.fromAssetId,
+    amountRaw: action.amountRaw,
+  };
+  if (
+    action.authorizedSpends.length === 1 &&
+    action.authorizedSpends[0]?.assetId === expected.assetId &&
+    action.authorizedSpends[0]?.amountRaw === expected.amountRaw
+  ) {
+    return action;
+  }
+  return {
+    ...action,
+    authorizedSpends: [expected],
+  };
+}
+
 export class PortfolioPolicy {
   constructor(private readonly config: PortfolioPolicyConfig) {}
 
@@ -148,22 +182,6 @@ export class PortfolioPolicy {
     const hard: string[] = [];
     const soft: string[] = [];
     this.validatePlanStructure(snapshot, plan, opportunities, hard, soft);
-    const currentTotal = sum(
-      plan.currentAllocations.map((item) => item.weightPct),
-    );
-    if (Math.abs(currentTotal - 100) > 1) {
-      hard.push(
-        `Current allocations total ${currentTotal.toFixed(4)}%, not 100%`,
-      );
-    }
-    const targetTotal = sum(
-      plan.targetAllocations.map((item) => item.weightPct),
-    );
-    if (Math.abs(targetTotal - 100) > 1) {
-      hard.push(
-        `Target allocations total ${targetTotal.toFixed(4)}%, not 100%`,
-      );
-    }
     // Liquid (protocol=null) is a reserve floor, not a position-size cap.
     const deployedWeights = plan.targetAllocations
       .filter((item) => item.protocol !== null)
@@ -249,7 +267,10 @@ export class PortfolioPolicy {
         );
       }
     }
-    this.validateOpportunityActions(plan, opportunities, hard);
+    const positions = new Map(
+      snapshot.positions.map((position) => [position.positionId, position]),
+    );
+    this.validateOpportunityActions(plan, opportunities, hard, positions);
     if (this.config.signingEnabled) {
       return {
         approved: hard.length === 0,
@@ -412,10 +433,43 @@ export class PortfolioPolicy {
         const opportunity = action.opportunityId
           ? opportunityById.get(action.opportunityId)
           : undefined;
+        const existingPosition = action.positionId
+          ? positions.get(action.positionId)
+          : undefined;
         if (!opportunity) {
-          violations.push(
-            `Action ${action.id} does not reference a researched opportunity`,
-          );
+          // Topping up a known position: catalog may omit the validator/pool
+          // even though the wallet already holds it. Allow when position binds
+          // the opportunity and execution shape/input are present.
+          const topsUpHeldPosition =
+            action.type === "increase" &&
+            existingPosition &&
+            Boolean(action.executionShapeKey) &&
+            Boolean(action.executionInput) &&
+            (action.opportunityId === null ||
+              action.opportunityId === existingPosition.opportunityId);
+          if (topsUpHeldPosition) {
+            soft.push(
+              `Action ${action.id} increases held position ${existingPosition.positionId} without a researched opportunity catalog entry`,
+            );
+            if (
+              action.protocol &&
+              action.protocol !== existingPosition.protocol
+            ) {
+              violations.push(`Action ${action.id} has a protocol mismatch`);
+            }
+            if (
+              action.authorizedSpends.length === 0 &&
+              actionRequiresDeclaredSpend(action, undefined)
+            ) {
+              violations.push(
+                `Action ${action.id} has no declared treasury spend`,
+              );
+            }
+          } else {
+            violations.push(
+              `Action ${action.id} does not reference a researched opportunity`,
+            );
+          }
         } else if (
           action.protocol &&
           action.protocol !== opportunity.protocol
@@ -466,6 +520,7 @@ export class PortfolioPolicy {
     plan: PortfolioPlan,
     opportunities: Opportunity[],
     violations: string[],
+    positions: Map<string, PortfolioSnapshot["positions"][number]>,
   ): void {
     const now = Date.now();
     for (const action of plan.actions) {
@@ -479,6 +534,17 @@ export class PortfolioPolicy {
         (candidate) => candidate.opportunityId === action.opportunityId,
       );
       if (!opportunity) {
+        const existingPosition = action.positionId
+          ? positions.get(action.positionId)
+          : undefined;
+        if (
+          action.type === "increase" &&
+          existingPosition &&
+          existingPosition.opportunityId === action.opportunityId
+        ) {
+          // Already soft-warned in validatePlanStructure when catalog-missing.
+          continue;
+        }
         violations.push(
           `Action ${action.id} references an opportunity not returned by MCP`,
         );

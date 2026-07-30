@@ -140,7 +140,7 @@ describe("probes", () => {
       probeHttpDependency("http://example.test/healthz", { fetchImpl }),
     ).resolves.toEqual({
       ok: false,
-      latencyMs: expect.any(Number),
+      latencyMs: expect.any(Number) as number,
       error: "HTTP 504",
     });
   });
@@ -153,7 +153,7 @@ describe("probes", () => {
       ),
     ).resolves.toMatchObject({
       ok: false,
-      error: expect.stringMatching(/timed out/i),
+      error: expect.stringMatching(/timed out/i) as string,
     });
   });
 });

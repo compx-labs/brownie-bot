@@ -36,7 +36,7 @@ describe("inference-cost", () => {
     expect(summary).toEqual({
       totalUsdc: "0.0125",
       requestCount: 2,
-      charges: expect.any(Array),
+      charges: expect.any(Array) as unknown[],
     });
     expect(formatInferenceCostLine(summary)).toBe(
       "ZeroSignal inference: 2 request(s), $0.0125 USDC",

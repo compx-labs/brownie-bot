@@ -61,6 +61,45 @@ export function inferClaimRequiredInputs(claimShapeKey: string): string[] {
 }
 
 /**
+ * Infer requiredInputs when topping up an existing position and the enter shape
+ * is not in the researched opportunity catalog (common for Réti validators).
+ */
+export function inferEnterRequiredInputs(enterShapeKey: string): string[] {
+  const key = enterShapeKey.toLowerCase();
+  if (key.includes("reti") && key.includes("stake")) {
+    return ["userAddress", "validatorId", "amount"];
+  }
+  if (key.includes("folks") && (key.includes("deposit") || key.includes("supply"))) {
+    return ["amount", "amountDenomination", "poolAppId"];
+  }
+  if (key.includes("myth") && (key.includes("stake") || key.includes("mint"))) {
+    return ["amount", "appId"];
+  }
+  if (key.includes("addliquidity")) {
+    if (key.includes("singleasset")) {
+      return [
+        "depositAssetId",
+        "depositAmount",
+        "assetAId",
+        "assetBId",
+        "maxSlippageBps",
+      ];
+    }
+    return [
+      "assetAId",
+      "assetBId",
+      "assetAAmount",
+      "assetBAmount",
+      "maxSlippageBps",
+    ];
+  }
+  if (key.includes("deposit") || key.includes("stake") || key.includes("supply")) {
+    return ["amount", "assetId"];
+  }
+  return ["amount"];
+}
+
+/**
  * Parse Tinyman farm reward position identity into claim inputs.
  * positionId: tinyman:reward:{poolAddress}:{programId}:{rewardAssetId}
  * notes (optional): Farm programId=…; poolAddress=…
@@ -222,36 +261,66 @@ export function resolveShapeForAction(
       ...existing,
       inputHints: {
         ...(borrowedHints ?? {}),
+        ...(position?.inputHints ?? {}),
         ...rewardHints,
         ...(existing.inputHints ?? {}),
       },
     };
   }
 
-  if (!["close", "reduce", "claim"].includes(action.type)) {
-    return undefined;
+  const segments = shapeKey.split(":");
+  if (["close", "reduce", "claim"].includes(action.type)) {
+    const isClaim = action.type === "claim";
+    return {
+      shapeKey,
+      protocol: action.protocol ?? opportunity?.protocol ?? "unknown",
+      protocolVersion: segments[2] ?? "v1",
+      action: segments[3] ?? action.type,
+      variant: segments[4] ?? "default",
+      title: shapeKey,
+      summary: isClaim ? `Claim via ${shapeKey}` : `Exit via ${shapeKey}`,
+      order: 99,
+      requiredInputs: isClaim
+        ? inferClaimRequiredInputs(shapeKey)
+        : inferExitRequiredInputs(shapeKey),
+      requiredAssetIds: opportunity?.assetIds ?? [],
+      inputHints: {
+        ...(borrowedHints ?? {}),
+        ...(position?.inputHints ?? {}),
+        ...rewardHints,
+      },
+    };
   }
 
-  const segments = shapeKey.split(":");
-  const isClaim = action.type === "claim";
-  return {
-    shapeKey,
-    protocol: action.protocol ?? opportunity?.protocol ?? "unknown",
-    protocolVersion: segments[2] ?? "v1",
-    action: segments[3] ?? action.type,
-    variant: segments[4] ?? "default",
-    title: shapeKey,
-    summary: isClaim ? `Claim via ${shapeKey}` : `Exit via ${shapeKey}`,
-    order: 99,
-    requiredInputs: isClaim
-      ? inferClaimRequiredInputs(shapeKey)
-      : inferExitRequiredInputs(shapeKey),
-    requiredAssetIds: opportunity?.assetIds ?? [],
-    inputHints: {
-      ...(borrowedHints ?? {}),
-      ...rewardHints,
-    },
-  };
+  // increase/open: synthesize enter shape from position hints when the researched
+  // catalog missed this opportunity (e.g. Réti validator not in top-N list).
+  if (
+    ["open", "increase"].includes(action.type) &&
+    position &&
+    (position.inputHints || action.type === "increase")
+  ) {
+    return {
+      shapeKey,
+      protocol:
+        action.protocol ?? opportunity?.protocol ?? position.protocol ?? "unknown",
+      protocolVersion: segments[2] ?? "v1",
+      action: segments[3] ?? action.type,
+      variant: segments[4] ?? "default",
+      title: shapeKey,
+      summary: `Enter via ${shapeKey}`,
+      order: 99,
+      requiredInputs: inferEnterRequiredInputs(shapeKey),
+      requiredAssetIds:
+        opportunity?.assetIds ??
+        (position.assetId !== null ? [position.assetId] : []),
+      inputHints: {
+        ...(borrowedHints ?? {}),
+        ...(position.inputHints ?? {}),
+      },
+    };
+  }
+
+  return undefined;
 }
 
 function amountsByAssetFromAction(
@@ -320,10 +389,14 @@ export function completeExecutionInput(options: {
     if (key === "userAddress") {
       continue;
     }
-    if (input[key] !== undefined) {
+    const lower = key.toLowerCase();
+    if (!isMissingInputValue(input[key])) {
+      const coercedAssetId = coerceNonNegativeIntAssetId(key, input[key]);
+      if (coercedAssetId !== undefined) {
+        input[key] = coercedAssetId;
+      }
       continue;
     }
-    const lower = key.toLowerCase();
     if (lower === "assetaid" || lower === "asseta_id") {
       input[key] =
         pairIds.find((assetId) => assetId !== ALGO_ASSET_ID) ??
@@ -336,6 +409,28 @@ export function completeExecutionInput(options: {
         pairIds.find((assetId) => assetId === ALGO_ASSET_ID) ??
         pairIds[1] ??
         ALGO_ASSET_ID;
+      continue;
+    }
+    if (lower === "depositassetid" || lower === "deposit_asset_id") {
+      const depositAssetId = resolveDepositAssetId({
+        action,
+        input,
+        amountsByAsset,
+      });
+      if (depositAssetId !== undefined) {
+        input[key] = depositAssetId;
+      }
+      continue;
+    }
+    if (lower === "outputassetid" || lower === "output_asset_id") {
+      const outputAssetId = resolveOutputAssetId({
+        action,
+        input,
+        pairIds,
+      });
+      if (outputAssetId !== undefined) {
+        input[key] = outputAssetId;
+      }
       continue;
     }
     if (lower.includes("asseta") && lower.includes("amount")) {
@@ -387,6 +482,19 @@ export function completeExecutionInput(options: {
       input[key] = "asset";
       continue;
     }
+    if (lower === "depositamount") {
+      const depositAssetId =
+        typeof input.depositAssetId === "number"
+          ? input.depositAssetId
+          : resolveDepositAssetId({ action, input, amountsByAsset });
+      if (
+        depositAssetId !== undefined &&
+        amountsByAsset.has(depositAssetId)
+      ) {
+        input[key] = amountsByAsset.get(depositAssetId);
+        continue;
+      }
+    }
     if (/amount/i.test(key) && primaryAmount) {
       input[key] = primaryAmount;
     }
@@ -410,6 +518,93 @@ export function completeExecutionInput(options: {
 
 function isFolksWithdrawShape(shapeKey: string): boolean {
   return /folks/i.test(shapeKey) && /withdraw/i.test(shapeKey);
+}
+
+function isMissingInputValue(value: unknown): boolean {
+  return value === undefined || value === null || value === "";
+}
+
+function coerceNonNegativeIntAssetId(
+  key: string,
+  value: unknown,
+): number | undefined {
+  if (!/assetid$/i.test(key) && !/asset_id$/i.test(key)) {
+    return undefined;
+  }
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return undefined; // already valid
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function resolveDepositAssetId(options: {
+  action: PortfolioAction;
+  input: Record<string, unknown>;
+  amountsByAsset: Map<number, string>;
+}): number | undefined {
+  const { action, input, amountsByAsset } = options;
+  if (action.fromAssetId !== null) {
+    return action.fromAssetId;
+  }
+  if (action.authorizedSpends.length === 1) {
+    return action.authorizedSpends[0]!.assetId;
+  }
+  if (typeof input.assetId === "number" && Number.isInteger(input.assetId)) {
+    return input.assetId;
+  }
+  if (typeof input.assetId === "string" && /^\d+$/.test(input.assetId)) {
+    const parsed = Number(input.assetId);
+    if (Number.isSafeInteger(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  if (amountsByAsset.size === 1) {
+    return [...amountsByAsset.keys()][0];
+  }
+  if (amountsByAsset.has(USDC_ASSET_ID)) {
+    return USDC_ASSET_ID;
+  }
+  if (amountsByAsset.has(ALGO_ASSET_ID)) {
+    return ALGO_ASSET_ID;
+  }
+  return undefined;
+}
+
+/**
+ * Single-asset LP exit: which pool leg to receive.
+ * Prefer explicit toAssetId, then USDC when in-pair (treasury ops), else non-ALGO.
+ */
+function resolveOutputAssetId(options: {
+  action: PortfolioAction;
+  input: Record<string, unknown>;
+  pairIds: number[];
+}): number | undefined {
+  const { action, input, pairIds } = options;
+  if (action.toAssetId !== null) {
+    return action.toAssetId;
+  }
+  const poolAssets = [
+    typeof input.assetAId === "number" ? input.assetAId : undefined,
+    typeof input.assetBId === "number" ? input.assetBId : undefined,
+    ...pairIds,
+  ].filter((assetId): assetId is number => typeof assetId === "number");
+  if (poolAssets.includes(USDC_ASSET_ID)) {
+    return USDC_ASSET_ID;
+  }
+  const nonAlgo = poolAssets.find((assetId) => assetId !== ALGO_ASSET_ID);
+  if (nonAlgo !== undefined) {
+    return nonAlgo;
+  }
+  if (poolAssets.includes(ALGO_ASSET_ID)) {
+    return ALGO_ASSET_ID;
+  }
+  return undefined;
 }
 
 function sanitizeCompletedInput(
@@ -441,46 +636,62 @@ export function completeActionExecutionInput(
   opportunities: Opportunity[],
   snapshot?: PortfolioSnapshot,
 ): PortfolioAction {
-  if (!action.executionShapeKey) {
-    return action;
+  const position = findPositionForAction(action, snapshot);
+  const opportunityId =
+    action.opportunityId ?? position?.opportunityId ?? null;
+  const withOpportunity =
+    opportunityId !== action.opportunityId
+      ? { ...action, opportunityId }
+      : action;
+
+  if (!withOpportunity.executionShapeKey) {
+    return withOpportunity;
   }
-  const shape = resolveShapeForAction(action, opportunities, snapshot);
-  if (!shape) {
-    return action;
-  }
-  const opportunity = findOpportunityForAction(
-    action,
+  const shape = resolveShapeForAction(
+    withOpportunity,
     opportunities,
     snapshot,
   );
-  const position = findPositionForAction(action, snapshot);
+  if (!shape) {
+    return withOpportunity;
+  }
+  const opportunity = findOpportunityForAction(
+    withOpportunity,
+    opportunities,
+    snapshot,
+  );
   const executionInput = completeExecutionInput({
-    action,
+    action: withOpportunity,
     shape,
     opportunity,
     position,
   });
-  const previous = action.executionInput ?? {};
+  const previous = withOpportunity.executionInput ?? {};
   const unchanged =
-    action.executionInput !== null &&
+    withOpportunity.executionInput !== null &&
+    withOpportunity.opportunityId === opportunityId &&
     Object.keys(executionInput).length === Object.keys(previous).length &&
     Object.entries(executionInput).every(
       ([key, value]) => previous[key] === value,
     );
   if (unchanged) {
-    return action;
+    return withOpportunity;
+  }
+  let amountRaw = withOpportunity.amountRaw;
+  if (
+    amountRaw === null &&
+    ["close", "reduce", "claim"].includes(withOpportunity.type)
+  ) {
+    amountRaw = position?.amountRaw ?? null;
+  }
+  if (amountRaw === null && typeof executionInput.amount === "string") {
+    amountRaw = executionInput.amount;
   }
   return {
-    ...action,
-    amountRaw:
-      action.amountRaw ??
-      position?.amountRaw ??
-      (typeof executionInput.amount === "string"
-        ? executionInput.amount
-        : null),
-    fromAssetId: action.fromAssetId ?? position?.assetId ?? null,
-    opportunityId:
-      action.opportunityId ?? position?.opportunityId ?? null,
+    ...withOpportunity,
+    amountRaw,
+    fromAssetId: withOpportunity.fromAssetId ?? position?.assetId ?? null,
+    opportunityId,
     executionInput,
   };
 }

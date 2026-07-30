@@ -11,7 +11,8 @@ Keep this file updated when priorities change so work does not get lost across c
 - [x] **Real `/health`** — last review/accounting age + status; optional `?deps=1` probes for zs-proxy, Algod, Canix
 - [x] **Telegram inbound commands** — long-poll `/help` `/status` `/run` `/accounting` from `TELEGRAM_CHAT_ID` on the long-lived server
 - [x] **Tinyman farm claim host path** — synthesize `claim` executionInput from reward `positionId` / notes; claim must bind reward row not farmed LP
-- [x] **Preferred hold steer** — `PREFERRED_HOLD_ASSETS=assetId:pct,…` soft targets in hostGuidance + prompt guidance that swaps can rotate idle non-preferred ASAs
+- [x] **Preferred hold steer** — `PREFERRED_HOLD_ASSETS=assetId:pct,…` soft targets in hostGuidance + prompt guidance that swaps can rotate idle non-preferred ASAs; below-target preferred holds override deep-liquidity preference (accumulate / build thin markets); buys into preferred-hold ASAs waive Haystack `MAX_PRICE_IMPACT_PCT`
+- [x] **Held-position increase path** — host research pins/fetches opportunityIds already in the snapshot; synthesize Réti (etc.) enter `executionInput` from position hints; policy allows catalog-miss `increase` on held positions instead of blocking the whole plan
 
 ## Next (recommended order)
 

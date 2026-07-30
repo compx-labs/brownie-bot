@@ -12,10 +12,17 @@ import type {
 } from "../domain.js";
 import type { ReviewRunStore } from "../integrations/storage/review-run-store.js";
 import { sanitizeErrorMessage } from "../util/errors.js";
-import type { PortfolioAgent } from "./portfolio-agent.js";
+import {
+  buildPriorReviewContext,
+  type PortfolioAgent,
+} from "./portfolio-agent.js";
 import type { CoordinatorMode, RunCoordinator } from "./run-coordinator.js";
 import { RunCoordinatorBusyError } from "./run-coordinator.js";
 import type { RunNotifier } from "./telegram.js";
+
+/** Signing runs only execute no-dependency actions; dependents wait for a later review. */
+export const DEFERRED_DEPENDENT_ACTION_ERROR =
+  "Deferred to next review (depends on earlier plan steps)";
 
 export class RunInProgressError extends Error {
   constructor(message = "A treasury review is already running") {
@@ -67,6 +74,10 @@ export class TreasuryReviewService {
     private readonly portfolioReader?: SnapshotReader,
     private readonly coordinator?: RunCoordinator,
     private readonly reviewStore?: ReviewRunStore,
+    /** Fetch optional operator prefs at the start of each review. */
+    private readonly loadOperatorPreferences?: () => Promise<
+      string | undefined
+    >,
   ) {}
 
   async run(mode: CoordinatorMode = "wait"): Promise<ReviewRun> {
@@ -105,7 +116,13 @@ export class TreasuryReviewService {
           "Treasury wallet is not configured; set BOT_WALLET and WALLET_MNEMONIC",
         );
       }
-      const agentResult = await this.agent.run();
+      const operatorPreferences = this.loadOperatorPreferences
+        ? await this.loadOperatorPreferences()
+        : undefined;
+      const agentResult = await this.agent.run({
+        priorReview: buildPriorReviewContext(this.state.latest),
+        operatorPreferences,
+      });
       if (!agentResult.plan) {
         result = {
           id,
@@ -144,6 +161,15 @@ export class TreasuryReviewService {
           for (const action of orderActions(agentResult.plan.actions)) {
             if (action.type === "hold") {
               executions.push({ actionId: action.id, status: "skipped" });
+              continue;
+            }
+            // Foundation wave only: dependents replan next review against fresh balances.
+            if (action.dependencies.length > 0) {
+              executions.push({
+                actionId: action.id,
+                status: "skipped",
+                error: DEFERRED_DEPENDENT_ACTION_ERROR,
+              });
               continue;
             }
             if (

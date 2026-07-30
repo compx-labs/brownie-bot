@@ -5,6 +5,7 @@ import type {
   PortfolioAgentResult,
 } from "../src/services/portfolio-agent.js";
 import {
+  DEFERRED_DEPENDENT_ACTION_ERROR,
   rankOpportunities,
   RunInProgressError,
   type ActionExecutor,
@@ -12,27 +13,27 @@ import {
   TreasuryReviewService,
 } from "../src/services/treasury-review.js";
 import type { RunNotifier } from "../src/services/telegram.js";
+import type { PortfolioAction } from "../src/domain.js";
 import { opportunity, portfolioPlan, portfolioSnapshot } from "./fixtures.js";
 
 function dependencies(agent: PortfolioAgent) {
-  const policy: PlanValidator = {
-    validate: vi.fn().mockReturnValue({
-      approved: true,
-      violations: [],
-      warnings: [],
-      metrics: {
-        maxPositionPct: 0,
-        maxProtocolPct: 0,
-        liquidReservePct: 100,
-        turnoverPct: 0,
-      },
-    }),
-  };
-  const executor: ActionExecutor = {
-    executeAction: vi.fn(),
-  };
-  const notifier: RunNotifier = { send: vi.fn() };
-  return { agent, policy, executor, notifier };
+  const validate = vi.fn().mockReturnValue({
+    approved: true,
+    violations: [],
+    warnings: [],
+    metrics: {
+      maxPositionPct: 0,
+      maxProtocolPct: 0,
+      liquidReservePct: 100,
+      turnoverPct: 0,
+    },
+  });
+  const executeAction = vi.fn();
+  const send = vi.fn();
+  const policy: PlanValidator = { validate };
+  const executor: ActionExecutor = { executeAction };
+  const notifier: RunNotifier = { send };
+  return { agent, policy, executor, notifier, validate, executeAction, send };
 }
 
 function service(
@@ -213,12 +214,12 @@ describe("TreasuryReviewService", () => {
       planRawText: "Useful narrative plan without schema.",
       planParseError: "invalid structured plan: summary: Required",
     });
-    expect(deps.notifier.send).toHaveBeenCalledOnce();
-    expect(deps.notifier.send).toHaveBeenCalledWith(
+    expect(deps.send).toHaveBeenCalledOnce();
+    expect(deps.send).toHaveBeenCalledWith(
       expect.objectContaining({ status: "reported" }),
     );
-    expect(deps.policy.validate).not.toHaveBeenCalled();
-    expect(deps.executor.executeAction).not.toHaveBeenCalled();
+    expect(deps.validate).not.toHaveBeenCalled();
+    expect(deps.executeAction).not.toHaveBeenCalled();
   });
 
   it("sanitizes HTML gateway timeouts from the portfolio agent", async () => {
@@ -391,5 +392,332 @@ describe("TreasuryReviewService", () => {
       reconciledSnapshot,
     });
     expect(readPortfolio).toHaveBeenCalledOnce();
+  });
+
+  it("executes only foundation (no-dependency) actions when signing", async () => {
+    const reduce = {
+      id: "reduce-1",
+      type: "reduce" as const,
+      protocol: "tinyman",
+      opportunityId: "tinyman:pool:1",
+      positionId: "pos-1",
+      amountRaw: "1000",
+      fromAssetId: 1,
+      toAssetId: 31_566_704,
+      targetWeightPct: null,
+      executionShapeKey: "tinyman:reduce",
+      executionInput: {},
+      authorizedSpends: [],
+      rationale: "Free USDC.",
+      dependencies: [],
+    };
+    const swap = {
+      id: "swap-1",
+      type: "swap" as const,
+      protocol: null,
+      opportunityId: null,
+      positionId: null,
+      amountRaw: "1000000",
+      fromAssetId: 31_566_704,
+      toAssetId: 0,
+      targetWeightPct: null,
+      executionShapeKey: null,
+      executionInput: null,
+      authorizedSpends: [{ assetId: 31_566_704, amountRaw: "1000000" }],
+      rationale: "USDC to ALGO.",
+      dependencies: ["reduce-1"],
+    };
+    const open = {
+      id: "open-1",
+      type: "open" as const,
+      protocol: "reti",
+      opportunityId: "reti:1",
+      positionId: null,
+      amountRaw: "1000000",
+      fromAssetId: 0,
+      toAssetId: null,
+      targetWeightPct: 10,
+      executionShapeKey: "reti:stake",
+      executionInput: {},
+      authorizedSpends: [{ assetId: 0, amountRaw: "1000000" }],
+      rationale: "Stake ALGO.",
+      dependencies: ["swap-1"],
+    };
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot(),
+        plan: portfolioPlan({
+          actions: [reduce, swap, open],
+          projectedNetBenefitUsd: 5,
+        }),
+        opportunities: [opportunity()],
+        payments: [],
+        toolCalls: [],
+      }),
+    };
+    const executeAction = vi.fn().mockResolvedValue({
+      outcome: {
+        actionId: "reduce-1",
+        status: "confirmed",
+        transactionId: "TX-REDUCE",
+      },
+      payments: [],
+    });
+    const deps = dependencies(agent);
+    const instance = new TreasuryReviewService(
+      deps.agent,
+      deps.policy,
+      { executeAction },
+      deps.notifier,
+      {},
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      true,
+    );
+
+    const result = await instance.run();
+    expect(result.status).toBe("partially-executed");
+    expect(result.executions).toEqual([
+      {
+        actionId: "reduce-1",
+        status: "confirmed",
+        transactionId: "TX-REDUCE",
+      },
+      {
+        actionId: "swap-1",
+        status: "skipped",
+        error: DEFERRED_DEPENDENT_ACTION_ERROR,
+      },
+      {
+        actionId: "open-1",
+        status: "skipped",
+        error: DEFERRED_DEPENDENT_ACTION_ERROR,
+      },
+    ]);
+    expect(executeAction).toHaveBeenCalledOnce();
+    expect(executeAction).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "reduce-1" }),
+      expect.anything(),
+    );
+  });
+
+  it("still executes independent no-dependency actions together", async () => {
+    const claim = {
+      id: "claim-1",
+      type: "claim" as const,
+      protocol: "tinyman",
+      opportunityId: "tinyman:farm:1",
+      positionId: "farm-1",
+      amountRaw: null,
+      fromAssetId: null,
+      toAssetId: null,
+      targetWeightPct: null,
+      executionShapeKey: "tinyman:claim",
+      executionInput: {},
+      authorizedSpends: [],
+      rationale: "Claim rewards.",
+      dependencies: [],
+    };
+    const reduce = {
+      id: "reduce-1",
+      type: "reduce" as const,
+      protocol: "tinyman",
+      opportunityId: "tinyman:pool:1",
+      positionId: "pos-1",
+      amountRaw: "1000",
+      fromAssetId: 1,
+      toAssetId: 31_566_704,
+      targetWeightPct: null,
+      executionShapeKey: "tinyman:reduce",
+      executionInput: {},
+      authorizedSpends: [],
+      rationale: "Free USDC.",
+      dependencies: [],
+    };
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot(),
+        plan: portfolioPlan({
+          actions: [claim, reduce],
+          projectedNetBenefitUsd: 5,
+        }),
+        opportunities: [],
+        payments: [],
+        toolCalls: [],
+      }),
+    };
+    const executeAction = vi.fn().mockImplementation((action: PortfolioAction) =>
+      Promise.resolve({
+        outcome: {
+          actionId: action.id,
+          status: "confirmed",
+          transactionId: `TX-${action.id}`,
+        },
+        payments: [],
+      }),
+    );
+    const deps = dependencies(agent);
+    const instance = new TreasuryReviewService(
+      deps.agent,
+      deps.policy,
+      { executeAction },
+      deps.notifier,
+      {},
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      true,
+    );
+
+    const result = await instance.run();
+    expect(result.status).toBe("confirmed");
+    expect(executeAction).toHaveBeenCalledTimes(2);
+    expect(result.executions?.map((item) => item.actionId).sort()).toEqual([
+      "claim-1",
+      "reduce-1",
+    ]);
+  });
+
+  it("dry-run still validates the full dependency chain without deferred skips", async () => {
+    const swap = {
+      id: "swap-1",
+      type: "swap" as const,
+      protocol: null,
+      opportunityId: null,
+      positionId: null,
+      amountRaw: "1000000",
+      fromAssetId: 31_566_704,
+      toAssetId: 0,
+      targetWeightPct: null,
+      executionShapeKey: null,
+      executionInput: null,
+      authorizedSpends: [{ assetId: 31_566_704, amountRaw: "1000000" }],
+      rationale: "USDC to ALGO.",
+      dependencies: [],
+    };
+    const open = {
+      id: "open-1",
+      type: "open" as const,
+      protocol: "reti",
+      opportunityId: "reti:1",
+      positionId: null,
+      amountRaw: "1000000",
+      fromAssetId: 0,
+      toAssetId: null,
+      targetWeightPct: 10,
+      executionShapeKey: "reti:stake",
+      executionInput: {},
+      authorizedSpends: [{ assetId: 0, amountRaw: "1000000" }],
+      rationale: "Stake ALGO.",
+      dependencies: ["swap-1"],
+    };
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot(),
+        plan: portfolioPlan({
+          actions: [swap, open],
+          projectedNetBenefitUsd: 5,
+        }),
+        opportunities: [opportunity()],
+        payments: [],
+        toolCalls: [],
+      }),
+    };
+    const executeAction = vi.fn();
+    const { instance } = service(agent, {
+      executor: { executeAction },
+    });
+
+    await expect(instance.run()).resolves.toMatchObject({
+      status: "validated-dry-run",
+      executions: [
+        { actionId: "swap-1", status: "validated-dry-run" },
+        { actionId: "open-1", status: "validated-dry-run" },
+      ],
+    });
+    expect(executeAction).not.toHaveBeenCalled();
+  });
+
+  it("passes priorReview from state.latest into the agent", async () => {
+    const prior = {
+      id: "prior-run",
+      startedAt: "2026-07-30T12:00:00.000Z",
+      completedAt: "2026-07-30T12:01:00.000Z",
+      status: "partially-executed" as const,
+      mode: "autonomous" as const,
+      signingEnabled: true,
+      walletAddress: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      plan: portfolioPlan({
+        actions: [
+          {
+            id: "reduce-1",
+            type: "reduce" as const,
+            protocol: "tinyman",
+            opportunityId: "tinyman:pool:1",
+            positionId: "pos-1",
+            amountRaw: "1000",
+            fromAssetId: 1,
+            toAssetId: 31_566_704,
+            targetWeightPct: null,
+            executionShapeKey: "tinyman:reduce",
+            executionInput: {},
+            authorizedSpends: [],
+            rationale: "Free USDC.",
+            dependencies: [],
+          },
+        ],
+      }),
+      executions: [
+        {
+          actionId: "reduce-1",
+          status: "confirmed" as const,
+          transactionId: "TX-PRIOR",
+        },
+        {
+          actionId: "swap-1",
+          status: "skipped" as const,
+          error: DEFERRED_DEPENDENT_ACTION_ERROR,
+        },
+      ],
+      opportunities: [],
+    };
+    const run = vi.fn().mockResolvedValue({
+      snapshot: portfolioSnapshot(),
+      plan: portfolioPlan(),
+      opportunities: [],
+      payments: [],
+      toolCalls: [],
+    });
+    const agent: PortfolioAgent = { run };
+    const deps = dependencies(agent);
+    const instance = new TreasuryReviewService(
+      deps.agent,
+      deps.policy,
+      deps.executor,
+      deps.notifier,
+      { latest: prior },
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      false,
+    );
+
+    await instance.run();
+    expect(run).toHaveBeenCalledWith({
+      priorReview: {
+        id: "prior-run",
+        status: "partially-executed",
+        completedAt: "2026-07-30T12:01:00.000Z",
+        actions: [
+          {
+            actionId: "reduce-1",
+            type: "reduce",
+            protocol: "tinyman",
+            status: "confirmed",
+            transactionId: "TX-PRIOR",
+          },
+          {
+            actionId: "swap-1",
+            status: "skipped",
+            error: DEFERRED_DEPENDENT_ACTION_ERROR,
+          },
+        ],
+      },
+    });
   });
 });

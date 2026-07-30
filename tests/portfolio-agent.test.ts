@@ -7,6 +7,7 @@ import {
   OpenAiPortfolioAgent,
   MAX_OPPORTUNITY_TOOL_LIMIT,
   PORTFOLIO_AGENT_PROMPT_LITE,
+  buildPortfolioAgentInstructions,
   clampOpportunityToolArgs,
   coercePortfolioPlanValue,
   compactToolResultForModel,
@@ -100,12 +101,11 @@ function setup(
     getPersonalizedOpportunities,
     getOpportunities,
   } as unknown as Canix402Client;
-  const reader: PortfolioReader = {
-    read: vi.fn().mockResolvedValue({
-      snapshot: portfolioSnapshot(),
-      payments: [],
-    }),
-  };
+  const read = vi.fn().mockResolvedValue({
+    snapshot: portfolioSnapshot(),
+    payments: [],
+  });
+  const reader: PortfolioReader = { read };
   const openai: ResponsesClient = { responses: { create } };
   return {
     agent: new OpenAiPortfolioAgent(openai, canix, reader, {
@@ -131,6 +131,7 @@ function setup(
     getOpportunities,
     canix,
     reader,
+    read,
   };
 }
 
@@ -271,6 +272,76 @@ describe("OpenAiPortfolioAgent", () => {
         {
           amountUsdc: "0.012",
           headers: { "x-zs-inference-amount": "0.012" },
+        },
+      ],
+    });
+  });
+
+  it("appends operator preferences to lite instructions when provided", async () => {
+    const { agent, create } = setup(
+      [
+        {
+          id: "response-1",
+          output: [],
+          output_text: JSON.stringify(portfolioPlan()),
+        },
+      ],
+      { aiMode: "lite" },
+    );
+
+    await agent.run({ operatorPreferences: "Build CompX liquidity." });
+
+    const request = create.mock.calls[0]?.[0] as { instructions: string };
+    expect(request.instructions).toBe(
+      buildPortfolioAgentInstructions("lite", "Build CompX liquidity."),
+    );
+    expect(request.instructions).toContain("OPERATOR PREFERENCES");
+    expect(request.instructions).toContain("Build CompX liquidity.");
+  });
+
+  it("includes priorReview in the task input when provided", async () => {
+    const { agent, create } = setup(
+      [
+        {
+          id: "response-1",
+          output: [],
+          output_text: JSON.stringify(portfolioPlan()),
+        },
+      ],
+      { aiMode: "lite" },
+    );
+
+    await agent.run({
+      priorReview: {
+        id: "prior-1",
+        status: "partially-executed",
+        completedAt: "2026-07-30T12:00:00.000Z",
+        actions: [
+          {
+            actionId: "reduce-1",
+            type: "reduce",
+            protocol: "tinyman",
+            status: "confirmed",
+            transactionId: "TX1",
+          },
+        ],
+      },
+    });
+
+    const input = JSON.parse(
+      (create.mock.calls[0]?.[0] as { input: string }).input,
+    ) as { priorReview?: { id: string; actions: unknown[] } };
+    expect(input.priorReview).toEqual({
+      id: "prior-1",
+      status: "partially-executed",
+      completedAt: "2026-07-30T12:00:00.000Z",
+      actions: [
+        {
+          actionId: "reduce-1",
+          type: "reduce",
+          protocol: "tinyman",
+          status: "confirmed",
+          transactionId: "TX1",
         },
       ],
     });
@@ -423,7 +494,6 @@ describe("OpenAiPortfolioAgent", () => {
         name,
         inputSchema: { type: "object", properties: {} },
       })),
-      false,
     ).map((tool) => tool.name);
 
     expect(selected).toEqual([
@@ -434,8 +504,9 @@ describe("OpenAiPortfolioAgent", () => {
       "canix_list_execution_shapes",
       "canix_get_quote",
     ]);
-    expect(clampOpportunityToolArgs("canix_list_opportunities", { limit: 200 }))
-      .toEqual({ limit: MAX_OPPORTUNITY_TOOL_LIMIT });
+    expect(
+      clampOpportunityToolArgs("canix_list_opportunities", { limit: 200 }),
+    ).toEqual({ limit: MAX_OPPORTUNITY_TOOL_LIMIT });
   });
 
   it("coerces canix_get_quote asset ids from strings to integers", () => {
@@ -455,7 +526,7 @@ describe("OpenAiPortfolioAgent", () => {
   });
 
   it("scales liquid balance base units for the model input", async () => {
-    const { agent, create, reader } = setup([
+    const { agent, create, read } = setup([
       {
         id: "response-1",
         output: [
@@ -473,7 +544,7 @@ describe("OpenAiPortfolioAgent", () => {
         output_text: JSON.stringify(portfolioPlan()),
       },
     ]);
-    vi.mocked(reader.read).mockResolvedValueOnce({
+    read.mockResolvedValueOnce({
       snapshot: portfolioSnapshot({
         liquidBalances: [
           {
@@ -611,9 +682,9 @@ describe("OpenAiPortfolioAgent", () => {
           item.content.includes("valid portfolio_plan JSON"),
       ),
     ).toBe(true);
-    expect(repairRequest.input.some((item) => item.type === "function_call")).toBe(
-      true,
-    );
+    expect(
+      repairRequest.input.some((item) => item.type === "function_call"),
+    ).toBe(true);
     errorSpy.mockRestore();
   });
 
@@ -824,9 +895,7 @@ describe("OpenAiPortfolioAgent", () => {
         noActionPositions: [
           { positionId: "pos-liquid", reason: "Keep reserve" },
         ],
-        rejectedCandidates: [
-          { opportunityId: "opp-x", reason: "TVL too low" },
-        ],
+        rejectedCandidates: [{ opportunityId: "opp-x", reason: "TVL too low" }],
         summary: {
           narrative: "Deploy idle USDC into Folks",
           totalProjectedNetBenefitUsd: 12.5,
@@ -852,6 +921,70 @@ describe("OpenAiPortfolioAgent", () => {
     expect(parsed.data.projectedNetBenefitUsd).toBe(12.5);
     expect(typeof parsed.data.summary).toBe("string");
     expect(parsed.data.summary).toContain("Deploy idle USDC");
+  });
+
+  it("coerces numeric amountRaw fields into digit strings", () => {
+    const drifted = {
+      currentAllocations: [],
+      targetAllocations: [],
+      actions: [
+        {
+          id: "swap-1",
+          type: "swap",
+          protocol: null,
+          opportunityId: null,
+          positionId: null,
+          amountRaw: 50_000_000,
+          fromAssetId: 31_566_704,
+          toAssetId: 0,
+          targetWeightPct: null,
+          executionShapeKey: null,
+          executionInput: null,
+          authorizedSpends: [{ assetId: 31_566_704, amountRaw: 50_000_000 }],
+          rationale: "Swap USDC to ALGO",
+          dependencies: [],
+        },
+        {
+          id: "increase-1",
+          type: "increase",
+          protocol: "reti",
+          opportunityId: "reti:validator:1",
+          positionId: "reti:1",
+          amountRaw: 3_830_300_000,
+          fromAssetId: "0",
+          toAssetId: null,
+          targetWeightPct: "12.5",
+          executionShapeKey: "mainnet:reti:stake",
+          executionInput: { amount: 3_830_300_000 },
+          authorizedSpends: [{ assetId: "0", amountRaw: 3_830_300_000 }],
+          rationale: "Stake ALGO",
+          dependencies: ["swap-1"],
+        },
+      ],
+      holdDecisions: [],
+      projectedNetBenefitUsd: 2,
+      summary: "Accumulate COMPX and stake ALGO.",
+      confidence: 0.8,
+    };
+
+    const coerced = coercePortfolioPlanValue(drifted);
+    const parsed = portfolioPlanSchema.safeParse(coerced);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      return;
+    }
+    expect(parsed.data.actions[0]?.amountRaw).toBe("50000000");
+    expect(parsed.data.actions[0]?.authorizedSpends[0]).toEqual({
+      assetId: 31_566_704,
+      amountRaw: "50000000",
+    });
+    expect(parsed.data.actions[1]?.amountRaw).toBe("3830300000");
+    expect(parsed.data.actions[1]?.fromAssetId).toBe(0);
+    expect(parsed.data.actions[1]?.targetWeightPct).toBe(12.5);
+    expect(parsed.data.actions[1]?.authorizedSpends[0]).toEqual({
+      assetId: 0,
+      amountRaw: "3830300000",
+    });
   });
 
   it("coerces numeric strings for confidence and other plan scalars", () => {

@@ -12,9 +12,13 @@ Agent plan JSON
   → normalizePortfolioPlan (shape completion, drop redundant setup/opt-in)
   → PortfolioPolicy.validate
   → if approved + signing enabled → AlgorandExecutionService
+       (foundation wave only: actions with empty dependencies;
+        dependents skip as deferred until a later review)
 ```
 
 If schema parse fails, status is `reported` and **policy never runs** (`Policy n/a`). That is not a policy block.
+
+When signing is enabled, the host executes only **no-dependency** actions in the approved plan. Actions that depend on earlier plan steps are marked `skipped` with `Deferred to next review (depends on earlier plan steps)`. The next review sees a fresh snapshot (and optional `priorReview` continuity in the agent task) and can replan sizes against live balances. Dry-run still validates the full plan without deferred skips.
 
 ## Approval model
 
@@ -46,14 +50,14 @@ Returned fields:
 | `MAX_SOURCE_AGE_HOURS` | `24` | Hard (open/increase): opportunity `sourceTimestamp` age; also used when building snapshot caveats for stale positions |
 | `MIN_PROJECTED_NET_IMPROVEMENT_USD` | `1` | Soft: when any non-`hold` action exists |
 | `ENABLE_TRANSACTION_SIGNING` | required | Switches hard vs soft treatment (see above) |
-| `PREFERRED_HOLD_ASSETS` | empty | **Not** enforced by policy — soft agent steer only |
+| `PREFERRED_HOLD_ASSETS` | empty | Soft agent steer; also waives Haystack price-impact cap on buys into listed ASAs |
 
 Execution-time (not `PortfolioPolicy`, but related operator limits):
 
 | Env | Default | Role |
 | --- | --- | --- |
 | `MAX_SLIPPAGE_BPS` | `100` | Passed into quote inputs / swap paths |
-| `MAX_PRICE_IMPACT_PCT` | `3` | Hard fail at execution for Haystack quotes above impact |
+| `MAX_PRICE_IMPACT_PCT` | `3` | Hard fail at execution for Haystack quotes above impact (waived when swap `toAssetId` is in `PREFERRED_HOLD_ASSETS`) |
 | `MAX_DAILY_X402_BASE_UNITS` | `5000000` | x402 spend budget (payments), not portfolio concentration |
 
 ---
@@ -63,7 +67,7 @@ Execution-time (not `PortfolioPolicy`, but related operator limits):
 Runs before validate. Does **not** approve/reject; it rewrites the plan:
 
 1. **Drop redundant prerequisite enters** — standalone `open`/`increase` whose shape `action` is `setup` / `optin` / `create` / `create-escrow` are removed when another capital enter for the same opportunity remains (host expands prerequisites at quote time).
-2. **Complete `executionInput`** — fill missing Canix shape `requiredInputs` from `inputHints`, `authorizedSpends`, `amountRaw`, snapshot (via `completeActionExecutionInput`).
+2. **Complete `executionInput`** — fill missing Canix shape `requiredInputs` from `inputHints`, `authorizedSpends`, `amountRaw`, snapshot (via `completeActionExecutionInput`); backfill `opportunityId` from the bound position; synthesize enter shapes for `increase` when the researched catalog omitted a held opportunity.
 3. **Sanitize dependencies** — remove deps that are not action IDs in the plan (e.g. shape keys); remove deps pointing at dropped prerequisite actions.
 
 ---
@@ -76,11 +80,11 @@ When signing is enabled, any of these → `approved: false` → run status typic
 
 | Rule | Message pattern |
 | --- | --- |
-| Current weights must sum to ~100% (±1) | `Current allocations total …%, not 100%` |
-| Target weights must sum to ~100% (±1) | `Target allocations total …%, not 100%` |
 | Duplicate current allocation keys | `Duplicate current allocation key: …` |
 | Duplicate target allocation keys | `Duplicate target allocation key: …` |
 | Target allocation protocol ≠ researched opportunity protocol | `Target allocation … has a protocol mismatch` |
+
+Current/target weight totals are **not** hard-gated (rounding and partial plans often land near but not exactly 100%).
 
 ### Plan / action structure
 
@@ -107,6 +111,7 @@ Swaps are validated separately and **do not** require an execution shape key in 
 | Rule | Message pattern |
 | --- | --- |
 | `opportunityId` must be in researched MCP opportunities | `Action … does not reference a researched opportunity` / `… opportunity not returned by MCP` |
+| **Exception:** `increase` on an existing snapshot position with shape+input (catalog miss) | Soft: `… increases held position … without a researched opportunity catalog entry` |
 | Action protocol must match opportunity protocol | `Action … has a protocol mismatch` |
 | Opportunity must be `executionReady` with non-empty `executionShapes` | `… research-only (executionReady=false or empty executionShapes)` |
 | `executionShapeKey` must be in opportunity enter shapes | `… is not in opportunity … enter shapes […]` |
@@ -190,7 +195,7 @@ Partial Canix protocol messages (e.g. missing debt/health index) currently mark 
 ## What policy does **not** do
 
 - Parse or judge Telegram message formatting
-- Enforce `PREFERRED_HOLD_ASSETS` (agent guidance only)
+- Enforce preferred-hold target % (agent guidance; execution only waives Haystack price-impact on buys into listed ASAs)
 - Gate on `confidence` (schema/reporting field; coerce happens earlier)
 - Re-run MCP research
 - Validate swap/execution quote economics beyond the structural swap rules above (slippage/impact checks happen at **execution**)
@@ -211,3 +216,4 @@ Run statuses after policy:
 - `planned` — policy rejected (or signing off with issues surfaced as warnings depending on path)
 - `validated-dry-run` — approved, signing off
 - `confirmed` / `partially-executed` / `failed` — signing on after executor outcomes
+- `partially-executed` is expected when foundation actions confirm and dependents are deferred to the next review

@@ -1,0 +1,10 @@
+services:
+  brownie-bot:
+    image: ghcr.io/compx-labs/brownie-bot:latest
+    env_file: .env
+    ports:
+      - "3000:3000"
+    # Optional: local-only operator prefs when Spaces is not configured.
+    # volumes:
+    #   - ./config/operator-preferences.md:/app/config/operator-preferences.md:ro
+    restart: unless-stopped

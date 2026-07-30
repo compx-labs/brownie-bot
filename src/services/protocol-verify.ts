@@ -1108,6 +1108,8 @@ export function createProtocolVerifyContext(
       signingEnabled: true,
       maxSlippageBps: config.MAX_SLIPPAGE_BPS,
       maxPriceImpactPct: config.MAX_PRICE_IMPACT_PCT,
+      // Prefer-hold impact waiver is app/runtime only; verify keeps the hard cap.
+      priceImpactExemptToAssetIds: [],
     },
     escrowStore,
   );

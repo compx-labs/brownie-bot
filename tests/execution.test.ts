@@ -858,7 +858,9 @@ describe("AlgorandExecutionService multi-quote", () => {
       quotes: [
         expect.objectContaining({
           shapeKey: "mainnet:folks-finance:v2:setup:optEscrowAsset",
-          input: expect.objectContaining({ escrowAddress }),
+          input: expect.objectContaining({
+            escrowAddress,
+          }) as Record<string, unknown>,
         }),
       ],
     });
@@ -869,7 +871,7 @@ describe("AlgorandExecutionService multi-quote", () => {
           input: expect.objectContaining({
             assetAmount: "1000000",
             escrowAddress,
-          }),
+          }) as Record<string, unknown>,
         }),
       ],
     });
@@ -1015,7 +1017,7 @@ describe("AlgorandExecutionService multi-quote", () => {
             escrowAddress,
             poolAppId: 971_372_237,
             maxSlippageBps: 100,
-          }),
+          }) as Record<string, unknown>,
         },
       ],
     });
@@ -1208,6 +1210,169 @@ describe("clampActionAmountToSpendable", () => {
           },
         ],
       },
+      managedAddress,
+    );
+  });
+});
+
+describe("Haystack swap price impact", () => {
+  const usdcAssetId = 31_566_704;
+  const compxAssetId = 1_732_165_149;
+
+  function swapAction(): PortfolioAction {
+    return {
+      id: "swap-compx",
+      type: "swap",
+      protocol: "haystack",
+      opportunityId: null,
+      positionId: null,
+      amountRaw: "65000000",
+      fromAssetId: usdcAssetId,
+      toAssetId: compxAssetId,
+      targetWeightPct: null,
+      executionShapeKey: null,
+      executionInput: null,
+      authorizedSpends: [{ assetId: usdcAssetId, amountRaw: "65000000" }],
+      rationale: "Accumulate COMPX toward preferred-hold target.",
+      dependencies: [],
+    };
+  }
+
+  function quotePayload(userPriceImpact: number) {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    return {
+      data: {
+        data: {
+          address: "TEST",
+          fromAssetId: String(usdcAssetId),
+          toAssetId: String(compxAssetId),
+          amount: "65000000",
+          type: "fixed-input" as const,
+          quotedAmount: "1000000",
+          createdAt: new Date().toISOString(),
+          expiresAt,
+          requiredAppOptIns: [],
+          txnPayload: {},
+          userPriceImpact,
+          marketPriceImpact: userPriceImpact,
+          route: [],
+          quotes: [],
+          protocolFees: {},
+        },
+        meta: { executionSubmitted: false as const },
+      },
+    };
+  }
+
+  function swapMocks(callManagedTool: ReturnType<typeof vi.fn>, impact: number) {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    callManagedTool
+      .mockResolvedValueOnce(quotePayload(impact))
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            required: false,
+            transactions: [],
+            userSignIndexes: [],
+            expiresAt,
+          },
+          meta: { executionSubmitted: false },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            transactions: [
+              {
+                index: 0,
+                encodedTransaction: "SWAPTX",
+                signedTransaction: "SIGNED",
+                signer: "haystack",
+              },
+            ],
+            userSignIndexes: [],
+            createdAt: new Date().toISOString(),
+            quoteExpiresAt: expiresAt,
+          },
+          meta: { executionSubmitted: false },
+        },
+      });
+  }
+
+  it("fails when price impact exceeds the cap", async () => {
+    const account = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const callManagedTool = vi.fn();
+    swapMocks(callManagedTool, 8.5);
+
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
+    );
+
+    await expect(executor.executeAction(swapAction())).resolves.toMatchObject({
+      outcome: {
+        actionId: "swap-compx",
+        status: "failed",
+        error: "Haystack price impact exceeds 3%",
+      },
+    });
+    expect(callManagedTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("waives price-impact cap when buying a preferred-hold ASA", async () => {
+    const account = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const callManagedTool = vi.fn();
+    swapMocks(callManagedTool, 8.5);
+
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+        priceImpactExemptToAssetIds: [compxAssetId],
+      },
+    );
+    vi.spyOn(
+      executor as unknown as {
+        signAndSubmit: (
+          actionId: string,
+          members: unknown[],
+        ) => Promise<{ outcome: { actionId: string; status: string } }>;
+      },
+      "signAndSubmit",
+    ).mockResolvedValue({
+      outcome: {
+        actionId: "swap-compx",
+        status: "confirmed",
+        transactionId: "TX-COMPX",
+      },
+    });
+
+    await expect(executor.executeAction(swapAction())).resolves.toMatchObject({
+      outcome: {
+        actionId: "swap-compx",
+        status: "confirmed",
+        toolName: "canix_swap",
+      },
+    });
+    expect(callManagedTool).toHaveBeenCalledWith(
+      "canix_swap",
+      expect.objectContaining({ slippage: 1 }),
       managedAddress,
     );
   });
