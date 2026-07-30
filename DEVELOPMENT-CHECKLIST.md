@@ -14,16 +14,17 @@ Keep this file updated when priorities change so work does not get lost across c
 - [x] **Preferred hold steer** — `PREFERRED_HOLD_ASSETS=assetId:pct,…` soft targets in hostGuidance + prompt guidance that swaps can rotate idle non-preferred ASAs; below-target preferred holds override deep-liquidity preference (accumulate / build thin markets); buys into preferred-hold ASAs waive Haystack `MAX_PRICE_IMPACT_PCT`
 - [x] **Held-position increase path** — host research pins/fetches opportunityIds already in the snapshot; synthesize Réti (etc.) enter `executionInput` from position hints; policy allows catalog-miss `increase` on held positions instead of blocking the whole plan
 - [x] **Pause / kill-switch** — runtime hold (no trading / plan-only) via Telegram `/pause` `/resume`; durable under `ACCOUNTING_DATA_DIR`
+- [x] **Cashflow-aware P&L** — `/deposit` `/withdraw` + txid inference; accounting P&L adjusts for recorded funding
+- [x] **Easier force-run (Telegram)** — `/run` `/accounting` ack immediately and finish in background so the command loop stays responsive
 
 ## Next (recommended order)
 
-1. [ ] **Cashflow-aware P&L** — accounting P&L should adjust for recorded deposits/withdrawals so funding is not profit.
-2. [ ] **Easier force-run** — document / default path for `MANUAL_TRIGGER_TOKEN` and Docker `once`; optional operator CLI for status/trigger (Telegram `/run` already covers chat-side force-run).
-3. [ ] **Deterministic DeFi unwind** — `/unwind` host-built close-all (not LLM), with confirm; plug into the Telegram command dispatcher.
-4. [ ] **Spend visibility** — daily/remaining Canix x402 + ZeroSignal caps beyond per-run lines.
-5. [ ] **Config empathy** — required vs optional env split, friendlier Zod errors, ops troubleshooting section in docs.
-6. [ ] **Dated review history** — optional follow-up to latest-only persistence (`reviews/<yyyy>/<mm>/<dd>/<runId>.json` + list API).
-7. [ ] **Health low-balance warnings** — optional follow-up when wallet ALGO/USDC checks are cheap enough to add to `?deps=1`.
+1. [ ] **Deterministic DeFi unwind** — `/unwind` host-built close-all (not LLM), with confirm; plug into the Telegram command dispatcher.
+2. [ ] **Spend visibility** — daily/remaining Canix x402 + ZeroSignal caps beyond per-run lines.
+3. [ ] **Config empathy** — required vs optional env split, friendlier Zod errors, ops troubleshooting section in docs.
+4. [ ] **Dated review history** — optional follow-up to latest-only persistence (`reviews/<yyyy>/<mm>/<dd>/<runId>.json` + list API).
+5. [ ] **Health low-balance warnings** — optional follow-up when wallet ALGO/USDC checks are cheap enough to add to `?deps=1`.
+6. [ ] **HTTP/Docker force-run docs** — optional follow-up for `MANUAL_TRIGGER_TOKEN` and Docker `once` (Telegram `/run` already covers chat-side force-run).
 
 ## Parking lot
 

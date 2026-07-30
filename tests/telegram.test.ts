@@ -396,6 +396,8 @@ describe("formatAccountingTelegramReport", () => {
         previousTotalValueUsd: "100.00",
         pnlUsd: "10.00",
         pnlAvailable: true,
+        navDeltaUsd: "110.00",
+        netExternalCashflowUsd: "100.00",
         defiByProtocol: [
           { protocol: "folks", valueUsd: "80.00", positionCount: 2 },
           { protocol: "tinyman", valueUsd: "20.00", positionCount: 1 },
@@ -415,6 +417,7 @@ describe("formatAccountingTelegramReport", () => {
     expect(report).toContain("ALGO balance: 12.5");
     expect(report).toContain("Account min balance: 0.2");
     expect(report).toContain("P&L vs previous: $10.00");
+    expect(report).toContain("External funding (window): $100.00");
   });
 
   it("reports no previous baseline and unpriced ASAs without failing language", () => {

@@ -523,9 +523,7 @@ export function formatAccountingTelegramReport(run: AccountingRun): string {
       `Wallet tokens total: ${formatMoneyLabel(run.summary.walletAsaValueUsd)}`,
       `ALGO balance: ${run.summary.algoBalance}`,
       `Account min balance: ${run.summary.minimumBalance}`,
-      run.summary.pnlAvailable
-        ? `P&L vs previous: ${formatMoneyLabel(run.summary.pnlUsd)}`
-        : "P&L vs previous: no previous baseline",
+      ...formatAccountingPnlPlainLines(run.summary),
     );
     if (run.summary.unpricedAssetIds.length > 0) {
       lines.push(`Unpriced ASAs: ${run.summary.unpricedAssetIds.join(", ")}`);
@@ -582,9 +580,7 @@ export function formatAccountingTelegramReportRich(run: AccountingRun): string {
       "### Wallet",
       "",
       `ASA total **${formatMoneyLabel(run.summary.walletAsaValueUsd)}** · ALGO **${run.summary.algoBalance}** · Min balance **${run.summary.minimumBalance}**`,
-      run.summary.pnlAvailable
-        ? `P&L vs previous: **${formatMoneyLabel(run.summary.pnlUsd)}**`
-        : "P&L vs previous: _no previous baseline_",
+      ...formatAccountingPnlRichLines(run.summary),
     );
 
     const detailsBody = buildAccountingDetailsBody(run);
@@ -642,9 +638,7 @@ export function formatAccountingTelegramReportHtml(run: AccountingRun): string {
       "",
       "<b>Wallet</b>",
       `ASA total <b>${escapeHtml(formatMoneyLabel(run.summary.walletAsaValueUsd))}</b> · ALGO <b>${escapeHtml(run.summary.algoBalance)}</b> · Min balance <b>${escapeHtml(run.summary.minimumBalance)}</b>`,
-      run.summary.pnlAvailable
-        ? `P&amp;L vs previous: <b>${escapeHtml(formatMoneyLabel(run.summary.pnlUsd))}</b>`
-        : "P&amp;L vs previous: <i>no previous baseline</i>",
+      ...formatAccountingPnlHtmlLines(run.summary),
     );
 
     const noteLines = buildAccountingNoteHtmlLines(run);
@@ -892,8 +886,70 @@ function filterAccountingNotes(notes: string[]): string[] {
   return notes.filter(
     (note) =>
       note !== "No previous accounting baseline; P&L not available yet" &&
-      note !== "No DeFi positions",
+      note !== "No DeFi positions" &&
+      !note.startsWith("P&L adjusted for "),
   );
+}
+
+function formatAccountingPnlPlainLines(
+  summary: NonNullable<AccountingRun["summary"]>,
+): string[] {
+  const lines = [
+    summary.pnlAvailable
+      ? `P&L vs previous: ${formatMoneyLabel(summary.pnlUsd)}`
+      : "P&L vs previous: no previous baseline",
+  ];
+  const funding = formatNetExternalFundingLabel(summary.netExternalCashflowUsd);
+  if (funding) {
+    lines.push(`External funding (window): ${funding}`);
+  }
+  return lines;
+}
+
+function formatAccountingPnlRichLines(
+  summary: NonNullable<AccountingRun["summary"]>,
+): string[] {
+  const lines = [
+    summary.pnlAvailable
+      ? `P&L vs previous: **${formatMoneyLabel(summary.pnlUsd)}**`
+      : "P&L vs previous: _no previous baseline_",
+  ];
+  const funding = formatNetExternalFundingLabel(summary.netExternalCashflowUsd);
+  if (funding) {
+    lines.push(`External funding (window): **${funding}**`);
+  }
+  return lines;
+}
+
+function formatAccountingPnlHtmlLines(
+  summary: NonNullable<AccountingRun["summary"]>,
+): string[] {
+  const lines = [
+    summary.pnlAvailable
+      ? `P&amp;L vs previous: <b>${escapeHtml(formatMoneyLabel(summary.pnlUsd))}</b>`
+      : "P&amp;L vs previous: <i>no previous baseline</i>",
+  ];
+  const funding = formatNetExternalFundingLabel(summary.netExternalCashflowUsd);
+  if (funding) {
+    lines.push(
+      `External funding (window): <b>${escapeHtml(funding)}</b>`,
+    );
+  }
+  return lines;
+}
+
+/** Net capital in: deposits − withdrawals. Null/zero omitted from reports. */
+function formatNetExternalFundingLabel(
+  value: string | null | undefined,
+): string | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) {
+    return undefined;
+  }
+  return formatMoneyLabel(value);
 }
 
 function formatMoneyLabel(value: string | null | undefined): string {

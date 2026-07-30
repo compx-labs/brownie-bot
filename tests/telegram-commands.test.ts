@@ -71,6 +71,21 @@ function baseHandlerDeps(
   };
 }
 
+function commandCtx(
+  overrides: Partial<{
+    chatId: string;
+    command: { name: string; args: string; raw: string };
+    reply: (text: string) => Promise<void>;
+  }> = {},
+) {
+  return {
+    chatId: "1",
+    command: { name: "help", args: "", raw: "/help" },
+    reply: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
+
 describe("parseTelegramCommand", () => {
   it("parses slash commands and strips bot username", () => {
     expect(parseTelegramCommand("/run")).toEqual({
@@ -112,16 +127,12 @@ describe("createCommandDispatcher", () => {
       help: () => Promise.resolve("help-ok"),
     });
     await expect(
-      dispatch({
-        chatId: "1",
-        command: { name: "help", args: "", raw: "/help" },
-      }),
+      dispatch(commandCtx({ command: { name: "help", args: "", raw: "/help" } })),
     ).resolves.toBe("help-ok");
 
-    const unknown = await dispatch({
-      chatId: "1",
-      command: { name: "nope", args: "", raw: "/nope" },
-    });
+    const unknown = await dispatch(
+      commandCtx({ command: { name: "nope", args: "", raw: "/nope" } }),
+    );
     expect(unknown).toContain("Unknown command /nope");
     expect(unknown).toContain("/status");
   });
@@ -132,41 +143,32 @@ describe("createOperatorCommandHandlers", () => {
     const handlers = createOperatorCommandHandlers(baseHandlerDeps());
 
     await expect(
-      handlers.help!({
-        chatId: "1",
-        command: { name: "help", args: "", raw: "/help" },
-      }),
+      handlers.help!(commandCtx({ command: { name: "help", args: "", raw: "/help" } })),
     ).resolves.toContain("/pause");
 
-    const status = await handlers.status!({
-      chatId: "1",
-      command: { name: "status", args: "", raw: "/status" },
-    });
+    const status = await handlers.status!(
+      commandCtx({ command: { name: "status", args: "", raw: "/status" } }),
+    );
     expect(status).toContain("Busy: yes");
     expect(status).toContain("Paused: no");
     expect(status).toContain("Signing: disabled");
 
     await expect(
-      handlers.run!({
-        chatId: "1",
-        command: { name: "run", args: "", raw: "/run" },
-      }),
+      handlers.run!(commandCtx({ command: { name: "run", args: "", raw: "/run" } })),
     ).rejects.toThrow(/already in progress/i);
 
     await expect(
-      handlers.accounting!({
-        chatId: "1",
-        command: { name: "accounting", args: "", raw: "/accounting" },
-      }),
+      handlers.accounting!(
+        commandCtx({ command: { name: "accounting", args: "", raw: "/accounting" } }),
+      ),
     ).rejects.toThrow(/already in progress/i);
   });
 
-  it("maps coordinator busy errors the same way", async () => {
+  it("maps coordinator busy via health busy flag before starting", async () => {
+    const run = vi.fn().mockRejectedValue(new RunCoordinatorBusyError());
     const handlers = createOperatorCommandHandlers(
       baseHandlerDeps({
-        reviewService: {
-          run: vi.fn().mockRejectedValue(new RunCoordinatorBusyError()),
-        } as never,
+        reviewService: { run } as never,
         signingEnabled: true,
         getHealthInput: () => ({
           signingEnabled: true,
@@ -180,22 +182,27 @@ describe("createOperatorCommandHandlers", () => {
     );
 
     await expect(
-      handlers.run!({
-        chatId: "1",
-        command: { name: "run", args: "", raw: "/run" },
-      }),
+      handlers.run!(commandCtx({ command: { name: "run", args: "", raw: "/run" } })),
     ).rejects.toThrow(/already in progress/i);
+    expect(run).not.toHaveBeenCalled();
   });
 
-  it("acks successful runs", async () => {
+  it("acks start immediately and replies when the background run finishes", async () => {
+    let release: (() => void) | undefined;
+    const run = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              id: "rev-1",
+              status: "no-op",
+            });
+        }),
+    );
+    const reply = vi.fn().mockResolvedValue(undefined);
     const handlers = createOperatorCommandHandlers(
       baseHandlerDeps({
-        reviewService: {
-          run: vi.fn().mockResolvedValue({
-            id: "rev-1",
-            status: "no-op",
-          }),
-        } as never,
+        reviewService: { run } as never,
         accountingService: {
           run: vi.fn().mockResolvedValue({
             id: "acc-1",
@@ -215,18 +222,37 @@ describe("createOperatorCommandHandlers", () => {
     );
 
     await expect(
-      handlers.run!({
-        chatId: "1",
-        command: { name: "run", args: "", raw: "/run" },
-      }),
-    ).resolves.toContain("Review rev-1 finished: no-op");
+      handlers.run!(
+        commandCtx({
+          command: { name: "run", args: "", raw: "/run" },
+          reply,
+        }),
+      ),
+    ).resolves.toContain("Treasury review starting");
+    expect(run).toHaveBeenCalledOnce();
+    expect(reply).not.toHaveBeenCalled();
 
+    release?.();
+    await vi.waitFor(() => {
+      expect(reply).toHaveBeenCalledWith(
+        expect.stringContaining("Review rev-1 finished: no-op"),
+      );
+    });
+
+    const accountingReply = vi.fn().mockResolvedValue(undefined);
     await expect(
-      handlers.accounting!({
-        chatId: "1",
-        command: { name: "accounting", args: "", raw: "/accounting" },
-      }),
-    ).resolves.toContain("Accounting acc-1 finished: reported");
+      handlers.accounting!(
+        commandCtx({
+          command: { name: "accounting", args: "", raw: "/accounting" },
+          reply: accountingReply,
+        }),
+      ),
+    ).resolves.toContain("Accounting snapshot starting");
+    await vi.waitFor(() => {
+      expect(accountingReply).toHaveBeenCalledWith(
+        expect.stringContaining("Accounting acc-1 finished: reported"),
+      );
+    });
   });
 
   it("pauses and resumes trading with idempotent replies", async () => {
@@ -236,31 +262,27 @@ describe("createOperatorCommandHandlers", () => {
     );
 
     await expect(
-      handlers.pause!({
-        chatId: "1",
-        command: { name: "pause", args: "", raw: "/pause" },
-      }),
+      handlers.pause!(
+        commandCtx({ command: { name: "pause", args: "", raw: "/pause" } }),
+      ),
     ).resolves.toContain("Paused. Reviews continue as plan-only");
 
     await expect(
-      handlers.pause!({
-        chatId: "1",
-        command: { name: "pause", args: "", raw: "/pause" },
-      }),
+      handlers.pause!(
+        commandCtx({ command: { name: "pause", args: "", raw: "/pause" } }),
+      ),
     ).resolves.toContain("Already paused");
 
     await expect(
-      handlers.resume!({
-        chatId: "1",
-        command: { name: "resume", args: "", raw: "/resume" },
-      }),
+      handlers.resume!(
+        commandCtx({ command: { name: "resume", args: "", raw: "/resume" } }),
+      ),
     ).resolves.toContain("Resumed. Trading is enabled");
 
     await expect(
-      handlers.resume!({
-        chatId: "1",
-        command: { name: "resume", args: "", raw: "/resume" },
-      }),
+      handlers.resume!(
+        commandCtx({ command: { name: "resume", args: "", raw: "/resume" } }),
+      ),
     ).resolves.toContain("Already active. Trading is enabled");
   });
 
@@ -272,11 +294,79 @@ describe("createOperatorCommandHandlers", () => {
     );
 
     await expect(
-      handlers.resume!({
-        chatId: "1",
-        command: { name: "resume", args: "", raw: "/resume" },
-      }),
+      handlers.resume!(
+        commandCtx({ command: { name: "resume", args: "", raw: "/resume" } }),
+      ),
     ).resolves.toContain("still disabled by ENABLE_TRANSACTION_SIGNING");
+  });
+
+  it("records deposits and withdrawals from txids", async () => {
+    const recordCashflowFromTx = vi.fn().mockResolvedValue({
+      cashflow: { amountUsd: "100.00", notes: "100 USDC" },
+      amountLabel: "100 USDC",
+      alreadyRecorded: false,
+    });
+    const handlers = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        accountingService: { run: vi.fn(), recordCashflowFromTx } as never,
+      }),
+    );
+
+    await expect(
+      handlers.deposit!(
+        commandCtx({ command: { name: "deposit", args: "", raw: "/deposit" } }),
+      ),
+    ).resolves.toContain("Usage: /deposit <txid>");
+
+    await expect(
+      handlers.deposit!(
+        commandCtx({
+          command: {
+            name: "deposit",
+            args: "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+            raw: "/deposit ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+          },
+        }),
+      ),
+    ).resolves.toContain("Recorded deposit: $100.00 (100 USDC)");
+    expect(recordCashflowFromTx).toHaveBeenCalledWith({
+      type: "external_deposit",
+      transactionId: "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+    });
+  });
+
+  it("acks already-recorded cashflows without failing", async () => {
+    const { CashflowAlreadyRecordedError } = await import(
+      "../src/services/accounting.js"
+    );
+    const handlers = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        accountingService: {
+          run: vi.fn(),
+          recordCashflowFromTx: vi.fn().mockRejectedValue(
+            new CashflowAlreadyRecordedError({
+              schemaVersion: 1,
+              eventId: "TX1",
+              walletAddress: "W",
+              type: "external_withdrawal",
+              amountUsd: "5.00",
+              occurredAt: "2026-07-15T00:00:00.000Z",
+              recordedAt: "2026-07-15T00:00:00.000Z",
+              notes: "5 USDC (asset 31566704) to ADDR",
+              checksum: "x",
+            }),
+          ),
+        } as never,
+      }),
+    );
+
+    await expect(
+      handlers.withdraw!(
+        commandCtx({
+          command: { name: "withdraw", args: "TX1", raw: "/withdraw TX1" },
+        }),
+      ),
+    ).resolves.toContain("Already recorded withdrawal: $5.00");
   });
 });
 
@@ -413,6 +503,7 @@ describe("TelegramCommandLoop", () => {
     expect(dispatch).toHaveBeenCalledWith({
       chatId: "9",
       command: { name: "status", args: "", raw: "/status@Bot" },
+      reply: expect.any(Function),
     });
     expect(sendText).toHaveBeenCalledWith("9", "status-ok");
   });

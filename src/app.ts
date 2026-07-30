@@ -17,6 +17,7 @@ import { AlgorandPaymentBuilder } from "./integrations/canix402/payment.js";
 import { walletFromMnemonic } from "./integrations/canix402/wallet.js";
 import { AlgorandPortfolioReader } from "./integrations/algorand/portfolio.js";
 import { AlgorandExecutionService } from "./integrations/algorand/execution.js";
+import { CashflowTxResolver } from "./integrations/algorand/cashflow-tx.js";
 import {
   LocalFolksEscrowStore,
   SpacesFolksEscrowStore,
@@ -281,6 +282,11 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
       walletAddress: config.BOT_WALLET,
       maxSourceAgeHours: config.MAX_SOURCE_AGE_HOURS,
     },
+    new CashflowTxResolver({
+      indexerUrl: config.X402_INDEXER_URL,
+      algodUrl: config.X402_ALGOD_URL,
+      walletAddress: config.BOT_WALLET,
+    }),
   );
 
   app.get("/health", async (request) => {
