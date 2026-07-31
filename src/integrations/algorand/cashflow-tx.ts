@@ -32,18 +32,29 @@ interface IndexerPaymentTxn {
 interface IndexerAssetTransferTxn {
   amount?: number | bigint | string;
   receiver?: string;
-  "asset-id"?: number;
+  /** REST kebab-case */
+  "asset-id"?: number | string;
+  /** algosdk v3 camelCase (may be stringified bigint) */
+  assetId?: number | string | bigint;
 }
 
-/** Minimal indexer transaction shape used for cashflow inference. */
+/**
+ * Minimal indexer transaction shape. algosdk v3 returns camelCase; raw REST
+ * uses kebab-case — parsers accept both.
+ */
 export interface IndexerTransactionLike {
   id?: string;
-  "tx-type"?: string;
   sender?: string;
+  "tx-type"?: string;
+  txType?: string;
   "round-time"?: number;
-  "confirmed-round"?: number | bigint;
+  roundTime?: number;
+  "confirmed-round"?: number | bigint | string;
+  confirmedRound?: number | bigint | string;
   "payment-transaction"?: IndexerPaymentTxn;
+  paymentTransaction?: IndexerPaymentTxn;
   "asset-transfer-transaction"?: IndexerAssetTransferTxn;
+  assetTransferTransaction?: IndexerAssetTransferTxn;
 }
 
 export interface IndexerLookupResponse {
@@ -72,14 +83,14 @@ export function parseCashflowTransfer(
   tx: IndexerTransactionLike,
   transactionId: string,
 ): ParsedCashflowTransfer {
-  const txType = tx["tx-type"];
+  const txType = readTxType(tx);
   const sender = tx.sender;
   if (!sender) {
     throw new CashflowTxError("Transaction is missing a sender");
   }
 
   if (txType === "pay") {
-    const payment = tx["payment-transaction"];
+    const payment = tx.paymentTransaction ?? tx["payment-transaction"];
     if (!payment?.receiver) {
       throw new CashflowTxError("Payment transaction is missing a receiver");
     }
@@ -93,20 +104,17 @@ export function parseCashflowTransfer(
       amountRaw,
       sender,
       receiver: payment.receiver,
-      roundTimeSeconds:
-        typeof tx["round-time"] === "number" ? tx["round-time"] : undefined,
+      roundTimeSeconds: readRoundTime(tx),
     };
   }
 
   if (txType === "axfer") {
-    const transfer = tx["asset-transfer-transaction"];
+    const transfer =
+      tx.assetTransferTransaction ?? tx["asset-transfer-transaction"];
     if (!transfer?.receiver) {
       throw new CashflowTxError("Asset transfer is missing a receiver");
     }
-    const assetId = transfer["asset-id"];
-    if (typeof assetId !== "number" || !Number.isInteger(assetId) || assetId < 0) {
-      throw new CashflowTxError("Asset transfer is missing a valid asset id");
-    }
+    const assetId = normalizeAssetId(transfer.assetId ?? transfer["asset-id"]);
     const amountRaw = normalizeAmountRaw(transfer.amount);
     if (amountRaw === "0") {
       throw new CashflowTxError(
@@ -119,8 +127,7 @@ export function parseCashflowTransfer(
       amountRaw,
       sender,
       receiver: transfer.receiver,
-      roundTimeSeconds:
-        typeof tx["round-time"] === "number" ? tx["round-time"] : undefined,
+      roundTimeSeconds: readRoundTime(tx),
     };
   }
 
@@ -146,6 +153,20 @@ export function assertCashflowDirection(
     throw new CashflowTxError(
       `Withdraw requires ${walletAddress} as sender; this tx is from ${transfer.sender}`,
     );
+  }
+}
+
+export function readConfirmedRound(
+  tx: IndexerTransactionLike,
+): bigint | undefined {
+  const raw = tx.confirmedRound ?? tx["confirmed-round"];
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  try {
+    return BigInt(raw as number | bigint | string);
+  } catch {
+    return undefined;
   }
 }
 
@@ -199,12 +220,8 @@ export class CashflowTxResolver {
     if (!tx) {
       throw new CashflowTxError(`Transaction ${txid} was not found`);
     }
-    const confirmed = tx["confirmed-round"];
-    if (
-      confirmed === undefined ||
-      confirmed === null ||
-      BigInt(confirmed as number | bigint | string) === 0n
-    ) {
+    const confirmed = readConfirmedRound(tx);
+    if (confirmed === undefined || confirmed === 0n) {
       throw new CashflowTxError(`Transaction ${txid} is not confirmed yet`);
     }
 
@@ -232,13 +249,19 @@ export class CashflowTxResolver {
     }
     try {
       const info = (await this.algod.getAssetByID(assetId).do()) as {
-        params?: { decimals?: number; "unit-name"?: string; name?: string };
+        params?: {
+          decimals?: number;
+          "unit-name"?: string;
+          unitName?: string;
+          name?: string;
+        };
       };
       const decimals = info.params?.decimals;
       if (typeof decimals !== "number" || !Number.isInteger(decimals)) {
         throw new Error("missing decimals");
       }
       const symbol =
+        info.params?.unitName?.trim() ||
         info.params?.["unit-name"]?.trim() ||
         info.params?.name?.trim() ||
         `ASA ${assetId}`;
@@ -251,6 +274,31 @@ export class CashflowTxResolver {
       );
     }
   }
+}
+
+function readTxType(tx: IndexerTransactionLike): string | undefined {
+  return tx.txType ?? tx["tx-type"];
+}
+
+function readRoundTime(tx: IndexerTransactionLike): number | undefined {
+  const value = tx.roundTime ?? tx["round-time"];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeAssetId(raw: number | string | bigint | undefined): number {
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 0) {
+    return raw;
+  }
+  if (typeof raw === "bigint" && raw >= 0n && raw <= BigInt(Number.MAX_SAFE_INTEGER)) {
+    return Number(raw);
+  }
+  if (typeof raw === "string" && /^[0-9]+$/.test(raw)) {
+    const parsed = Number(raw);
+    if (Number.isSafeInteger(parsed)) {
+      return parsed;
+    }
+  }
+  throw new CashflowTxError("Asset transfer is missing a valid asset id");
 }
 
 function normalizeAmountRaw(
