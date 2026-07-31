@@ -46,6 +46,26 @@ describe("parseCashflowTransfer", () => {
     });
   });
 
+  it("parses algosdk camelCase axfer payloads", () => {
+    const tx: IndexerTransactionLike = {
+      txType: "axfer",
+      sender: OTHER,
+      confirmedRound: 63_617_907n,
+      roundTime: 1_785_490_765,
+      assetTransferTransaction: {
+        amount: "6000000",
+        receiver: WALLET,
+        assetId: "31566704",
+      },
+    };
+    expect(parseCashflowTransfer(tx, "TXCAMEL")).toMatchObject({
+      assetId: 31_566_704,
+      amountRaw: "6000000",
+      receiver: WALLET,
+      roundTimeSeconds: 1_785_490_765,
+    });
+  });
+
   it("rejects zero-amount axfers and unsupported types", () => {
     expect(() =>
       parseCashflowTransfer(
@@ -68,6 +88,19 @@ describe("parseCashflowTransfer", () => {
         "TXAPP",
       ),
     ).toThrow(/Unsupported transaction type/);
+  });
+});
+
+describe("readConfirmedRound", () => {
+  it("reads camelCase bigint confirmedRound from algosdk", async () => {
+    const { readConfirmedRound } = await import(
+      "../src/integrations/algorand/cashflow-tx.js"
+    );
+    expect(
+      readConfirmedRound({ confirmedRound: 63_617_907n }),
+    ).toBe(63_617_907n);
+    expect(readConfirmedRound({ "confirmed-round": 12 })).toBe(12n);
+    expect(readConfirmedRound({})).toBeUndefined();
   });
 });
 
@@ -110,21 +143,21 @@ describe("CashflowTxResolver", () => {
     const lookupTransactionByID = vi.fn().mockReturnValue({
       do: async () => ({
         transaction: {
-          "tx-type": "axfer",
+          txType: "axfer",
           sender: OTHER,
-          "confirmed-round": 12_345,
-          "round-time": 1_700_000_000,
-          "asset-transfer-transaction": {
-            amount: 2_500_000,
+          confirmedRound: 12_345n,
+          roundTime: 1_700_000_000,
+          assetTransferTransaction: {
+            amount: "2500000",
             receiver: WALLET,
-            "asset-id": 31_566_704,
+            assetId: "31566704",
           },
         },
       }),
     });
     const getAssetByID = vi.fn().mockReturnValue({
       do: async () => ({
-        params: { decimals: 6, "unit-name": "USDC" },
+        params: { decimals: 6, unitName: "USDC" },
       }),
     });
 
