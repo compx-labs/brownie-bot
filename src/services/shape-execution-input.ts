@@ -645,7 +645,8 @@ export function completeActionExecutionInput(
       : action;
 
   if (!withOpportunity.executionShapeKey) {
-    return withOpportunity;
+    // No shape yet — only clear explicit zeros so policy does not hard-block.
+    return clearZeroClaimAmount(withOpportunity);
   }
   const shape = resolveShapeForAction(
     withOpportunity,
@@ -653,7 +654,7 @@ export function completeActionExecutionInput(
     snapshot,
   );
   if (!shape) {
-    return withOpportunity;
+    return clearZeroClaimAmount(withOpportunity);
   }
   const opportunity = findOpportunityForAction(
     withOpportunity,
@@ -667,9 +668,36 @@ export function completeActionExecutionInput(
     position,
   });
   const previous = withOpportunity.executionInput ?? {};
+  const shapeNeedsAmount = shape.requiredInputs.some((input) =>
+    /amount/i.test(input),
+  );
+
+  let amountRaw = withOpportunity.amountRaw;
+  if (withOpportunity.type === "claim" && !shapeNeedsAmount) {
+    // Claim-all manage shapes (Tinyman claimRewards, Haystack claim, …): the
+    // model often emits amountRaw "0" when accrued rewards are unknown/unpriced.
+    // Policy hard-blocks non-hold zero amounts and would reject the whole plan.
+    // Keep null — sizing is not an input for these shapes.
+    amountRaw = null;
+  } else {
+    if (
+      amountRaw === null &&
+      ["close", "reduce", "claim"].includes(withOpportunity.type)
+    ) {
+      amountRaw = position?.amountRaw ?? null;
+    }
+    if (amountRaw === null && typeof executionInput.amount === "string") {
+      amountRaw = executionInput.amount;
+    }
+  }
+
+  const fromAssetId =
+    withOpportunity.fromAssetId ?? position?.assetId ?? null;
   const unchanged =
     withOpportunity.executionInput !== null &&
     withOpportunity.opportunityId === opportunityId &&
+    withOpportunity.amountRaw === amountRaw &&
+    withOpportunity.fromAssetId === fromAssetId &&
     Object.keys(executionInput).length === Object.keys(previous).length &&
     Object.entries(executionInput).every(
       ([key, value]) => previous[key] === value,
@@ -677,21 +705,26 @@ export function completeActionExecutionInput(
   if (unchanged) {
     return withOpportunity;
   }
-  let amountRaw = withOpportunity.amountRaw;
-  if (
-    amountRaw === null &&
-    ["close", "reduce", "claim"].includes(withOpportunity.type)
-  ) {
-    amountRaw = position?.amountRaw ?? null;
-  }
-  if (amountRaw === null && typeof executionInput.amount === "string") {
-    amountRaw = executionInput.amount;
-  }
   return {
     ...withOpportunity,
     amountRaw,
-    fromAssetId: withOpportunity.fromAssetId ?? position?.assetId ?? null,
+    fromAssetId,
     opportunityId,
     executionInput,
   };
+}
+
+/**
+ * When claim shape metadata is missing, still clear amountRaw "0" so a
+ * zero-amount policy violation does not hard-block sibling actions.
+ */
+function clearZeroClaimAmount(action: PortfolioAction): PortfolioAction {
+  if (
+    action.type === "claim" &&
+    action.amountRaw !== null &&
+    BigInt(action.amountRaw) === 0n
+  ) {
+    return { ...action, amountRaw: null };
+  }
+  return action;
 }

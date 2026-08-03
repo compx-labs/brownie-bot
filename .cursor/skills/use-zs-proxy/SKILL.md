@@ -25,6 +25,10 @@ wallet seal — not an API key. Multi-turn agents must keep history **client-sid
 4. **Prefer no privacy relay for multi-turn** — `zs.privacy: false` (direct to
    the model operator). Relays through `*.belt.algo.xyz` commonly cause CDN
    502/504s on multi-turn `/v1/responses`.
+5. **`stream: true` on every `responses.create`** — without streaming, any hop
+   in the proxy/operator chain can hard-timeout while waiting for a silent
+   full-body response. Consume the SSE stream to `response.completed` (see
+   `finalResponseFromStream`) before treating the call as done.
 
 ## Proxy config
 
@@ -87,10 +91,13 @@ let response = await openai.responses.create({
   instructions,
   input: initialInput,
   store: false, // required
+  stream: true, // required — avoid silent read timeouts
   tools,
   tool_choice: "auto",
   // do NOT pass previous_response_id
 });
+// When using the OpenAI SDK directly, drain SSE to response.completed
+// (this repo uses finalResponseFromStream / createPortfolioAgent).
 
 while (hasFunctionCalls(response.output)) {
   const outputs = await runTools(response.output); // function_call_output[]
@@ -104,6 +111,7 @@ while (hasFunctionCalls(response.output)) {
       ...conversationItems,
     ],
     store: false, // required every turn
+    stream: true, // required every turn
     tools,
     tool_choice: "auto",
     // still no previous_response_id
@@ -136,9 +144,10 @@ rather than inventing a price.
 - [ ] Proxy wallet funded; `/healthz` healthy before first review
 - [ ] `zs.privacy: false` unless the user explicitly wants relay privacy
 - [ ] Every `responses.create` sets `store: false`
+- [ ] Every `responses.create` sets `stream: true` and drains to `response.completed`
 - [ ] No `previous_response_id` anywhere in the agent loop
 - [ ] Follow-ups rebuild `input` from client-side transcript
-- [ ] Tests assert `store: false` and absent `previous_response_id` on first and
+- [ ] Tests assert `store: false`, `stream: true`, and absent `previous_response_id` on first and
       follow-up calls
 - [ ] Optional: parse `X-Zs-Inference-Amount` from headers
 
@@ -147,6 +156,7 @@ rather than inventing a price.
 | Don't | Do instead |
 | --- | --- |
 | `store: true` or omit `store` expecting OpenAI persistence | Always `store: false` |
+| Non-streaming `/v1/responses` (omit `stream` or `stream: false`) | Always `stream: true`; consume SSE to completed |
 | `previous_response_id: response.id` | Append prior `output` + tool outputs to `input` |
 | Default `zs.privacy: true` for long tool loops | `privacy: false`; document IP tradeoff |
 | Treat `OPEN_AI_API_KEY` as a real secret for ZS | Placeholder string; seal is the wallet |
@@ -157,7 +167,7 @@ rather than inventing a price.
 
 - Proxy defaults: `config/zs-proxy.yaml`
 - Agent loop: `src/services/portfolio-agent.ts` (`createAgentResponse`,
-  conversation replay)
+  `withStreamTrue`, `finalResponseFromStream`, conversation replay)
 - Smoke loop: `src/smoke-llm.ts`
 - Cost parsing: `src/services/inference-cost.ts`
 - Container boot: `docker/entrypoint.sh`

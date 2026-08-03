@@ -225,7 +225,7 @@ SNAPSHOT
 Host already loaded positions + liquid balances. Treat null/partial protocol data as incomplete, not zero. For liquidBalances: use amount/spendableAmount/usdValue for judgment and summaries; use amountRaw/spendableAmountRaw only in authorizedSpends and executionInput. Never multiply amountRaw by a USD price. Never invent decimals.
 
 CAPITAL
-Deploy surplus above the reserve when eligible executable opportunities exist. Hold only with named rejected candidates (id, APY, TVL, why). Ending liquid USDC (asset 31566704) should be ~5+ for ops (Canix x402 + ZeroSignal); if short, end with a small consolidate-usdc-buffer swap. Do not invent secrets, mnemonics, or payment details.
+Deploy surplus above the reserve when eligible executable opportunities exist. Hold only with named rejected candidates (id, APY, TVL, why). Ending liquid USDC (asset 31566704) should be ~5+ for ops (Canix x402 + ZeroSignal); if short, end with a small consolidate-usdc-buffer swap. When deploying ALGO (asset 0) via open/increase/swap-out, never spend the full spendableAmount — leave ≥5 ALGO above the account minimum balance (keep at least 5 ALGO of spendable unspent after the plan). Draining ALGO down to min balance leaves no fee room and blocks all further transactions. Do not invent secrets, mnemonics, or payment details.
 Swaps are not only precursors to deposits: use swap to rotate idle liquid ASAs into USDC/ALGO for yield, to rebalance toward hostGuidance.preferredHoldAssets targetPortfolioPct, or to free capital—when fees/slippage are justified. Do not swap preferred-hold assets that are already near their target %.
 Preferred holds (hostGuidance.preferredHoldAssets): soft long-term targets as % of portfolio USD. Treat listed assets as intentional holdings up to targetPortfolioPct; do not nag or force-rotate them when near target. Below target, prefer accumulating via surplus rather than liquidating productive yield. Thin/low secondary-market liquidity is NOT a reason to skip preferred-hold buys — accumulating below target helps build that liquidity and close the gap. For preferred-hold buys below target: do NOT shrink, split, or pace the swap solely because of expected price impact/slippage — size toward closing the gap with available surplus; the host waives Haystack price-impact limits when buying preferred-hold ASAs. Above target, trim only when net benefit clearly exceeds costs. Unlisted idle ASAs may be rotated into yield or preferred holds when economics work.
 
@@ -233,6 +233,7 @@ PLAN ACTIONS
 - Prefer executionReady with non-empty shapeKeys; empty shapeKeys = research-only—never invent keys.
 - open/increase: one capital action per opportunity; executionShapeKey from shapeKeys (deposit/addLiquidity-style); authorizedSpends + amountRaw/fromAssetId; executionInput may be null (host completes). No separate setup/escrow/opt-in plan actions.
 - close/reduce/claim: executionShapeKey from position compatibleExitShapeKeys / compatibleManageShapeKeys; size with amountRaw / executionInput; authorizedSpends may be []. Never invent keys; empty catalogs = no supported path.
+- Claim-all manage shapes (claimRewards / claim with no amount input, including Haystack staking rewards): set amountRaw to null — never "0". A zero amount hard-blocks the whole plan. Put reward estimates in rationale only.
 - Tinyman farm rewards: claim against the reward position (positionType reward / opportunityId ending :farm) using that row's compatibleManageShapeKeys (e.g. mainnet:tinyman:staking-v1:farm:claimRewards). Do NOT claim against the farmed LP row — its manage keys are empty by design (exit is removeLiquidity + farm:uncommit only).
 - Swaps: (1) unlock required assets for a following open/increase, (2) consolidate USDC ops buffer, (3) rotate non-preferred idle liquid into deployable capital or preferred holds. Prefer canix_get_quote before sizing. If a quote tool returns an error (timeout, liquidity, impact), retry with a different size/pair or skip that swap and continue the plan—do not stop the whole review.
 - Missing required assets: prior swap action(s), then depend on those action ids only.
@@ -830,14 +831,98 @@ export function createPortfolioAgent(
   const client: ResponsesClient = {
     responses: {
       async create(request: unknown) {
-        const { data, response } = await openai.responses
-          .create(request as never)
+        // Always stream via zs-proxy: non-streaming waits for the full body
+        // and hits read timeouts on slow inference.
+        const body = withStreamTrue(request);
+        const { data: eventStream, response } = await openai.responses
+          .create(body as never)
           .withResponse();
+        const data = await finalResponseFromStream(eventStream);
         return { data, response };
       },
     },
   };
   return new OpenAiPortfolioAgent(client, canix, portfolioReader, options);
+}
+
+/** Force `stream: true` on every zs-proxy Responses request. */
+export function withStreamTrue(request: unknown): Record<string, unknown> {
+  if (request !== null && typeof request === "object" && !Array.isArray(request)) {
+    return { ...(request as Record<string, unknown>), stream: true };
+  }
+  return { stream: true, input: request };
+}
+
+/**
+ * Drain a Responses SSE stream to the completed Response body.
+ * zs-proxy / operator chains need streaming so idle read timeouts do not fire
+ * while the model is still generating.
+ */
+export async function finalResponseFromStream(
+  eventStream: unknown,
+): Promise<unknown> {
+  if (!isAsyncIterable(eventStream)) {
+    return eventStream;
+  }
+
+  let completed: unknown;
+  let failedMessage: string | undefined;
+
+  for await (const event of eventStream) {
+    if (!event || typeof event !== "object") {
+      continue;
+    }
+    const record = event as Record<string, unknown>;
+    if (record.type === "response.completed" && record.response !== undefined) {
+      completed = record.response;
+      continue;
+    }
+    if (record.type === "response.failed") {
+      failedMessage = formatStreamFailure(record);
+      continue;
+    }
+    if (record.type === "error") {
+      failedMessage = formatStreamFailure(record);
+    }
+  }
+
+  if (completed !== undefined) {
+    return completed;
+  }
+  if (failedMessage) {
+    throw new Error(`ZeroSignal stream failed: ${failedMessage}`);
+  }
+  throw new Error(
+    "ZeroSignal stream ended without response.completed (enable stream: true end-to-end)",
+  );
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Symbol.asyncIterator in value &&
+    typeof (value as AsyncIterable<unknown>)[Symbol.asyncIterator] ===
+      "function"
+  );
+}
+
+function formatStreamFailure(record: Record<string, unknown>): string {
+  const response = record.response;
+  if (response && typeof response === "object") {
+    const error = (response as { error?: unknown }).error;
+    if (error && typeof error === "object") {
+      const message = (error as { message?: unknown }).message;
+      if (typeof message === "string" && message.trim().length > 0) {
+        return message;
+      }
+    }
+  }
+  const message = record.message;
+  if (typeof message === "string" && message.trim().length > 0) {
+    return message;
+  }
+  return JSON.stringify(record);
 }
 
 /**
@@ -879,9 +964,10 @@ export async function createAgentResponse(
   openai: ResponsesClient,
   request: unknown,
 ): Promise<{ data: unknown; headers?: Headers }> {
-  const result = await openai.responses.create(request);
+  // stream: true is required for zs-proxy — see withStreamTrue / finalResponseFromStream.
+  const result = await openai.responses.create(withStreamTrue(request));
   if (!result || typeof result !== "object") {
-    return { data: result };
+    return { data: await finalResponseFromStream(result) };
   }
   const record = result as {
     data?: unknown;
@@ -889,21 +975,22 @@ export async function createAgentResponse(
     headers?: Headers | Record<string, string>;
   };
   if ("data" in record && record.data !== undefined) {
+    const data = await finalResponseFromStream(record.data);
     if (record.response?.headers) {
-      return { data: record.data, headers: record.response.headers };
+      return { data, headers: record.response.headers };
     }
     if (record.headers) {
       return {
-        data: record.data,
+        data,
         headers:
           record.headers instanceof Headers
             ? record.headers
             : headersFromRecord(record.headers),
       };
     }
-    return { data: record.data };
+    return { data };
   }
-  return { data: result };
+  return { data: await finalResponseFromStream(result) };
 }
 
 function recordInferenceCharge(

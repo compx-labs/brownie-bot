@@ -124,6 +124,44 @@ describe("Tinyman farm claim synthesis", () => {
       poolAddress: POOL,
       poolId: POOL,
     });
+    // Claim-all: do not copy position.amountRaw onto the action.
+    expect(completed.amountRaw).toBeNull();
+  });
+
+  it("clears LLM zero amountRaw on claim-all so policy does not hard-block", () => {
+    const snapshot: PortfolioSnapshot = portfolioSnapshot({
+      positions: [rewardPosition({ amountRaw: "0", amount: "0", usdValue: 0 })],
+    });
+    const completed = completeActionExecutionInput(
+      claimAction({ amountRaw: "0", executionInput: null }),
+      [],
+      snapshot,
+    );
+    expect(completed.amountRaw).toBeNull();
+    expect(completed.executionInput).toMatchObject({
+      programId: 123_456,
+      poolAddress: POOL,
+    });
+  });
+
+  it("clears zero amountRaw on claim-all even when executionInput is already complete", () => {
+    const snapshot: PortfolioSnapshot = portfolioSnapshot({
+      positions: [rewardPosition()],
+    });
+    const completed = completeActionExecutionInput(
+      claimAction({
+        amountRaw: "0",
+        executionInput: {
+          userAddress: "ADDR",
+          programId: 123_456,
+          poolAddress: POOL,
+          poolId: POOL,
+        },
+      }),
+      [],
+      snapshot,
+    );
+    expect(completed.amountRaw).toBeNull();
   });
 
   it("does not synthesize claim when executionShapeKey is missing", () => {
@@ -131,11 +169,17 @@ describe("Tinyman farm claim synthesis", () => {
       positions: [rewardPosition()],
     });
     const completed = completeActionExecutionInput(
-      claimAction({ executionShapeKey: null, executionInput: null }),
+      claimAction({
+        amountRaw: "0",
+        executionShapeKey: null,
+        executionInput: null,
+      }),
       [],
       snapshot,
     );
     expect(completed.executionInput).toBeNull();
+    // Unknown shape: still clear explicit zero so the sibling actions can pass policy.
+    expect(completed.amountRaw).toBeNull();
   });
 });
 

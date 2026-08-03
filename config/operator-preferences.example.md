@@ -26,3 +26,4 @@ and LP positions including that token.
 - Prefer high-TVL venues over peak APY when deploying surplus.
 - Never touch protocols or ASAs you list here as excluded.
 - Keep ops USDC buffer (~5+) before aggressive deployment.
+- When deploying ALGO, leave ≥5 ALGO above account minimum balance (never spend full spendable ALGO — fee room required).

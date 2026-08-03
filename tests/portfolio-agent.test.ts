@@ -13,9 +13,11 @@ import {
   compactToolResultForModel,
   extractOutputText,
   extractStructuredPlanText,
+  finalResponseFromStream,
   normalizeAgentResponse,
   normalizeAgentToolArgs,
   selectAgentTools,
+  withStreamTrue,
   type ResponsesClient,
 } from "../src/services/portfolio-agent.js";
 import { opportunity, portfolioPlan, portfolioSnapshot } from "./fixtures.js";
@@ -670,10 +672,12 @@ describe("OpenAiPortfolioAgent", () => {
       tools: unknown[];
       previous_response_id?: string;
       store?: boolean;
+      stream?: boolean;
       input: Array<{ role?: string; content?: string; type?: string }>;
     };
     expect(repairRequest.previous_response_id).toBeUndefined();
     expect(repairRequest.store).toBe(false);
+    expect(repairRequest.stream).toBe(true);
     expect(repairRequest.tools).toEqual([]);
     expect(
       repairRequest.input.some(
@@ -860,6 +864,38 @@ describe("OpenAiPortfolioAgent", () => {
         },
       ]),
     ).toBe("hello");
+  });
+
+  it("forces stream: true and drains SSE to response.completed", async () => {
+    expect(withStreamTrue({ model: "m", store: false })).toEqual({
+      model: "m",
+      store: false,
+      stream: true,
+    });
+
+    const completed = {
+      id: "resp-1",
+      output: [{ type: "message", content: [] }],
+      output_text: "done",
+    };
+    async function* events() {
+      yield { type: "response.created", response: { id: "resp-1" } };
+      yield { type: "response.output_text.delta", delta: "do" };
+      yield { type: "response.completed", response: completed };
+    }
+
+    await expect(finalResponseFromStream(events())).resolves.toEqual(completed);
+    await expect(finalResponseFromStream(completed)).resolves.toEqual(completed);
+    await expect(
+      finalResponseFromStream(
+        (async function* () {
+          yield {
+            type: "response.failed",
+            response: { error: { message: "operator down" } },
+          };
+        })(),
+      ),
+    ).rejects.toThrow(/operator down/);
   });
 
   it("extracts JSON objects from markdown fences and prose", () => {
@@ -1159,18 +1195,22 @@ describe("OpenAiPortfolioAgent", () => {
 
     const first = create.mock.calls[0]?.[0] as {
       store?: boolean;
+      stream?: boolean;
       previous_response_id?: string;
     };
     expect(first.store).toBe(false);
+    expect(first.stream).toBe(true);
     expect(first.previous_response_id).toBeUndefined();
 
     const followUp = create.mock.calls[1]?.[0] as {
       previous_response_id?: string;
       store?: boolean;
+      stream?: boolean;
       input: unknown;
     };
     expect(followUp.previous_response_id).toBeUndefined();
     expect(followUp.store).toBe(false);
+    expect(followUp.stream).toBe(true);
     expect(Array.isArray(followUp.input)).toBe(true);
     const input = followUp.input as Array<Record<string, unknown>>;
     expect(input[0]).toMatchObject({ role: "user" });
@@ -1217,10 +1257,12 @@ describe("OpenAiPortfolioAgent", () => {
     const followUp = create.mock.calls[1]?.[0] as {
       previous_response_id?: string;
       store?: boolean;
+      stream?: boolean;
       input: unknown;
     };
     expect(followUp.previous_response_id).toBeUndefined();
     expect(followUp.store).toBe(false);
+    expect(followUp.stream).toBe(true);
     expect(Array.isArray(followUp.input)).toBe(true);
     const input = followUp.input as Array<Record<string, unknown>>;
     expect(input[0]).toMatchObject({ role: "user" });
