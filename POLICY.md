@@ -67,7 +67,7 @@ Execution-time (not `PortfolioPolicy`, but related operator limits):
 Runs before validate. Does **not** approve/reject; it rewrites the plan:
 
 1. **Drop redundant prerequisite enters** — standalone `open`/`increase` whose shape `action` is `setup` / `optin` / `create` / `create-escrow` are removed when another capital enter for the same opportunity remains (host expands prerequisites at quote time).
-2. **Complete `executionInput`** — fill missing Canix shape `requiredInputs` from `inputHints`, `authorizedSpends`, `amountRaw`, snapshot (via `completeActionExecutionInput`); backfill `opportunityId` from the bound position; synthesize enter shapes for `increase` when the researched catalog omitted a held opportunity.
+2. **Complete `executionInput`** — fill missing Canix shape `requiredInputs` from `inputHints`, `authorizedSpends`, `amountRaw`, snapshot (via `completeActionExecutionInput`); backfill `opportunityId` from the bound position; synthesize enter shapes for `increase` when the researched catalog omitted a held opportunity. For **claim-all** manage shapes (no amount in `requiredInputs`), clear `amountRaw` (including LLM `"0"`) so zero-amount policy does not hard-block the rest of the plan.
 3. **Sanitize dependencies** — remove deps that are not action IDs in the plan (e.g. shape keys); remove deps pointing at dropped prerequisite actions.
 
 ---
@@ -93,7 +93,7 @@ Current/target weight totals are **not** hard-gated (rounding and partial plans 
 | Duplicate action IDs | all | `Duplicate action ID: …` |
 | Dependency on self | all | `Action … has invalid dependencies: depends on itself` |
 | Dependency ID not in plan | all | `Action … depends on … but the plan only defines action ID(s) …` |
-| `amountRaw === "0"` | non-hold | `Action … has a zero amount` |
+| `amountRaw === "0"` | non-hold (after normalize; claim-all amounts are cleared to null first) | `Action … has a zero amount` |
 | Duplicate `authorizedSpends` asset IDs | non-hold | `Action … has duplicate authorized spends` |
 | Missing `executionShapeKey` and/or `executionInput` | non-hold, non-swap | `Action … has no executable shape (missing …)` |
 
@@ -199,6 +199,18 @@ Partial Canix protocol messages (e.g. missing debt/health index) currently mark 
 - Gate on `confidence` (schema/reporting field; coerce happens earlier)
 - Re-run MCP research
 - Validate swap/execution quote economics beyond the structural swap rules above (slippage/impact checks happen at **execution**)
+
+---
+
+## Deterministic `/unwind` (Telegram)
+
+Operator close-all bypasses the LLM portfolio agent. The host planner emits
+claim → uncommit → exit actions (plus known LST receipt unstakes) and validates
+with a relaxed allocation config (`maxPositionPct`/`maxProtocolPct` 100,
+`minLiquidReservePct` 0, `blockIncompleteSnapshot: false`, stale/TVL floors
+waived) so intentional flattening is not blocked by concentration soft caps.
+Shape/position hard checks still apply. Confirm requires
+`ENABLE_TRANSACTION_SIGNING` and an unpaused bot.
 
 ---
 

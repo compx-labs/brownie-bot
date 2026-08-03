@@ -70,7 +70,8 @@ Transport privacy defaults to **off** (`zs.privacy: false`) so multi-turn review
 talk straight to the model operator and skip flaky relay hops. To re-enable
 relays: set `zs.privacy: true` in that file or `PROXY_ZS_PRIVACY=true`.
 Multi-turn Brownie **replays** the conversation client-side (`store: false`) and
-does not use `previous_response_id` (ZeroSignal-compatible; nodes do not keep
+always uses **`stream: true`** (ZS/proxy read timeouts kill silent non-streaming
+requests). It does not use `previous_response_id` (ZeroSignal-compatible; nodes do not keep
 prompt history).
 
 Then skip to [§4](#4-sanity-checks) / run a review via the container HTTP API or

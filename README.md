@@ -322,12 +322,21 @@ default `dist/index.js`) also long-polls for operator slash commands from
 | `/accounting` | Force an accounting snapshot (acks immediately; digest follows) |
 | `/deposit <txid>` | Record external funding from a pay/axfer transaction      |
 | `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction |
+| `/unwind`     | Preview host close-all (positions + LST receipts); then `/unwind confirm` |
+| `/unwind confirm` | Execute pending unwind (multi-wave until flat or stuck) |
+| `/unwind cancel` | Discard pending unwind preview |
 | `/pause`      | Hold trading; reviews continue as plan-only                   |
 | `/resume`     | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`) |
 
 Pause is a durable runtime kill-switch (wallet-scoped JSON under
 `ACCOUNTING_DATA_DIR`). It does not change the env signing flag; `/resume`
 only restores trading when signing is already enabled.
+
+`/unwind` is host-built (no LLM): one next exit/claim step per position per
+wave (claim → farm uncommit → close), plus known LST receipt unstakes (e.g.
+xALGO). Confirm requires signing enabled and not paused; the runner loops
+foundation waves until nothing remains, a stuck fingerprint, or a wave cap.
+Residual non-LST ASAs are not Haystack-swapped to cash in v1.
 
 `/deposit` and `/withdraw` look up the confirmed Algorand transaction via
 `X402_INDEXER_URL` (default AlgoNode indexer), infer ALGO/ASA amount, price it

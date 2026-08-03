@@ -1116,3 +1116,72 @@ describe("syncSwapAuthorizedSpend", () => {
     expect(result.violations).toEqual([]);
   });
 });
+
+describe("claim-all zero amount normalization", () => {
+  const claimShape =
+    "mainnet:tinyman:staking-v1:farm:claimRewards";
+  const rewardPositionId =
+    "tinyman:reward:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ:123456:31566704";
+
+  it("clears amountRaw 0 on claim-all so a multi-action plan is not hard-blocked", () => {
+    const held = {
+      protocol: "tinyman" as const,
+      positionType: "reward" as const,
+      positionId: rewardPositionId,
+      opportunityId: "tinyman:pool:1:farm",
+      assetId: 31_566_704,
+      assetSymbol: "TINY",
+      amountRaw: "0",
+      amount: "0",
+      usdValue: 0,
+      compatibleExitShapeKeys: [] as string[],
+      compatibleManageShapeKeys: [claimShape],
+    };
+    const rawPlan = portfolioPlan({
+      currentAllocations: [liquid],
+      targetAllocations: [liquid],
+      actions: [
+        {
+          id: "a3",
+          type: "claim",
+          protocol: "tinyman",
+          opportunityId: held.opportunityId,
+          positionId: held.positionId,
+          amountRaw: "0",
+          fromAssetId: null,
+          toAssetId: null,
+          targetWeightPct: null,
+          executionShapeKey: claimShape,
+          executionInput: null,
+          authorizedSpends: [],
+          rationale: "Claim accrued rewards.",
+          dependencies: [],
+        },
+      ],
+      projectedNetBenefitUsd: 10,
+    });
+
+    const before = policy.validate(
+      portfolioSnapshot({ positions: [held] }),
+      rawPlan,
+      [],
+    );
+    expect(before.approved).toBe(false);
+    expect(before.violations.join("\n")).toMatch(/zero amount/);
+
+    const plan = normalizePortfolioPlan(
+      rawPlan,
+      [],
+      portfolioSnapshot({ positions: [held] }),
+    );
+    expect(plan.actions[0]?.amountRaw).toBeNull();
+
+    const after = policy.validate(
+      portfolioSnapshot({ positions: [held] }),
+      plan,
+      [],
+    );
+    expect(after.approved).toBe(true);
+    expect(after.violations).toEqual([]);
+  });
+});

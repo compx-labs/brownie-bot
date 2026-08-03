@@ -66,6 +66,10 @@ import {
   probeHttpDependency,
   zsProxyHealthzUrl,
 } from "./services/health.js";
+import {
+  DeterministicUnwindService,
+  UnwindPendingStore,
+} from "./services/deterministic-unwind.js";
 import { OperatorPauseStore } from "./services/operator-pause.js";
 
 export interface AppContext {
@@ -422,6 +426,17 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     await canix.close();
   });
 
+  const unwindService = new DeterministicUnwindService({
+    portfolioReader,
+    canix,
+    walletAddress: config.BOT_WALLET,
+    executor,
+    coordinator,
+    signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+    isPaused: () => pauseStore.isPaused(),
+  });
+  const unwindPending = new UnwindPendingStore();
+
   let telegramCommandLoop: TelegramCommandLoop | undefined;
   if (isTelegramConfigured(config)) {
     const telegram = requireTelegramCredentials(config);
@@ -431,6 +446,8 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
       accountingService,
       pauseStore,
       signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+      unwindService,
+      unwindPending,
       getHealthInput: () => ({
         signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
         paused: pauseStore.isPaused(),

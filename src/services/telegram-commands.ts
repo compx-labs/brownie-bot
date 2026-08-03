@@ -7,6 +7,12 @@ import {
   type AccountingService,
 } from "./accounting.js";
 import {
+  DeterministicUnwindService,
+  UnwindPendingStore,
+  formatUnwindDigest,
+  formatUnwindPreview,
+} from "./deterministic-unwind.js";
+import {
   buildHealthReport,
   type BuildHealthReportInput,
   type HealthReport,
@@ -53,6 +59,9 @@ const HELP_TEXT = [
   "/accounting — start an accounting snapshot now (acks immediately)",
   "/deposit <txid> — record external funding (paste pay/axfer txid)",
   "/withdraw <txid> — record external withdrawal (paste pay/axfer txid)",
+  "/unwind — preview host close-all (positions + LST); then /unwind confirm",
+  "/unwind confirm — execute pending unwind (multi-wave)",
+  "/unwind cancel — discard pending unwind preview",
   "/pause — hold trading (reviews stay plan-only)",
   "/resume — allow trading again (if signing is enabled)",
 ].join("\n");
@@ -114,6 +123,8 @@ export interface OperatorCommandDeps {
   pauseStore: OperatorPauseStore;
   /** Env signing flag; /resume reports whether trading is actually effective. */
   signingEnabled: boolean;
+  unwindService?: DeterministicUnwindService;
+  unwindPending?: UnwindPendingStore;
 }
 
 export function createOperatorCommandHandlers(
@@ -150,6 +161,7 @@ export function createOperatorCommandHandlers(
         "external_withdrawal",
         ctx.command.args,
       ),
+    unwind: async (ctx) => handleUnwindCommand(deps, ctx),
     pause: async () => {
       const already = deps.pauseStore.isPaused();
       await deps.pauseStore.pause("telegram");
@@ -171,6 +183,78 @@ export function createOperatorCommandHandlers(
       return `Resumed. Trading is ${trading}.`;
     },
   };
+}
+
+async function handleUnwindCommand(
+  deps: OperatorCommandDeps,
+  ctx: TelegramCommandContext,
+): Promise<string> {
+  if (!deps.unwindService || !deps.unwindPending) {
+    return "Unwind is not configured on this process.";
+  }
+  const arg = ctx.command.args.trim().toLowerCase().split(/\s+/)[0] ?? "";
+  if (arg === "cancel") {
+    const cleared = deps.unwindPending.clear(ctx.chatId);
+    return cleared
+      ? "Pending unwind cancelled."
+      : "No pending unwind to cancel.";
+  }
+  if (arg === "confirm") {
+    const pending = deps.unwindPending.take(ctx.chatId);
+    if (!pending) {
+      return "No pending unwind (or it expired). Run /unwind first.";
+    }
+    if (deps.pauseStore.isPaused()) {
+      return "Trading is paused. /resume before /unwind confirm.";
+    }
+    if (!deps.signingEnabled) {
+      return "Signing is disabled (ENABLE_TRANSACTION_SIGNING). Unwind will not run.";
+    }
+    if (deps.getHealthInput().busy) {
+      return "A run is already in progress. Try again shortly.";
+    }
+    void runUnwindInBackground(deps, ctx);
+    return "Unwind starting… Digest will follow when it finishes.";
+  }
+  if (arg && arg !== "preview") {
+    return "Usage: /unwind | /unwind confirm | /unwind cancel";
+  }
+  try {
+    const { plan } = await deps.unwindService.preview();
+    deps.unwindPending.set(ctx.chatId, plan);
+    const notes: string[] = [];
+    if (deps.pauseStore.isPaused()) {
+      notes.push("Note: trading is paused — /resume before /unwind confirm.");
+    }
+    if (!deps.signingEnabled) {
+      notes.push(
+        "Note: signing is disabled — enable ENABLE_TRANSACTION_SIGNING before confirm.",
+      );
+    }
+    const body = formatUnwindPreview(plan);
+    return notes.length > 0 ? `${body}\n\n${notes.join("\n")}` : body;
+  } catch (error) {
+    throw new Error(sanitizeErrorMessage(error, { maxLength: 350 }));
+  }
+}
+
+async function runUnwindInBackground(
+  deps: OperatorCommandDeps,
+  ctx: TelegramCommandContext,
+): Promise<void> {
+  if (!deps.unwindService) {
+    return;
+  }
+  try {
+    const result = await deps.unwindService.run("fail");
+    await safeBackgroundReply(ctx, formatUnwindDigest(result));
+  } catch (error) {
+    const mapped = mapBusyError(error);
+    await safeBackgroundReply(
+      ctx,
+      `Unwind failed: ${sanitizeErrorMessage(mapped, { maxLength: 350 })}`,
+    );
+  }
 }
 
 async function runReviewInBackground(

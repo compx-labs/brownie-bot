@@ -15,7 +15,9 @@ import { AlgorandPaymentBuilder } from "./integrations/canix402/payment.js";
 import { walletFromMnemonic } from "./integrations/canix402/wallet.js";
 import {
   extractOutputText,
+  finalResponseFromStream,
   normalizeAgentResponse,
+  withStreamTrue,
 } from "./services/portfolio-agent.js";
 import { sanitizeErrorMessage } from "./util/errors.js";
 
@@ -28,6 +30,16 @@ const functionCallSchema = z.object({
   name: z.string().min(1),
   arguments: z.string(),
 });
+
+async function createSmokeResponse(
+  openai: OpenAI,
+  request: Record<string, unknown>,
+): Promise<ReturnType<typeof normalizeAgentResponse>> {
+  const stream = await openai.responses.create(
+    withStreamTrue(request) as never,
+  );
+  return normalizeAgentResponse(await finalResponseFromStream(stream));
+}
 
 function parseArgs(raw: string): Record<string, unknown> {
   try {
@@ -98,17 +110,15 @@ export async function runLlmSmoke(
       "Do not call any other tools.";
 
     let conversationItems: unknown[] = [];
-    let response = normalizeAgentResponse(
-      await openai.responses.create({
-        model: config.OPENAI_MODEL,
-        instructions:
-          "You are a connectivity smoke test. Use only the provided tool, then answer briefly.",
-        input: initialInput,
-        store: false,
-        tools,
-        tool_choice: "auto",
-      }),
-    );
+    let response = await createSmokeResponse(openai, {
+      model: config.OPENAI_MODEL,
+      instructions:
+        "You are a connectivity smoke test. Use only the provided tool, then answer briefly.",
+      input: initialInput,
+      store: false,
+      tools,
+      tool_choice: "auto",
+    });
 
     let toolCalled: string | undefined;
     let opportunityCount = 0;
@@ -176,20 +186,18 @@ export async function runLlmSmoke(
       }
 
       conversationItems = [...conversationItems, ...response.output, ...outputs];
-      response = normalizeAgentResponse(
-        await openai.responses.create({
-          model: config.OPENAI_MODEL,
-          instructions:
-            "You are a connectivity smoke test. Use only the provided tool, then answer briefly.",
-          input: [
-            { role: "user", content: initialInput },
-            ...conversationItems,
-          ] as unknown as OpenAI.Responses.ResponseInput,
-          store: false,
-          tools,
-          tool_choice: "auto",
-        }),
-      );
+      response = await createSmokeResponse(openai, {
+        model: config.OPENAI_MODEL,
+        instructions:
+          "You are a connectivity smoke test. Use only the provided tool, then answer briefly.",
+        input: [
+          { role: "user", content: initialInput },
+          ...conversationItems,
+        ],
+        store: false,
+        tools,
+        tool_choice: "auto",
+      });
     }
 
     throw new Error(`Smoke test exceeded ${MAX_TURNS} LLM turns`);

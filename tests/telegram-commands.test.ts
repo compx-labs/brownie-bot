@@ -144,7 +144,7 @@ describe("createOperatorCommandHandlers", () => {
 
     await expect(
       handlers.help!(commandCtx({ command: { name: "help", args: "", raw: "/help" } })),
-    ).resolves.toContain("/pause");
+    ).resolves.toContain("/unwind");
 
     const status = await handlers.status!(
       commandCtx({ command: { name: "status", args: "", raw: "/status" } }),
@@ -298,6 +298,240 @@ describe("createOperatorCommandHandlers", () => {
         commandCtx({ command: { name: "resume", args: "", raw: "/resume" } }),
       ),
     ).resolves.toContain("still disabled by ENABLE_TRANSACTION_SIGNING");
+  });
+
+  it("previews, confirms, and cancels unwind with gates", async () => {
+    const preview = vi.fn().mockResolvedValue({
+      snapshot: {},
+      plan: {
+        actions: [
+          {
+            id: "a1",
+            type: "close",
+            protocol: "folks-finance",
+            positionId: "folks:1",
+            executionShapeKey: "mainnet:folks:withdraw",
+          },
+        ],
+        skipped: [],
+        fingerprint: "fp-1",
+        summary: "Wave plan: 1 action(s)",
+      },
+      payments: [],
+    });
+    const run = vi.fn().mockResolvedValue({
+      id: "unwind-1",
+      startedAt: "2026-08-03T00:00:00.000Z",
+      completedAt: "2026-08-03T00:01:00.000Z",
+      status: "completed",
+      waves: [],
+      payments: [],
+    });
+    const unwindPending = {
+      set: vi.fn(),
+      take: vi.fn().mockReturnValue({
+        fingerprint: "fp-1",
+        summary: "Wave plan: 1 action(s)",
+        actionCount: 1,
+        skipCount: 0,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+      clear: vi.fn().mockReturnValue(true),
+      get: vi.fn(),
+    };
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const handlers = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        signingEnabled: true,
+        unwindService: { preview, run } as never,
+        unwindPending: unwindPending as never,
+        getHealthInput: () => ({
+          signingEnabled: true,
+          paused: false,
+          telegramConfigured: true,
+          accountingStorage: "local",
+          folksEscrowStorage: "local",
+          busy: false,
+        }),
+      }),
+    );
+
+    const previewText = await handlers.unwind!(
+      commandCtx({ command: { name: "unwind", args: "", raw: "/unwind" } }),
+    );
+    expect(previewText).toContain("Unwind preview");
+    expect(previewText).toContain("/unwind confirm");
+    expect(unwindPending.set).toHaveBeenCalled();
+
+    await expect(
+      handlers.unwind!(
+        commandCtx({
+          command: { name: "unwind", args: "confirm", raw: "/unwind confirm" },
+          reply,
+        }),
+      ),
+    ).resolves.toContain("Unwind starting");
+    await vi.waitFor(() => {
+      expect(reply).toHaveBeenCalledWith(
+        expect.stringContaining("Unwind unwind-1: completed"),
+      );
+    });
+
+    await expect(
+      handlers.unwind!(
+        commandCtx({
+          command: { name: "unwind", args: "cancel", raw: "/unwind cancel" },
+        }),
+      ),
+    ).resolves.toContain("Pending unwind cancelled");
+
+    await expect(
+      handlers.unwind!(
+        commandCtx({
+          command: { name: "unwind", args: "nope", raw: "/unwind nope" },
+        }),
+      ),
+    ).resolves.toContain("Usage:");
+  });
+
+  it("refuses unwind confirm when paused, unsigned, busy, or missing pending", async () => {
+    const pauseStore = mockPauseStore();
+    await pauseStore.pause("telegram");
+    const unwindPending = {
+      set: vi.fn(),
+      take: vi.fn().mockReturnValue({
+        fingerprint: "fp",
+        summary: "x",
+        actionCount: 1,
+        skipCount: 0,
+        createdAt: 1,
+        expiresAt: Date.now() + 60_000,
+      }),
+      clear: vi.fn(),
+      get: vi.fn(),
+    };
+    const run = vi.fn();
+    const pausedHandlers = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        pauseStore,
+        signingEnabled: true,
+        unwindService: { preview: vi.fn(), run } as never,
+        unwindPending: unwindPending as never,
+        getHealthInput: () => ({
+          signingEnabled: true,
+          paused: true,
+          telegramConfigured: true,
+          accountingStorage: "local",
+          folksEscrowStorage: "local",
+          busy: false,
+        }),
+      }),
+    );
+    await expect(
+      pausedHandlers.unwind!(
+        commandCtx({
+          command: { name: "unwind", args: "confirm", raw: "/unwind confirm" },
+        }),
+      ),
+    ).resolves.toContain("paused");
+    expect(run).not.toHaveBeenCalled();
+
+    const unsigned = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        signingEnabled: false,
+        unwindService: { preview: vi.fn(), run } as never,
+        unwindPending: {
+          ...unwindPending,
+          take: vi.fn().mockReturnValue({
+            fingerprint: "fp",
+            summary: "x",
+            actionCount: 1,
+            skipCount: 0,
+            createdAt: 1,
+            expiresAt: Date.now() + 60_000,
+          }),
+        } as never,
+        getHealthInput: () => ({
+          signingEnabled: false,
+          paused: false,
+          telegramConfigured: true,
+          accountingStorage: "local",
+          folksEscrowStorage: "local",
+          busy: false,
+        }),
+      }),
+    );
+    await expect(
+      unsigned.unwind!(
+        commandCtx({
+          command: { name: "unwind", args: "confirm", raw: "/unwind confirm" },
+        }),
+      ),
+    ).resolves.toContain("Signing is disabled");
+
+    const busy = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        signingEnabled: true,
+        unwindService: { preview: vi.fn(), run } as never,
+        unwindPending: {
+          take: vi.fn().mockReturnValue({
+            fingerprint: "fp",
+            summary: "x",
+            actionCount: 1,
+            skipCount: 0,
+            createdAt: 1,
+            expiresAt: Date.now() + 60_000,
+          }),
+          set: vi.fn(),
+          clear: vi.fn(),
+          get: vi.fn(),
+        } as never,
+        getHealthInput: () => ({
+          signingEnabled: true,
+          paused: false,
+          telegramConfigured: true,
+          accountingStorage: "local",
+          folksEscrowStorage: "local",
+          busy: true,
+        }),
+      }),
+    );
+    await expect(
+      busy.unwind!(
+        commandCtx({
+          command: { name: "unwind", args: "confirm", raw: "/unwind confirm" },
+        }),
+      ),
+    ).resolves.toContain("already in progress");
+
+    const missing = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        signingEnabled: true,
+        unwindService: { preview: vi.fn(), run } as never,
+        unwindPending: {
+          take: vi.fn().mockReturnValue(null),
+          set: vi.fn(),
+          clear: vi.fn(),
+          get: vi.fn(),
+        } as never,
+        getHealthInput: () => ({
+          signingEnabled: true,
+          paused: false,
+          telegramConfigured: true,
+          accountingStorage: "local",
+          folksEscrowStorage: "local",
+          busy: false,
+        }),
+      }),
+    );
+    await expect(
+      missing.unwind!(
+        commandCtx({
+          command: { name: "unwind", args: "confirm", raw: "/unwind confirm" },
+        }),
+      ),
+    ).resolves.toContain("No pending unwind");
   });
 
   it("records deposits and withdrawals from txids", async () => {
