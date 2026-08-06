@@ -94,6 +94,128 @@ describe("PortfolioPolicy", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("blocks open/increase when opportunity TVL is below minTvlUsd", () => {
+    const candidate = opportunity({
+      tvlUsd: 45,
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+    });
+    const result = policy.validate(
+      portfolioSnapshot(),
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [
+          { ...liquid, weightPct: 60 },
+          {
+            key: "opportunity:tinyman:pool:1",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: candidate.assetIds ?? [],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [openAction()],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.violations.join("\n")).toMatch(/TVL is below \$100000/);
+  });
+
+  it("waives minTvlUsd when opportunity assetIds intersect preferred holds", () => {
+    const preferredAssetId = 1_732_165_149;
+    const preferredPolicy = new PortfolioPolicy({
+      ...policyConfig,
+      preferredHoldAssetIds: [preferredAssetId],
+    });
+    const candidate = opportunity({
+      protocol: "compx",
+      opportunityId: "compx:lending:compx",
+      assetPair: "COMPX",
+      assetIds: [preferredAssetId],
+      tvlUsd: 45,
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:compx:v1:deposit:asa",
+          protocol: "compx",
+          action: "deposit",
+          variant: "asa",
+          requiredAssetIds: [preferredAssetId],
+          requiredInputs: ["assetId", "amount"],
+          inputHints: { assetId: preferredAssetId },
+        }),
+      ],
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+    });
+    const result = preferredPolicy.validate(
+      portfolioSnapshot({
+        liquidBalances: [
+          {
+            assetId: preferredAssetId,
+            symbol: "COMPX",
+            amountRaw: "4000000000000",
+            spendableAmountRaw: "4000000000000",
+            decimals: 6,
+            usdValue: 41.12,
+          },
+        ],
+      }),
+      portfolioPlan({
+        currentAllocations: [
+          {
+            key: "liquid:compx",
+            protocol: null,
+            opportunityId: null,
+            assetIds: [preferredAssetId],
+            weightPct: 100,
+            expectedApyPct: 0,
+          },
+        ],
+        targetAllocations: [
+          {
+            key: "liquid:compx",
+            protocol: null,
+            opportunityId: null,
+            assetIds: [preferredAssetId],
+            weightPct: 60,
+            expectedApyPct: 0,
+          },
+          {
+            key: "opportunity:compx:lending:compx",
+            protocol: "compx",
+            opportunityId: candidate.opportunityId,
+            assetIds: [preferredAssetId],
+            weightPct: 40,
+            expectedApyPct: 0,
+          },
+        ],
+        actions: [
+          openAction({
+            id: "open-compx-lending",
+            protocol: "compx",
+            opportunityId: candidate.opportunityId,
+            amountRaw: "4000000000000",
+            fromAssetId: preferredAssetId,
+            executionShapeKey: "mainnet:compx:v1:deposit:asa",
+            authorizedSpends: [
+              { assetId: preferredAssetId, amountRaw: "4000000000000" },
+            ],
+            rationale: "Build CompX lending liquidity",
+          }),
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations.join("\n")).not.toMatch(/TVL is below/);
+  });
+
   it("does not hard-block when allocation weights are near but not exactly 100%", () => {
     const candidate = opportunity({
       sourceTimestamp: new Date().toISOString(),
@@ -1112,6 +1234,301 @@ describe("syncSwapAuthorizedSpend", () => {
     ]);
 
     const result = policy.validate(portfolioSnapshot(), plan, []);
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  const BOTSY_ASSET_ID = 2_611_139_760;
+
+  it("approves singleAsset open when sibling flexible requires a missing pool ASA", () => {
+    const candidate = opportunity({
+      opportunityId: "tinyman:botsy-algo:farm",
+      assetPair: "BOTSY/ALGO",
+      assetIds: [BOTSY_ASSET_ID, 0],
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:tinyman:v2:addLiquidityAndFarm:flexible",
+          action: "addLiquidityAndFarm",
+          variant: "flexible",
+          requiredInputs: [
+            "assetAId",
+            "assetBId",
+            "assetAAmount",
+            "assetBAmount",
+          ],
+          requiredAssetIds: [BOTSY_ASSET_ID, 0],
+          inputHints: { assetAId: BOTSY_ASSET_ID, assetBId: 0 },
+        }),
+        enterShape({
+          shapeKey: "mainnet:tinyman:v2:addLiquidityAndFarm:singleAsset",
+          action: "addLiquidityAndFarm",
+          variant: "singleAsset",
+          requiredInputs: [
+            "depositAssetId",
+            "depositAmount",
+            "assetAId",
+            "assetBId",
+            "maxSlippageBps",
+          ],
+          // Canix often lists both pool ASAs even for single-sided.
+          requiredAssetIds: [BOTSY_ASSET_ID, 0],
+          inputHints: { assetAId: BOTSY_ASSET_ID, assetBId: 0 },
+        }),
+      ],
+    });
+
+    const result = policy.validate(
+      portfolioSnapshot({
+        liquidBalances: [
+          {
+            assetId: 0,
+            amountRaw: "500000000",
+            spendableAmountRaw: "400000000",
+            decimals: 6,
+          },
+        ],
+      }),
+      portfolioPlan({
+        currentAllocations: [
+          {
+            key: "liquid:algo",
+            protocol: null,
+            opportunityId: null,
+            assetIds: [0],
+            weightPct: 100,
+            expectedApyPct: 0,
+          },
+        ],
+        targetAllocations: [
+          {
+            key: "liquid:algo",
+            protocol: null,
+            opportunityId: null,
+            assetIds: [0],
+            weightPct: 60,
+            expectedApyPct: 0,
+          },
+          {
+            key: "opportunity:tinyman:botsy-algo:farm",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: [BOTSY_ASSET_ID, 0],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [
+          openAction({
+            id: "open-botsy-algo-farm",
+            opportunityId: candidate.opportunityId,
+            amountRaw: "330000000",
+            fromAssetId: 0,
+            executionShapeKey:
+              "mainnet:tinyman:v2:addLiquidityAndFarm:singleAsset",
+            executionInput: {
+              depositAssetId: 0,
+              depositAmount: "330000000",
+              assetAId: BOTSY_ASSET_ID,
+              assetBId: 0,
+            },
+            authorizedSpends: [{ assetId: 0, amountRaw: "330000000" }],
+            rationale: "Single-sided ALGO into BOTSY/ALGO farm.",
+          }),
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  it("blocks flexible open when the other pool ASA is missing and no swap covers it", () => {
+    const candidate = opportunity({
+      opportunityId: "tinyman:botsy-algo:farm",
+      assetPair: "BOTSY/ALGO",
+      assetIds: [BOTSY_ASSET_ID, 0],
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:tinyman:v2:addLiquidityAndFarm:flexible",
+          action: "addLiquidityAndFarm",
+          variant: "flexible",
+          requiredAssetIds: [BOTSY_ASSET_ID, 0],
+          inputHints: { assetAId: BOTSY_ASSET_ID, assetBId: 0 },
+        }),
+        enterShape({
+          shapeKey: "mainnet:tinyman:v2:addLiquidityAndFarm:singleAsset",
+          action: "addLiquidityAndFarm",
+          variant: "singleAsset",
+          requiredInputs: ["depositAssetId", "depositAmount"],
+          requiredAssetIds: [BOTSY_ASSET_ID, 0],
+          inputHints: { assetAId: BOTSY_ASSET_ID, assetBId: 0 },
+        }),
+      ],
+    });
+
+    const result = policy.validate(
+      portfolioSnapshot({
+        liquidBalances: [
+          {
+            assetId: 0,
+            amountRaw: "500000000",
+            spendableAmountRaw: "400000000",
+            decimals: 6,
+          },
+        ],
+      }),
+      portfolioPlan({
+        currentAllocations: [
+          {
+            key: "liquid:algo",
+            protocol: null,
+            opportunityId: null,
+            assetIds: [0],
+            weightPct: 100,
+            expectedApyPct: 0,
+          },
+        ],
+        targetAllocations: [
+          {
+            key: "liquid:algo",
+            protocol: null,
+            opportunityId: null,
+            assetIds: [0],
+            weightPct: 60,
+            expectedApyPct: 0,
+          },
+          {
+            key: "opportunity:tinyman:botsy-algo:farm",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: [BOTSY_ASSET_ID, 0],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [
+          openAction({
+            id: "open-botsy-algo-farm",
+            opportunityId: candidate.opportunityId,
+            amountRaw: "330000000",
+            fromAssetId: 0,
+            executionShapeKey:
+              "mainnet:tinyman:v2:addLiquidityAndFarm:flexible",
+            executionInput: {
+              assetAId: BOTSY_ASSET_ID,
+              assetBId: 0,
+              assetAAmount: "0",
+              assetBAmount: "330000000",
+            },
+            authorizedSpends: [{ assetId: 0, amountRaw: "330000000" }],
+            rationale: "Two-sided add without BOTSY.",
+          }),
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(false);
+    expect(
+      result.violations.some((message) =>
+        message.includes(`requires asset ID(s) ${BOTSY_ASSET_ID}`),
+      ),
+    ).toBe(true);
+  });
+
+  it("approves singleAsset open depositing ALGO when the other pool ASA is absent", () => {
+    const candidate = opportunity({
+      opportunityId: "tinyman:pool:algo-usdc-single",
+      assetPair: "ALGO/USDC",
+      assetIds: [0, 31_566_704],
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:tinyman:v2:addLiquidity:singleAsset",
+          action: "addLiquidity",
+          variant: "singleAsset",
+          requiredInputs: [
+            "depositAssetId",
+            "depositAmount",
+            "assetAId",
+            "assetBId",
+          ],
+          requiredAssetIds: [0, 31_566_704],
+          inputHints: { assetAId: 0, assetBId: 31_566_704 },
+        }),
+      ],
+    });
+
+    const result = policy.validate(
+      portfolioSnapshot({
+        liquidBalances: [
+          {
+            assetId: 0,
+            amountRaw: "500000000",
+            spendableAmountRaw: "400000000",
+            decimals: 6,
+          },
+        ],
+      }),
+      portfolioPlan({
+        currentAllocations: [
+          {
+            key: "liquid:algo",
+            protocol: null,
+            opportunityId: null,
+            assetIds: [0],
+            weightPct: 100,
+            expectedApyPct: 0,
+          },
+        ],
+        targetAllocations: [
+          {
+            key: "liquid:algo",
+            protocol: null,
+            opportunityId: null,
+            assetIds: [0],
+            weightPct: 60,
+            expectedApyPct: 0,
+          },
+          {
+            key: "opportunity:tinyman:pool:algo-usdc-single",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: [0, 31_566_704],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [
+          openAction({
+            id: "open-algo-usdc-single",
+            opportunityId: candidate.opportunityId,
+            amountRaw: "100000000",
+            fromAssetId: 0,
+            executionShapeKey: "mainnet:tinyman:v2:addLiquidity:singleAsset",
+            executionInput: {
+              depositAssetId: 0,
+              depositAmount: "100000000",
+              assetAId: 0,
+              assetBId: 31_566_704,
+            },
+            authorizedSpends: [{ assetId: 0, amountRaw: "100000000" }],
+            rationale: "Single-sided ALGO into ALGO/USDC.",
+          }),
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
     expect(result.approved).toBe(true);
     expect(result.violations).toEqual([]);
   });

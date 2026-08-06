@@ -196,9 +196,10 @@ export interface PortfolioHostGuidance {
   maxSourceAgeHours: number;
   minProjectedNetImprovementUsd: number;
   /**
-   * Soft operator preferences: hold these ASAs near targetPortfolioPct of
-   * portfolio USD. Not hard-enforced by policy. Below-target preferred holds
-   * should still accumulate even when secondary liquidity is thin.
+   * Soft operator preferences: keep these ASAs near targetPortfolioPct of
+   * portfolio USD as economic exposure (liquid + LP/farm/lend), not bag-only.
+   * Not hard-enforced by policy. Below-target preferred holds should still
+   * accumulate even when secondary liquidity is thin.
    */
   preferredHoldAssets: PreferredHoldAsset[];
 }
@@ -227,7 +228,7 @@ Host already loaded positions + liquid balances. Treat null/partial protocol dat
 CAPITAL
 Deploy surplus above the reserve when eligible executable opportunities exist. Hold only with named rejected candidates (id, APY, TVL, why). Ending liquid USDC (asset 31566704) should be ~5+ for ops (Canix x402 + ZeroSignal); if short, end with a small consolidate-usdc-buffer swap. When deploying ALGO (asset 0) via open/increase/swap-out, never spend the full spendableAmount — leave ≥5 ALGO above the account minimum balance (keep at least 5 ALGO of spendable unspent after the plan). Draining ALGO down to min balance leaves no fee room and blocks all further transactions. Do not invent secrets, mnemonics, or payment details.
 Swaps are not only precursors to deposits: use swap to rotate idle liquid ASAs into USDC/ALGO for yield, to rebalance toward hostGuidance.preferredHoldAssets targetPortfolioPct, or to free capital—when fees/slippage are justified. Do not swap preferred-hold assets that are already near their target %.
-Preferred holds (hostGuidance.preferredHoldAssets): soft long-term targets as % of portfolio USD. Treat listed assets as intentional holdings up to targetPortfolioPct; do not nag or force-rotate them when near target. Below target, prefer accumulating via surplus rather than liquidating productive yield. Thin/low secondary-market liquidity is NOT a reason to skip preferred-hold buys — accumulating below target helps build that liquidity and close the gap. For preferred-hold buys below target: do NOT shrink, split, or pace the swap solely because of expected price impact/slippage — size toward closing the gap with available surplus; the host waives Haystack price-impact limits when buying preferred-hold ASAs. Above target, trim only when net benefit clearly exceeds costs. Unlisted idle ASAs may be rotated into yield or preferred holds when economics work.
+Preferred holds (hostGuidance.preferredHoldAssets): soft long-term targets as % of portfolio USD. Count targetPortfolioPct as economic exposure—liquid wallet plus LP/farm/lend positions that include the ASA—not bag-only. Treat listed assets as intentional holdings up to that exposure; do not nag or force-rotate them when near target. Below/at target: prefer deploying surplus ALGO into {preferred}/ALGO (or preferred/USDC) LP/farm/lend over random high-APY exotic pairs; prefer accumulating via surplus rather than liquidating productive yield. Thin/low secondary-market liquidity is NOT a reason to skip preferred-hold buys — accumulating below target helps build that liquidity and close the gap. For preferred-hold buys below target: do NOT shrink, split, or pace the swap solely because of expected price impact/slippage — size toward closing the gap with available surplus; the host waives Haystack price-impact limits when buying preferred-hold ASAs. Above target in idle preferred ASA: migrate into preferred LP or lend before selling to USDC, unless de-risking is explicit. Trim only when total preferred exposure is above target and net benefit clearly exceeds costs. Lending and borrowing are first-class alongside swap→deposit: when a protocol lets you supply preferred collateral and borrow another asset, that can unlock working capital without a Haystack swap—evaluate those enter shapes when present. Unlisted idle ASAs may be rotated into yield or preferred holds when economics work.
 
 PLAN ACTIONS
 - Prefer executionReady with non-empty shapeKeys; empty shapeKeys = research-only—never invent keys.

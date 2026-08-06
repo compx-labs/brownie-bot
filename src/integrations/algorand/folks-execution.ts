@@ -1,5 +1,26 @@
 import type { OpportunityExecutionShape } from "../../domain.js";
 
+/** Folks Finance MainnetLoans.GENERAL — store key for loan escrow records. */
+export const FOLKS_GENERAL_LOAN_APP_ID = 971_388_781;
+/** Folks mainnet USDC lending pool (collateral). */
+export const FOLKS_USDC_POOL_APP_ID = 971_372_237;
+/** Folks mainnet ALGO lending pool (borrow ALGO). */
+export const FOLKS_ALGO_POOL_APP_ID = 971_368_268;
+
+/** Optional quote fields Canix accepts on Folks credit shapes beyond requiredInputs. */
+export const FOLKS_QUOTE_FORWARD_KEYS = [
+  "poolAppId",
+  "loanAppId",
+  "escrowAddress",
+  "assetId",
+  "assetAmount",
+  "amount",
+  "amountDenomination",
+  "borrowAmount",
+  "repayAmount",
+  "includeOpUp",
+] as const;
+
 export type FolksShapeRole = "setup" | "opt" | "deposit" | "other";
 
 export function classifyFolksShape(
@@ -8,6 +29,19 @@ export function classifyFolksShape(
   const key = shape.shapeKey.toLowerCase();
   const action = shape.action.toLowerCase();
   const variant = shape.variant.toLowerCase();
+  // Loan-credit pipeline is not deposit-escrow setup — keep it out of the
+  // deposit sequential path (loanEscrow / addCollateral / borrow / repay).
+  if (
+    key.includes("loanescrow") ||
+    variant.includes("loanescrow") ||
+    key.includes("addcollateral") ||
+    variant.includes("addcollateral") ||
+    action === "borrow" ||
+    action === "repay" ||
+    action === "collateral"
+  ) {
+    return "other";
+  }
   if (
     key.includes("depositescrow") ||
     (action === "setup" && variant.includes("depositescrow")) ||

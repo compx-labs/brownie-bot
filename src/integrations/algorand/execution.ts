@@ -15,12 +15,16 @@ import type { TreasuryWallet } from "../canix402/wallet.js";
 import type { FolksEscrowStore } from "./folks-escrow-store.js";
 import {
   classifyFolksShape,
+  FOLKS_GENERAL_LOAN_APP_ID,
+  FOLKS_QUOTE_FORWARD_KEYS,
   needsSequentialEscrowExecution,
   resolveDepositAssetId,
   resolvePoolAppId,
   selectEscrowShapesToRun,
   sortExecutionShapes,
 } from "./folks-execution.js";
+
+export { FOLKS_GENERAL_LOAN_APP_ID } from "./folks-execution.js";
 
 const executableQuoteSchema = z.object({
   shapeKey: z.string(),
@@ -308,6 +312,10 @@ export class AlgorandExecutionService {
 
     for (const [index, quote] of batch.data.entries()) {
       assertFresh(quote.expiresAt);
+      const escrowSigners = folksEscrowSignersFromMetadata(quote.metadata);
+      for (const [address, secret] of escrowSigners) {
+        extraSigners.set(address, secret);
+      }
       const encoded = await this.withLeadingAssetOptIns(
         quote.encodedTransactions,
         [
@@ -319,7 +327,7 @@ export class AlgorandExecutionService {
         batch.data.length === 1
           ? enrichedAction.id
           : `${enrichedAction.id}:${index}`,
-        encoded,
+        this.maybePatchFolksOracle(enrichedAction, encoded),
         extraSigners,
       );
       lastOutcome = {
@@ -330,6 +338,10 @@ export class AlgorandExecutionService {
       if (submit.outcome.status !== "confirmed") {
         return { outcome: lastOutcome, payments };
       }
+      await this.persistFolksEscrowFromQuoteMetadata(
+        enrichedAction,
+        quote.metadata,
+      );
     }
     return { outcome: lastOutcome, payments };
   }
@@ -374,12 +386,19 @@ export class AlgorandExecutionService {
 
       const quote = batch.data[0]!;
       assertFresh(quote.expiresAt);
+      const escrowSigners = folksEscrowSignersFromMetadata(quote.metadata);
+      for (const [address, secret] of escrowSigners) {
+        extraSigners.set(address, secret);
+      }
       const submit = await this.signAndSubmitEncoded(
         stepLabel,
-        await this.withLeadingAssetOptIns(quote.encodedTransactions, [
-          ...receiveAssetIds,
-          ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
-        ]),
+        this.maybePatchFolksOracle(
+          action,
+          await this.withLeadingAssetOptIns(quote.encodedTransactions, [
+            ...receiveAssetIds,
+            ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
+          ]),
+        ),
         extraSigners,
       );
       lastOutcome = {
@@ -390,6 +409,7 @@ export class AlgorandExecutionService {
       if (submit.outcome.status !== "confirmed") {
         return { outcome: lastOutcome, payments };
       }
+      await this.persistFolksEscrowFromQuoteMetadata(action, quote.metadata);
     }
     return { outcome: lastOutcome, payments };
   }
@@ -449,6 +469,30 @@ export class AlgorandExecutionService {
       }
     }
 
+    // Folks loan-credit shapes: resolve loan escrowAddress from store when omitted.
+    if (
+      /folks/i.test(shapeKey) &&
+      (/loanescrow|addcollateral|collateral:|borrow:|repay:/i.test(shapeKey) ||
+        /borrow|repay|collateral/i.test(shapeKey)) &&
+      typeof input.escrowAddress !== "string" &&
+      this.folksEscrowStore
+    ) {
+      const loanAppId =
+        typeof input.loanAppId === "number" && input.loanAppId > 0
+          ? input.loanAppId
+          : FOLKS_GENERAL_LOAN_APP_ID;
+      const escrow = await this.folksEscrowStore.get(
+        this.managedAddress,
+        loanAppId,
+      );
+      if (escrow) {
+        input.escrowAddress = escrow.escrowAddress;
+        if (input.loanAppId === undefined) {
+          input.loanAppId = loanAppId;
+        }
+      }
+    }
+
     return input;
   }
 
@@ -458,31 +502,90 @@ export class AlgorandExecutionService {
   ): Promise<Map<string, Uint8Array>> {
     const signers = new Map<string, Uint8Array>();
     const shapeKey = action.executionShapeKey ?? "";
-    if (
-      !this.folksEscrowStore ||
-      !["reduce", "close"].includes(action.type) ||
-      !/folks/i.test(shapeKey)
-    ) {
+    if (!this.folksEscrowStore || !/folks/i.test(shapeKey)) {
       return signers;
     }
+    // Deposit exits and loan credit shapes (setup/addCollateral/sync/borrow/repay)
+    // all need the matching escrow secret when present in the store.
+    const input = action.executionInput ?? {};
+    const loanAppId =
+      typeof input.loanAppId === "number" && input.loanAppId > 0
+        ? input.loanAppId
+        : undefined;
     const poolAppId = resolvePoolAppId(
       opportunity?.executionShapes ?? [],
-      action.executionInput ?? {},
+      input,
     );
-    if (poolAppId === undefined) {
-      return signers;
-    }
-    const escrow = await this.folksEscrowStore.get(
-      this.managedAddress,
-      poolAppId,
-    );
-    if (escrow) {
-      signers.set(
-        escrow.escrowAddress,
-        secretKeyFromBase64(escrow.escrowPrivateKeyBase64),
+    for (const appId of [loanAppId, poolAppId]) {
+      if (appId === undefined) {
+        continue;
+      }
+      const escrow = await this.folksEscrowStore.get(
+        this.managedAddress,
+        appId,
       );
+      if (escrow) {
+        signers.set(
+          escrow.escrowAddress,
+          secretKeyFromBase64(escrow.escrowPrivateKeyBase64),
+        );
+      }
     }
     return signers;
+  }
+
+  private maybePatchFolksOracle(
+    action: PortfolioAction,
+    encodedTransactions: string[],
+  ): string[] {
+    const raw = action.executionInput?.[FOLKS_ORACLE_ASSET_IDS_INPUT_KEY];
+    if (!Array.isArray(raw)) {
+      return encodedTransactions;
+    }
+    const assetIds = raw.filter(
+      (value): value is number =>
+        typeof value === "number" && Number.isFinite(value) && value >= 0,
+    );
+    if (assetIds.length === 0) {
+      return encodedTransactions;
+    }
+    return patchFolksOracleRefreshAssets(encodedTransactions, assetIds);
+  }
+
+  private async persistFolksEscrowFromQuoteMetadata(
+    action: PortfolioAction,
+    metadata: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    if (!this.folksEscrowStore) {
+      return;
+    }
+    const meta = readEscrowMetadata(metadata);
+    if (!meta?.escrowAddress || !meta.escrowPrivateKeyBase64) {
+      return;
+    }
+    const input = action.executionInput ?? {};
+    const shapeKey = action.executionShapeKey ?? "";
+    const storeAppId =
+      (typeof input.loanAppId === "number" && input.loanAppId > 0
+        ? input.loanAppId
+        : undefined) ??
+      (typeof input.poolAppId === "number" && input.poolAppId > 0
+        ? input.poolAppId
+        : undefined) ??
+      (/loanescrow/i.test(shapeKey) ? FOLKS_GENERAL_LOAN_APP_ID : undefined);
+    if (storeAppId === undefined) {
+      return;
+    }
+    await this.folksEscrowStore.save({
+      walletAddress: this.managedAddress,
+      poolAppId: storeAppId,
+      depositsAppId: meta.depositsAppId,
+      escrowAddress: meta.escrowAddress,
+      escrowPrivateKeyBase64: meta.escrowPrivateKeyBase64,
+    });
+    console.error(
+      `[execution] Persisted Folks escrow ${meta.escrowAddress} for app ${storeAppId}`,
+    );
   }
 
   private async executeSequentialEscrowShapes(
@@ -817,10 +920,18 @@ export class AlgorandExecutionService {
     if (!this.policy.signingEnabled) {
       return { outcome: { actionId, status: "validated-dry-run" } };
     }
+    // Canix loanEscrow quotes often fund the new escrow below Folks loan-app
+    // MBR (~0.73 ALGO); bump only for loan-escrow setup groups.
+    const fundedEncoded = /loanescrow|loan-escrow/i.test(actionId)
+      ? bumpFolksLoanEscrowFunding(encodedTransactions, {
+          funderAddress: this.managedAddress,
+          escrowAddresses: [...extraSigners.keys()],
+        })
+      : encodedTransactions;
     // Canix quotes are deterministic within a validity window; unique notes
     // keep retries/re-runs from colliding with already-confirmed txids.
     const uniqueEncoded = applyUniqueTransactionNotes(
-      encodedTransactions,
+      fundedEncoded,
       actionId,
     );
     const signed = uniqueEncoded.map((encoded) => {
@@ -979,7 +1090,7 @@ export function buildQuoteRequests(
         (candidate) => candidate.opportunityId === action.opportunityId,
       )
     : undefined;
-  const executionInput = action.executionInput ?? {};
+  const executionInput = stripHostOnlyExecutionInput(action.executionInput ?? {});
   if (
     ["open", "increase"].includes(action.type) &&
     opportunity &&
@@ -1037,12 +1148,27 @@ export function buildQuoteRequests(
   return [
     {
       shapeKey: action.executionShapeKey!,
-      input: {
-        ...executionInput,
-        maxSlippageBps,
-      },
+      input: sanitizeFolksIdentifierFields(
+        {
+          shapeKey: action.executionShapeKey,
+          action: action.executionShapeKey?.split(":")[3],
+          variant: action.executionShapeKey?.split(":")[4],
+        },
+        {
+          ...executionInput,
+          maxSlippageBps,
+        },
+      ),
     },
   ];
+}
+
+function stripHostOnlyExecutionInput(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...input };
+  delete next[FOLKS_ORACLE_ASSET_IDS_INPUT_KEY];
+  return next;
 }
 
 /**
@@ -1121,6 +1247,187 @@ export function collectReceiveAssetIdsFromQuoteMetadata(
 
 const MAX_NOTE_BYTES = 1_024;
 const NOTE_ENCODER = new TextEncoder();
+const NOTE_DECODER = new TextDecoder();
+
+/** Optional host-only hint: Folks borrow/repay oracle must refresh these assets. */
+export const FOLKS_ORACLE_ASSET_IDS_INPUT_KEY = "oracleAssetIds";
+
+/**
+ * Folks borrow/repay quotes from Canix often refresh only the borrow asset.
+ * Collateral valuation still needs every collateral asset price in the same
+ * group — merge required asset ids into the oracle adapter refresh_prices arg.
+ */
+export function patchFolksOracleRefreshAssets(
+  encodedTransactions: string[],
+  requiredAssetIds: number[],
+): string[] {
+  const required = [
+    ...new Set(requiredAssetIds.filter((assetId) => assetId >= 0)),
+  ].sort((left, right) => left - right);
+  if (required.length === 0 || encodedTransactions.length === 0) {
+    return encodedTransactions;
+  }
+
+  const REFRESH_PRICES_SELECTOR = "9524f1ff";
+  let patched = false;
+  const transactions = encodedTransactions.map((encoded) => {
+    const transaction = algosdk.decodeUnsignedTransaction(
+      Buffer.from(encoded, "base64"),
+    );
+    const mutable = transaction as algosdk.Transaction & {
+      group?: Uint8Array;
+    };
+    mutable.group = undefined;
+    const appArgs = transaction.applicationCall?.appArgs;
+    if (!appArgs || appArgs.length < 3) {
+      return transaction;
+    }
+    const selector = Buffer.from(appArgs[0]!).toString("hex");
+    if (selector !== REFRESH_PRICES_SELECTOR) {
+      return transaction;
+    }
+    const encodedAssets = Buffer.from(appArgs[2]!);
+    if (encodedAssets.length < 2) {
+      return transaction;
+    }
+    const count = encodedAssets.readUInt16BE(0);
+    const existing: number[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const offset = 2 + index * 8;
+      if (offset + 8 > encodedAssets.length) {
+        break;
+      }
+      existing.push(Number(encodedAssets.readBigUInt64BE(offset)));
+    }
+    const merged = [...new Set([...existing, ...required])].sort(
+      (left, right) => left - right,
+    );
+    if (
+      merged.length === existing.length &&
+      merged.every((assetId, index) => assetId === existing[index])
+    ) {
+      return transaction;
+    }
+    const rebuilt = Buffer.alloc(2 + merged.length * 8);
+    rebuilt.writeUInt16BE(merged.length, 0);
+    for (const [index, assetId] of merged.entries()) {
+      rebuilt.writeBigUInt64BE(BigInt(assetId), 2 + index * 8);
+    }
+    appArgs[2] = new Uint8Array(rebuilt);
+    patched = true;
+    return transaction;
+  });
+
+  if (!patched) {
+    return encodedTransactions;
+  }
+  console.error(
+    `[execution] Patched Folks oracle refresh assets → [${required.join(", ")}]`,
+  );
+  const grouped =
+    transactions.length === 1
+      ? transactions
+      : algosdk.assignGroupID(transactions);
+  return grouped.map((transaction) =>
+    Buffer.from(algosdk.encodeUnsignedTransaction(transaction)).toString(
+      "base64",
+    ),
+  );
+}
+
+/**
+ * Folks loan escrow creation needs ~0.73 ALGO MBR on the new escrow after
+ * loan-app opt-in. Canix has been quoting a 0.25 ALGO fund payment; raise it.
+ */
+export const FOLKS_LOAN_ESCROW_MIN_FUND_MICROALGOS = 1_000_000n;
+
+export function bumpFolksLoanEscrowFunding(
+  encodedTransactions: string[],
+  options: {
+    funderAddress: string;
+    escrowAddresses: string[];
+    minFundMicroAlgos?: bigint;
+  },
+): string[] {
+  const escrowSet = new Set(options.escrowAddresses);
+  if (escrowSet.size === 0 || encodedTransactions.length === 0) {
+    return encodedTransactions;
+  }
+  const minFund =
+    options.minFundMicroAlgos ?? FOLKS_LOAN_ESCROW_MIN_FUND_MICROALGOS;
+  let bumped = false;
+  const transactions = encodedTransactions.map((encoded) => {
+    const transaction = algosdk.decodeUnsignedTransaction(
+      Buffer.from(encoded, "base64"),
+    );
+    const mutable = transaction as algosdk.Transaction & {
+      group?: Uint8Array;
+    };
+    mutable.group = undefined;
+    if (transaction.type !== "pay" || !transaction.payment) {
+      return transaction;
+    }
+    const sender = transaction.sender.toString();
+    const receiver = transaction.payment.receiver.toString();
+    const amount = BigInt(transaction.payment.amount);
+    if (
+      sender === options.funderAddress &&
+      escrowSet.has(receiver) &&
+      amount > 0n &&
+      amount < minFund
+    ) {
+      bumped = true;
+      return algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+        sender: options.funderAddress,
+        receiver,
+        amount: minFund,
+        note: transaction.note,
+        rekeyTo: transaction.rekeyTo,
+        closeRemainderTo: transaction.payment.closeRemainderTo,
+        suggestedParams: {
+          fee: transaction.fee,
+          flatFee: true,
+          firstValid: transaction.firstValid,
+          lastValid: transaction.lastValid,
+          genesisHash: transaction.genesisHash,
+          genesisID: transaction.genesisID,
+          minFee: transaction.fee,
+        },
+      });
+    }
+    return transaction;
+  });
+  if (!bumped) {
+    return encodedTransactions;
+  }
+  console.error(
+    `[execution] Bumped Folks loan escrow funding to ${minFund.toString()} microAlgos`,
+  );
+  const grouped =
+    transactions.length === 1
+      ? transactions
+      : algosdk.assignGroupID(transactions);
+  return grouped.map((transaction) =>
+    Buffer.from(algosdk.encodeUnsignedTransaction(transaction)).toString(
+      "base64",
+    ),
+  );
+}
+
+/**
+ * Folks escrow-binding payments use note = ASCII prefix (e.g. "la ", "da ") +
+ * 32-byte escrow public key (exactly 35 bytes). Appending a uniqueness suffix
+ * breaks on-chain assert equality — leave these notes untouched.
+ */
+export function isFolksEscrowBindingNote(
+  note: Uint8Array | undefined,
+): boolean {
+  if (!note || note.length !== 35) {
+    return false;
+  }
+  const prefix = NOTE_DECODER.decode(note.subarray(0, 3));
+  return /^[a-z]{2} $/.test(prefix);
+}
 
 /**
  * Stamp a per-submit nonce onto each transaction note and rebuild the group.
@@ -1130,6 +1437,7 @@ const NOTE_ENCODER = new TextEncoder();
  *
  * Existing notes are preserved as a prefix (protocol-required note prefixes keep
  * working) and a `|brownie|<actionId>|<nonce>|<index>` suffix is appended.
+ * Folks escrow-binding notes are left unchanged (exact 35-byte match required).
  */
 export function applyUniqueTransactionNotes(
   encodedTransactions: string[],
@@ -1150,7 +1458,9 @@ export function applyUniqueTransactionNotes(
       note?: Uint8Array;
     };
     mutable.group = undefined;
-    mutable.note = buildUniqueNote(transaction.note, actionId, nonce, index);
+    if (!isFolksEscrowBindingNote(transaction.note)) {
+      mutable.note = buildUniqueNote(transaction.note, actionId, nonce, index);
+    }
     return transaction;
   });
   const grouped =
@@ -1383,8 +1693,19 @@ export function buildShapeInput(
       required[key] = executionInput[key];
     }
   }
+  // Folks credit shapes list a short requiredInputs set; poolAppId / loanAppId /
+  // amounts still need to reach Canix when the runner supplies them.
+  const folksForward: Record<string, unknown> = {};
+  if (/folks/i.test(shape.shapeKey ?? "")) {
+    for (const key of FOLKS_QUOTE_FORWARD_KEYS) {
+      if (key in executionInput && executionInput[key] !== undefined) {
+        folksForward[key] = executionInput[key];
+      }
+    }
+  }
   const input: Record<string, unknown> = {
     ...(shape.inputHints ?? {}),
+    ...folksForward,
     ...required,
     maxSlippageBps,
   };
@@ -1425,13 +1746,36 @@ export function sanitizeFolksIdentifierFields(
     role !== "opt" &&
     role !== "deposit"
   ) {
-    return input;
+    // Borrow/repay/collateral quotes also reject poolAppId + assetId together.
+    const sanitizedCredit = { ...input };
+    if (
+      sanitizedCredit.poolAppId !== undefined &&
+      sanitizedCredit.assetId !== undefined
+    ) {
+      delete sanitizedCredit.assetId;
+    }
+    return sanitizedCredit;
   }
   const sanitized = { ...input };
   if (sanitized.poolAppId !== undefined && sanitized.assetId !== undefined) {
     delete sanitized.assetId;
   }
   return sanitized;
+}
+
+function folksEscrowSignersFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Map<string, Uint8Array> {
+  const signers = new Map<string, Uint8Array>();
+  const meta = readEscrowMetadata(metadata);
+  if (!meta?.escrowAddress || !meta.escrowPrivateKeyBase64) {
+    return signers;
+  }
+  signers.set(
+    meta.escrowAddress,
+    secretKeyFromBase64(meta.escrowPrivateKeyBase64),
+  );
+  return signers;
 }
 
 function readEscrowMetadata(metadata: Record<string, unknown> | undefined): {

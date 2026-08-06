@@ -108,7 +108,7 @@ ENABLE_TRANSACTION_SIGNING=false
 # OPENAI_BASE_URL=http://127.0.0.1:8080/v1
 # OPEN_AI_API_KEY=zerosignal
 # OPENAI_MODEL=glm-5.2
-# Soft preferred holds (assetId:targetPortfolioPct): e.g. GOLD$ ~15%
+# Soft preferred exposure (assetId:targetPortfolioPct): liquid + LP/lend; e.g. GOLD$ ~15%
 # PREFERRED_HOLD_ASSETS=246516580:15
 ```
 
