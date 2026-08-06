@@ -33,6 +33,18 @@ export function inferExitRequiredInputs(exitShapeKey: string): string[] {
   if (key.includes("folks") && key.includes("withdraw")) {
     return ["amount", "amountDenomination", "poolAppId", "escrowAddress"];
   }
+  if (key.includes("folks") && key.includes("repay")) {
+    return ["escrowAddress", "repayAmount", "loanAppId", "poolAppId"];
+  }
+  if (key.includes("folks") && key.includes("collateral") && key.includes("reduce")) {
+    return [
+      "escrowAddress",
+      "amount",
+      "amountDenomination",
+      "loanAppId",
+      "poolAppId",
+    ];
+  }
   if (key.includes("reti") && key.includes("unstake")) {
     return ["validatorId", "poolAppId", "amount"];
   }
@@ -71,6 +83,18 @@ export function inferEnterRequiredInputs(enterShapeKey: string): string[] {
   }
   if (key.includes("folks") && (key.includes("deposit") || key.includes("supply"))) {
     return ["amount", "amountDenomination", "poolAppId"];
+  }
+  if (key.includes("folks") && key.includes("borrow")) {
+    return ["escrowAddress", "borrowAmount", "loanAppId", "poolAppId"];
+  }
+  if (key.includes("folks") && key.includes("loanescrow")) {
+    return ["loanAppId"];
+  }
+  if (key.includes("folks") && key.includes("addcollateral")) {
+    return ["escrowAddress", "loanAppId", "poolAppId"];
+  }
+  if (key.includes("folks") && key.includes("collateral") && key.includes("sync")) {
+    return ["escrowAddress", "loanAppId", "poolAppId"];
   }
   if (key.includes("myth") && (key.includes("stake") || key.includes("mint"))) {
     return ["amount", "appId"];

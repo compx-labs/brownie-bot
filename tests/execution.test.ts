@@ -9,6 +9,7 @@ import {
   clampActionAmountToSpendable,
   collectPotentialReceiveAssetIds,
   collectReceiveAssetIdsFromQuoteMetadata,
+  isFolksEscrowBindingNote,
   isSkippablePrerequisiteQuoteError,
   prependAssetOptInTransactions,
   quotesNeedSequentialConfirm,
@@ -1566,5 +1567,25 @@ describe("applyUniqueTransactionNotes", () => {
     );
     expect(decoded[0]?.group).toBeDefined();
     expect(decoded[1]?.group).toEqual(decoded[0]?.group);
+  });
+
+  it("leaves Folks escrow-binding notes unchanged", () => {
+    const escrow = algosdk.generateAccount();
+    const note = Uint8Array.from([
+      ...new TextEncoder().encode("la "),
+      ...algosdk.decodeAddress(escrow.addr.toString()).publicKey,
+    ]);
+    expect(isFolksEscrowBindingNote(note)).toBe(true);
+    const sender = algosdk.generateAccount().addr.toString();
+    const encoded = encodeGroup(sender, note);
+    const unique = applyUniqueTransactionNotes(
+      encoded,
+      "folks-credit-loan",
+      "n",
+    );
+    const decoded = algosdk.decodeUnsignedTransaction(
+      Buffer.from(unique[0]!, "base64"),
+    );
+    expect(Buffer.from(decoded.note ?? [])).toEqual(Buffer.from(note));
   });
 });

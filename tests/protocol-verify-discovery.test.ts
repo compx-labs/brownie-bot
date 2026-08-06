@@ -6,7 +6,14 @@ import type { Opportunity } from "../src/domain.js";
 import { normalizePortfolioPlan } from "../src/services/portfolio-policy.js";
 import {
   ALGO_ASSET_ID,
+  COMPX_ASSET_ID,
+  COMPX_BORROW_SHAPE,
+  COMPX_DEPOSIT_SHAPE,
+  COMPX_REPAY_SHAPE,
+  COMPX_WITHDRAW_SHAPE,
   DEFAULT_PROTOCOL_VERIFY_FIXTURE_PATH,
+  FOLKS_BORROW_VARIABLE_SHAPE,
+  FOLKS_REPAY_SHAPE,
   MYTH_MINT_SHAPE,
   MYTH_REDEEM_SHAPE,
   ORA_ASSET_ID,
@@ -39,12 +46,14 @@ import {
 /** Pinned from `npm run canix:discover-verify` (2026-07-23). */
 const PINNED_OPPORTUNITY_IDS = {
   "folks-usdc-deposit": "folks-lending-971372237",
+  "folks-credit": "folks-lending-971372237",
   "folks-algo-stake": "folks-staking-xalgo",
   "tinyman-lp":
     "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM:lp",
   "compx-lending": "compx-lending-3491050310",
+  "compx-credit": "compx-lending-3491050310",
   "dorkfi-usdc-lending": "dorkfi:algorand:3333688282:31566704:lending",
-  "pact-lp": "3585364727:farm",
+  "pact-lp": "2966876920:lp",
   "haystack-swap": null,
   "reti-pooling": "reti-staking-220",
   "myth-dualstake": "myth-staking-2933534328",
@@ -52,11 +61,13 @@ const PINNED_OPPORTUNITY_IDS = {
 
 const PINNED_ENTER_SHAPE_KEYS = {
   "folks-usdc-deposit": "mainnet:folks-finance:v2:deposit:escrow",
+  "folks-credit": "mainnet:folks-finance:v2:deposit:escrow",
   "folks-algo-stake": "mainnet:folks-finance:xalgo-v1:stake:immediate",
   "tinyman-lp": "mainnet:tinyman:v2:addLiquidity:flexible",
   "compx-lending": "mainnet:compx:v1:deposit:asa",
+  "compx-credit": "mainnet:compx:v1:deposit:asa",
   "dorkfi-usdc-lending": "mainnet:dorkfi:v1:deposit:asa",
-  "pact-lp": "mainnet:pact:v1:addLiquidityAndFarm:twoSided",
+  "pact-lp": "mainnet:pact:v1:addLiquidity:twoSided",
   "haystack-swap": null,
   "reti-pooling": "mainnet:reti:v1:stake:algo",
   "myth-dualstake": "mainnet:myth-finance:dualstake-v1:mint:lst",
@@ -105,6 +116,30 @@ function folksDepositOpportunity(): Opportunity {
         requiredInputs: ["assetAmount"],
         requiredAssetIds: [USDC_ASSET_ID],
         inputHints: { assetId: USDC_ASSET_ID, poolAppId: 1 },
+      }),
+    ],
+  });
+}
+
+function folksAlgoLendOpportunity(): Opportunity {
+  return opportunity({
+    protocol: "folks-finance",
+    opportunityType: "lending",
+    opportunityId: "folks-lending-971368268",
+    assetPair: "ALGO",
+    assetIds: [ALGO_ASSET_ID],
+    executionShapes: [
+      enterShape({
+        shapeKey: "mainnet:folks-finance:v2:deposit:escrow",
+        protocol: "folks-finance",
+        action: "deposit",
+        variant: "escrow",
+        title: "Deposit",
+        summary: "Deposit ALGO",
+        order: 2,
+        requiredInputs: ["assetAmount"],
+        requiredAssetIds: [ALGO_ASSET_ID],
+        inputHints: { assetId: ALGO_ASSET_ID, poolAppId: 971_368_268 },
       }),
     ],
   });
@@ -272,6 +307,7 @@ describe("protocol-verify discovery matching", () => {
   it("pins every required case from a synthetic catalog", () => {
     const catalog = [
       folksDepositOpportunity(),
+      folksAlgoLendOpportunity(),
       folksStakeOpportunity(),
       tinymanLpOpportunity(),
       opportunity({
@@ -279,24 +315,57 @@ describe("protocol-verify discovery matching", () => {
         opportunityType: "lending",
         opportunityId: "compx:usdc:1",
         assetPair: "USDC",
-        assetIds: [USDC_ASSET_ID],
+        assetIds: [USDC_ASSET_ID, 3_491_050_538],
         executionShapes: [
           enterShape({
-            shapeKey: "mainnet:compx:v1:deposit:market",
+            shapeKey: COMPX_DEPOSIT_SHAPE,
             protocol: "compx",
             action: "deposit",
-            variant: "market",
-            requiredInputs: ["assetAmount"],
+            variant: "asa",
+            requiredInputs: ["userAddress", "marketAppId", "amount"],
             requiredAssetIds: [USDC_ASSET_ID],
-            inputHints: { assetId: USDC_ASSET_ID },
+            inputHints: { assetId: USDC_ASSET_ID, marketAppId: 3_491_050_310 },
           }),
           enterShape({
-            shapeKey: "mainnet:compx:v1:withdraw:market",
+            shapeKey: COMPX_WITHDRAW_SHAPE,
             protocol: "compx",
             action: "withdraw",
-            variant: "market",
-            requiredInputs: ["assetAmount"],
+            variant: "asa",
+            requiredInputs: ["userAddress", "marketAppId", "amount"],
             requiredAssetIds: [USDC_ASSET_ID],
+            inputHints: { assetId: USDC_ASSET_ID, marketAppId: 3_491_050_310 },
+          }),
+        ],
+      }),
+      opportunity({
+        protocol: "compx",
+        opportunityType: "lending",
+        opportunityId: "compx:compx:1",
+        assetPair: "COMPX",
+        assetIds: [COMPX_ASSET_ID],
+        executionShapes: [
+          enterShape({
+            shapeKey: COMPX_BORROW_SHAPE,
+            protocol: "compx",
+            action: "borrow",
+            variant: "asa",
+            requiredInputs: [
+              "userAddress",
+              "marketAppId",
+              "borrowAmount",
+              "collateralAmount",
+            ],
+            requiredAssetIds: [],
+            inputHints: { assetId: COMPX_ASSET_ID, marketAppId: 3_500_000_001 },
+          }),
+          enterShape({
+            shapeKey: COMPX_REPAY_SHAPE,
+            protocol: "compx",
+            action: "repay",
+            variant: "asa",
+            requiredInputs: ["userAddress", "marketAppId", "amount"],
+            requiredAssetIds: [COMPX_ASSET_ID],
+            inputHints: { assetId: COMPX_ASSET_ID, marketAppId: 3_500_000_001 },
           }),
         ],
       }),
@@ -374,6 +443,14 @@ describe("protocol-verify discovery matching", () => {
     expect(matched["folks-usdc-deposit"].exitShapeKey).toBe(
       "mainnet:folks-finance:v2:withdraw:escrow",
     );
+    expect(matched["folks-credit"].opportunityId).toBe("folks:usdc:verify");
+    expect(matched["folks-credit"].borrowOpportunityId).toBe(
+      "folks-lending-971368268",
+    );
+    expect(matched["folks-credit"].borrowShapeKey).toBe(
+      FOLKS_BORROW_VARIABLE_SHAPE,
+    );
+    expect(matched["folks-credit"].repayShapeKey).toBe(FOLKS_REPAY_SHAPE);
     expect(matched["folks-algo-stake"].opportunityId).toBe("folks:algo:stake");
     expect(matched["folks-algo-stake"].receiptAssetId).toBe(1_134_696_561);
     expect(matched["folks-algo-stake"].exitShapeKey).toBe(
@@ -382,6 +459,12 @@ describe("protocol-verify discovery matching", () => {
     expect(matched["folks-algo-stake"].receiptAssetId).toBe(1_134_696_561);
     expect(matched["tinyman-lp"].opportunityId).toBe("tinyman:pool:algo-usdc");
     expect(matched["compx-lending"].enterShapeKey).toContain("deposit");
+    expect(matched["compx-credit"].opportunityId).toBe("compx:usdc:1");
+    expect(matched["compx-credit"].borrowOpportunityId).toBe("compx:compx:1");
+    expect(matched["compx-credit"].borrowShapeKey).toBe(COMPX_BORROW_SHAPE);
+    expect(matched["compx-credit"].repayShapeKey).toBe(COMPX_REPAY_SHAPE);
+    expect(matched["compx-credit"].exitShapeKey).toBe(COMPX_WITHDRAW_SHAPE);
+    expect(matched["compx-credit"].receiptAssetId).toBe(3_491_050_538);
     expect(matched["dorkfi-usdc-lending"].protocol).toBe("dorkfi");
     expect(matched["pact-lp"].opportunityId).toBe("pact:pool:algo-usdc");
     expect(matched["haystack-swap"].fromAssetId).toBe(ALGO_ASSET_ID);
@@ -567,6 +650,19 @@ describe("protocol-verify pinned fixture", () => {
     expect(fixture.cases["myth-dualstake"].exitShapeKey).toBe(MYTH_REDEEM_SHAPE);
     expect(fixture.cases["myth-dualstake"].assetIds).toContain(ORA_ASSET_ID);
     expect(fixture.cases["myth-dualstake"].receiptAssetId).toBe(2_933_559_000);
+    expect(fixture.cases["compx-credit"].borrowOpportunityId).toBe(
+      "compx-lending-3607871733",
+    );
+    expect(fixture.cases["compx-credit"].borrowShapeKey).toBe(COMPX_BORROW_SHAPE);
+    expect(fixture.cases["compx-credit"].repayShapeKey).toBe(COMPX_REPAY_SHAPE);
+    expect(fixture.cases["compx-credit"].receiptAssetId).toBe(3_491_050_538);
+    expect(fixture.cases["folks-credit"].borrowOpportunityId).toBe(
+      "folks-lending-971368268",
+    );
+    expect(fixture.cases["folks-credit"].borrowShapeKey).toBe(
+      FOLKS_BORROW_VARIABLE_SHAPE,
+    );
+    expect(fixture.cases["folks-credit"].repayShapeKey).toBe(FOLKS_REPAY_SHAPE);
   });
 });
 

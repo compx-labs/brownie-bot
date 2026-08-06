@@ -46,11 +46,11 @@ Returned fields:
 | `MAX_POSITION_PCT` | `35` | Soft: max single **deployed** target allocation weight (`protocol !== null`) |
 | `MAX_PROTOCOL_PCT` | `50` | Soft: max sum of target weights per protocol |
 | `MIN_LIQUID_RESERVE_PCT` | `10` | Soft: min sum of target weights with `protocol === null` |
-| `MIN_TVL_USD` | `6000` | Hard (open/increase): opportunity TVL floor |
+| `MIN_TVL_USD` | `6000` | Hard (open/increase): opportunity TVL floor; **waived** when the opportunity’s `assetIds` intersect `PREFERRED_HOLD_ASSETS` |
 | `MAX_SOURCE_AGE_HOURS` | `24` | Hard (open/increase): opportunity `sourceTimestamp` age; also used when building snapshot caveats for stale positions |
 | `MIN_PROJECTED_NET_IMPROVEMENT_USD` | `1` | Soft: when any non-`hold` action exists |
 | `ENABLE_TRANSACTION_SIGNING` | required | Switches hard vs soft treatment (see above) |
-| `PREFERRED_HOLD_ASSETS` | empty | Soft agent steer; also waives Haystack price-impact cap on buys into listed ASAs |
+| `PREFERRED_HOLD_ASSETS` | empty | Soft agent steer; waives Haystack price-impact on buys into listed ASAs; waives `MIN_TVL_USD` on open/increase into opportunities that include those ASAs |
 
 Execution-time (not `PortfolioPolicy`, but related operator limits):
 
@@ -116,7 +116,7 @@ Swaps are validated separately and **do not** require an execution shape key in 
 | Opportunity must be `executionReady` with non-empty `executionShapes` | `… research-only (executionReady=false or empty executionShapes)` |
 | `executionShapeKey` must be in opportunity enter shapes | `… is not in opportunity … enter shapes […]` |
 | Declared treasury spend when capital is transferred | `Action … has no declared treasury spend` |
-| Opportunity TVL ≥ `MIN_TVL_USD` | `Action … TVL is below $…` |
+| Opportunity TVL ≥ `MIN_TVL_USD` (unless opportunity `assetIds` intersects `PREFERRED_HOLD_ASSETS`) | `Action … TVL is below $…` |
 | Opportunity source age ≤ `MAX_SOURCE_AGE_HOURS` | `Action … opportunity data is stale (…h)` |
 
 **When is declared spend required?** (`authorizedSpends` non-empty):
@@ -126,8 +126,10 @@ Swaps are validated separately and **do not** require an execution shape key in 
 
 Setup-only / zero-amount prerequisite-style enters that survive normalization may not need spends.
 
-**Missing required assets** (shape `requiredAssetIds` not covered by liquid balances or a dependency `swap` producing the asset):
+**Missing required assets** (selected enter shape `requiredAssetIds`, not covered by liquid balances or a dependency `swap` producing the asset):
 
+- Uses the action’s `executionShapeKey` shape when present; otherwise unions all opportunity enter shapes (conservative fallback).
+- **Single-sided** enters (`singleAsset` / `addLiquidityAndFarm:singleAsset`): narrowed to the deposit asset (`executionInput.depositAssetId`, else `fromAssetId`, else a single `authorizedSpends` asset)—so Canix listing both pool ASAs does not require the other side in wallet.
 - Signing enabled → **hard**
 - Signing disabled → **soft** warning only
 
@@ -195,7 +197,7 @@ Partial Canix protocol messages (e.g. missing debt/health index) currently mark 
 ## What policy does **not** do
 
 - Parse or judge Telegram message formatting
-- Enforce preferred-hold target % (agent guidance; execution only waives Haystack price-impact on buys into listed ASAs)
+- Enforce preferred-hold target % (agent guidance for economic exposure incl. LP/lend; execution waives Haystack price-impact on buys into listed ASAs; policy waives `MIN_TVL_USD` for open/increase into opportunities that include those ASAs)
 - Gate on `confidence` (schema/reporting field; coerce happens earlier)
 - Re-run MCP research
 - Validate swap/execution quote economics beyond the structural swap rules above (slippage/impact checks happen at **execution**)

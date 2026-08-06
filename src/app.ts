@@ -164,6 +164,9 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     maxSourceAgeHours: hostGuidance.maxSourceAgeHours,
     minProjectedNetImprovementUsd: hostGuidance.minProjectedNetImprovementUsd,
     signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+    preferredHoldAssetIds: config.preferredHoldAssets.map(
+      (asset) => asset.assetId,
+    ),
   });
   const folksEscrowStore: FolksEscrowStore = isSpacesConfigured(config)
     ? (() => {

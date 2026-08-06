@@ -23,6 +23,12 @@ export interface PortfolioPolicyConfig {
    * rewards / partial valuations do not stall enter→exit round-trips.
    */
   blockIncompleteSnapshot?: boolean;
+  /**
+   * ASAs from `PREFERRED_HOLD_ASSETS`. Open/increase into opportunities whose
+   * `assetIds` intersect this set skip the `minTvlUsd` hard floor (liquidity
+   * building for preferred / home-token markets).
+   */
+  preferredHoldAssetIds?: number[];
 }
 
 /** Host expands these at quote time; standalone plan actions are redundant. */
@@ -550,7 +556,13 @@ export class PortfolioPolicy {
         );
         continue;
       }
-      if (opportunity.tvlUsd < this.config.minTvlUsd) {
+      if (
+        opportunity.tvlUsd < this.config.minTvlUsd &&
+        !opportunityTouchesPreferredHold(
+          opportunity,
+          this.config.preferredHoldAssetIds ?? [],
+        )
+      ) {
         violations.push(
           `Action ${action.id} TVL is below $${this.config.minTvlUsd}`,
         );
@@ -613,6 +625,67 @@ function validateExitOrManageShape(
   }
 }
 
+function isSingleAssetEnterShape(
+  shape: OpportunityExecutionShape,
+): boolean {
+  const key = shape.shapeKey.toLowerCase();
+  const variant = shape.variant.toLowerCase();
+  return key.includes("singleasset") || variant.includes("singleasset");
+}
+
+function parseAssetId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    return Number(value);
+  }
+  return null;
+}
+
+/**
+ * Assets the action must already hold (or produce via a dependency swap).
+ * Uses the selected enter shape when present; single-sided adds narrow to the
+ * deposit asset so Canix pool-pair requiredAssetIds do not falsely require the
+ * other side.
+ */
+export function effectiveRequiredAssetIds(
+  action: PortfolioPlan["actions"][number],
+  opportunity: Opportunity,
+): number[] {
+  const selected = action.executionShapeKey
+    ? opportunity.executionShapes.find(
+        (shape) => shape.shapeKey === action.executionShapeKey,
+      )
+    : undefined;
+
+  if (!selected) {
+    return [
+      ...new Set(
+        opportunity.executionShapes.flatMap((shape) => shape.requiredAssetIds),
+      ),
+    ];
+  }
+
+  if (isSingleAssetEnterShape(selected)) {
+    const fromInput = parseAssetId(action.executionInput?.depositAssetId);
+    if (fromInput !== null) {
+      return [fromInput];
+    }
+    if (action.fromAssetId !== null) {
+      return [action.fromAssetId];
+    }
+    const spendIds = [
+      ...new Set(action.authorizedSpends.map((spend) => spend.assetId)),
+    ];
+    if (spendIds.length === 1) {
+      return spendIds;
+    }
+  }
+
+  return [...new Set(selected.requiredAssetIds)];
+}
+
 function validateRequiredAssets(
   action: PortfolioPlan["actions"][number],
   opportunity: Opportunity,
@@ -620,9 +693,7 @@ function validateRequiredAssets(
   availableBalances: Map<number, bigint>,
   sink: string[],
 ): void {
-  const required = new Set(
-    opportunity.executionShapes.flatMap((shape) => shape.requiredAssetIds),
-  );
+  const required = new Set(effectiveRequiredAssetIds(action, opportunity));
   if (required.size === 0) {
     return;
   }
@@ -649,18 +720,53 @@ function validateRequiredAssets(
   }
 }
 
+/** Preferred-hold markets skip the global `minTvlUsd` floor while bootstrapping liquidity. */
+export function opportunityTouchesPreferredHold(
+  opportunity: Opportunity,
+  preferredHoldAssetIds: number[],
+): boolean {
+  if (preferredHoldAssetIds.length === 0) {
+    return false;
+  }
+  const preferred = new Set(preferredHoldAssetIds);
+  return (opportunity.assetIds ?? []).some((assetId) => preferred.has(assetId));
+}
+
 /** True when this open/increase must declare authorizedSpends (capital transfer). */
 function actionRequiresDeclaredSpend(
   action: PortfolioPlan["actions"][number],
   shape: Opportunity["executionShapes"][number] | undefined,
 ): boolean {
+  const shapeKey = (
+    action.executionShapeKey ??
+    shape?.shapeKey ??
+    ""
+  ).toLowerCase();
+  const shapeAction = (shape?.action ?? "").toLowerCase();
+  // Borrow receives assets; collateral sync/reduce move escrow balances, not
+  // treasury spends (amounts are already locked in the loan).
+  if (
+    shapeKey.includes("borrow") ||
+    shapeAction === "borrow" ||
+    shapeKey.includes("collateral") ||
+    shapeAction === "collateral"
+  ) {
+    return false;
+  }
   if (action.amountRaw !== null && BigInt(action.amountRaw) > 0n) {
     return true;
   }
   if (!shape) {
     return false;
   }
-  return shape.requiredInputs.some((input) => /amount/i.test(input));
+  return shape.requiredInputs.some((input) => {
+    const lower = input.toLowerCase();
+    // borrowAmount / repayAmount are not treasury spends.
+    if (lower.includes("borrow") || lower.includes("repay")) {
+      return false;
+    }
+    return /amount/i.test(input);
+  });
 }
 
 function sum(values: number[]): number {

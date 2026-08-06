@@ -13,6 +13,11 @@ import type {
 } from "../domain.js";
 import { AlgorandExecutionService } from "../integrations/algorand/execution.js";
 import { LocalFolksEscrowStore } from "../integrations/algorand/folks-escrow-store.js";
+import {
+  FOLKS_ALGO_POOL_APP_ID,
+  FOLKS_GENERAL_LOAN_APP_ID,
+  FOLKS_USDC_POOL_APP_ID,
+} from "../integrations/algorand/folks-execution.js";
 import { AlgorandPortfolioReader } from "../integrations/algorand/portfolio.js";
 import {
   Canix402Client,
@@ -25,6 +30,8 @@ import { PortfolioPolicy, normalizePortfolioPlan } from "./portfolio-policy.js";
 export const ALGO_ASSET_ID = 0;
 export const USDC_ASSET_ID = 31_566_704;
 export const FOLKS_XALGO_ASSET_ID = 1_134_696_561;
+/** CompX governance / market base ASA. */
+export const COMPX_ASSET_ID = 1_732_165_149;
 /** Myth Finance dualSTAKE paired ASA used by the verify suite. */
 export const ORA_ASSET_ID = 1_284_444_444;
 export const FOLKS_XALGO_STAKE_SHAPE =
@@ -34,6 +41,22 @@ export const FOLKS_XALGO_UNSTAKE_SHAPE =
   "mainnet:folks-finance:xalgo-v1:unstake:immediate";
 export const FOLKS_USDC_WITHDRAW_SHAPE =
   "mainnet:folks-finance:v2:withdraw:escrow";
+export const FOLKS_LOAN_SETUP_SHAPE =
+  "mainnet:folks-finance:v2:setup:loanEscrow";
+export const FOLKS_ADD_COLLATERAL_SHAPE =
+  "mainnet:folks-finance:v2:setup:addCollateral";
+export const FOLKS_COLLATERAL_SYNC_SHAPE =
+  "mainnet:folks-finance:v2:collateral:sync";
+export const FOLKS_BORROW_VARIABLE_SHAPE =
+  "mainnet:folks-finance:v2:borrow:variable";
+export const FOLKS_REPAY_SHAPE = "mainnet:folks-finance:v2:repay:withTxn";
+export const FOLKS_COLLATERAL_REDUCE_SHAPE =
+  "mainnet:folks-finance:v2:collateral:reduce";
+export const FOLKS_DEPOSIT_SHAPE = "mainnet:folks-finance:v2:deposit:escrow";
+export const COMPX_DEPOSIT_SHAPE = "mainnet:compx:v1:deposit:asa";
+export const COMPX_WITHDRAW_SHAPE = "mainnet:compx:v1:withdraw:asa";
+export const COMPX_BORROW_SHAPE = "mainnet:compx:v1:borrow:asa";
+export const COMPX_REPAY_SHAPE = "mainnet:compx:v1:repay:asa";
 export const RETI_STAKE_SHAPE = "mainnet:reti:v1:stake:algo";
 export const RETI_UNSTAKE_SHAPE = "mainnet:reti:v1:unstake:algo";
 /** Stable verify pin — ungated validator the TEST_WALLET can enter. */
@@ -44,17 +67,20 @@ export const MYTH_REDEEM_SHAPE =
   "mainnet:myth-finance:dualstake-v1:redeem:lst";
 export const ALGO_DECIMALS = 6;
 export const USDC_DECIMALS = 6;
+export const COMPX_DECIMALS = 6;
 export const ORA_DECIMALS = 6;
 /** Protocol verify ignores research freshness; some venues lag for days. */
 export const PROTOCOL_VERIFY_MAX_SOURCE_AGE_HOURS = 24 * 365;
 
 export const PROTOCOL_VERIFY_CASE_IDS = [
   "folks-usdc-deposit",
+  "folks-credit",
   "folks-algo-stake",
   "tinyman-lp",
   // tinyman-lp-farm stake/unstake verify — deferred; claimRewards is live on
   // Tinyman reward positions (compatibleManageShapeKeys).
   "compx-lending",
+  "compx-credit",
   "dorkfi-usdc-lending",
   "pact-lp",
   "haystack-swap",
@@ -83,8 +109,12 @@ export const pinnedCaseSchema = z.object({
   assetIds: z.array(z.number().int().nonnegative()).default([]),
   enterShapeKey: z.string().min(1).nullable(),
   exitShapeKey: z.string().min(1).nullable(),
-  /** LST receipt ASA (xALGO / tALGO); set for stake cases that have no Canix position. */
+  /** LST receipt ASA (xALGO / tALGO / cUSDC); set for stake/credit cases. */
   receiptAssetId: z.number().int().positive().nullable().optional(),
+  /** CompX credit: market opportunity used for borrow/repay (base ASA = COMPX). */
+  borrowOpportunityId: z.string().min(1).nullable().optional(),
+  borrowShapeKey: z.string().min(1).nullable().optional(),
+  repayShapeKey: z.string().min(1).nullable().optional(),
   fromAssetId: z.number().int().nonnegative().nullable().optional(),
   toAssetId: z.number().int().nonnegative().nullable().optional(),
   shapes: z.array(shapeSummarySchema).default([]),
@@ -335,6 +365,98 @@ function hasUsdc(opportunity: Opportunity): boolean {
   return /usdc/i.test(opportunity.assetPair);
 }
 
+function hasCompxBase(opportunity: Opportunity): boolean {
+  if (opportunity.assetIds?.includes(COMPX_ASSET_ID)) {
+    return true;
+  }
+  return /^compx$/i.test(opportunity.assetPair.trim());
+}
+
+function pickCompXBorrowShape(
+  opportunity: Opportunity,
+): OpportunityExecutionShape | undefined {
+  return opportunity.executionShapes.find(
+    (shape) =>
+      /borrow/i.test(shape.action) ||
+      shape.shapeKey === COMPX_BORROW_SHAPE ||
+      /borrow:asa/i.test(shape.shapeKey),
+  );
+}
+
+function pickCompXRepayShape(
+  opportunity: Opportunity,
+): OpportunityExecutionShape | undefined {
+  return opportunity.executionShapes.find(
+    (shape) =>
+      /repay/i.test(shape.action) ||
+      shape.shapeKey === COMPX_REPAY_SHAPE ||
+      /repay:asa/i.test(shape.shapeKey),
+  );
+}
+
+function resolveCompXReceiptAssetId(
+  opportunity: Opportunity,
+  pinned?: number | null,
+): number | null {
+  if (typeof pinned === "number" && pinned > 0) {
+    return pinned;
+  }
+  const ids = opportunity.assetIds ?? [];
+  const receipt = ids.find(
+    (assetId) => assetId !== USDC_ASSET_ID && assetId !== ALGO_ASSET_ID,
+  );
+  return receipt ?? null;
+}
+
+function resolveCompXMarketAppId(
+  opportunity: Opportunity,
+  shapeKey: string,
+  opportunityId: string,
+): number | null {
+  const hinted = opportunity.executionShapes.find(
+    (shape) => shape.shapeKey === shapeKey,
+  );
+  const fromShape = hinted?.inputHints?.marketAppId;
+  if (typeof fromShape === "number" && fromShape > 0) {
+    return fromShape;
+  }
+  for (const shape of opportunity.executionShapes) {
+    const marketAppId = shape.inputHints?.marketAppId;
+    if (typeof marketAppId === "number" && marketAppId > 0) {
+      return marketAppId;
+    }
+  }
+  const match = opportunityId.match(/(\d+)$/);
+  if (match) {
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function resolveFolksPoolAppId(opportunity: Opportunity): number | null {
+  for (const shape of opportunity.executionShapes) {
+    const hint = shape.inputHints?.poolAppId;
+    if (typeof hint === "number" && hint > 0) {
+      return hint;
+    }
+  }
+  const match = /folks-lending-(\d{6,})/i.exec(opportunity.opportunityId);
+  if (match?.[1]) {
+    return Number(match[1]);
+  }
+  const trailing = opportunity.opportunityId.match(/(\d+)$/);
+  if (trailing) {
+    const parsed = Number(trailing[1]);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
 function hasAlgoOnly(opportunity: Opportunity): boolean {
   const ids = opportunity.assetIds ?? [];
   if (ids.includes(ALGO_ASSET_ID) && !ids.includes(USDC_ASSET_ID)) {
@@ -421,6 +543,151 @@ export function matchProtocolVerifyCases(
           "Folks lending enter is sequential escrow; exit quotes withdraw:escrow by key",
       },
     );
+  }
+
+  const folksAlgoLend = ready.find(
+    (opportunity) =>
+      protocolIncludes(opportunity, "folks") &&
+      opportunity.opportunityType === "lending" &&
+      (opportunity.assetIds?.includes(ALGO_ASSET_ID) ?? false) &&
+      !(opportunity.assetIds?.includes(USDC_ASSET_ID) ?? false) &&
+      !opportunity.executionShapes.some((shape) => /stake/i.test(shape.action)),
+  );
+  if (folksUsdc && folksAlgoLend) {
+    const usdcPoolAppId =
+      resolveFolksPoolAppId(folksUsdc) ?? FOLKS_USDC_POOL_APP_ID;
+    const algoPoolAppId =
+      resolveFolksPoolAppId(folksAlgoLend) ?? FOLKS_ALGO_POOL_APP_ID;
+    const shapes = [
+      ...summarizeShapes(folksUsdc),
+      ...summarizeShapes(folksAlgoLend).filter(
+        (shape) =>
+          !summarizeShapes(folksUsdc).some(
+            (existing) => existing.shapeKey === shape.shapeKey,
+          ),
+      ),
+    ];
+    for (const registry of [
+      {
+        shapeKey: FOLKS_LOAN_SETUP_SHAPE,
+        action: "setup",
+        variant: "loanEscrow",
+        order: 10,
+        requiredInputs: ["userAddress", "loanAppId"],
+        requiredAssetIds: [] as number[],
+        inputHints: { loanAppId: FOLKS_GENERAL_LOAN_APP_ID },
+      },
+      {
+        shapeKey: FOLKS_ADD_COLLATERAL_SHAPE,
+        action: "setup",
+        variant: "addCollateral",
+        order: 11,
+        requiredInputs: ["userAddress", "escrowAddress", "loanAppId", "poolAppId"],
+        requiredAssetIds: [] as number[],
+        inputHints: {
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+          poolAppId: usdcPoolAppId,
+        },
+      },
+      {
+        shapeKey: FOLKS_COLLATERAL_SYNC_SHAPE,
+        action: "collateral",
+        variant: "sync",
+        order: 12,
+        requiredInputs: ["userAddress", "escrowAddress", "loanAppId", "poolAppId"],
+        requiredAssetIds: [] as number[],
+        inputHints: {
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+          poolAppId: usdcPoolAppId,
+        },
+      },
+      {
+        shapeKey: FOLKS_BORROW_VARIABLE_SHAPE,
+        action: "borrow",
+        variant: "variable",
+        order: 13,
+        requiredInputs: [
+          "userAddress",
+          "escrowAddress",
+          "borrowAmount",
+          "loanAppId",
+          "poolAppId",
+        ],
+        requiredAssetIds: [] as number[],
+        inputHints: {
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+          poolAppId: algoPoolAppId,
+        },
+      },
+      {
+        shapeKey: FOLKS_REPAY_SHAPE,
+        action: "repay",
+        variant: "withTxn",
+        order: 14,
+        requiredInputs: [
+          "userAddress",
+          "escrowAddress",
+          "repayAmount",
+          "loanAppId",
+          "poolAppId",
+        ],
+        requiredAssetIds: [] as number[],
+        inputHints: {
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+          poolAppId: algoPoolAppId,
+        },
+      },
+      {
+        shapeKey: FOLKS_COLLATERAL_REDUCE_SHAPE,
+        action: "collateral",
+        variant: "reduce",
+        order: 15,
+        requiredInputs: [
+          "userAddress",
+          "escrowAddress",
+          "amount",
+          "amountDenomination",
+          "loanAppId",
+          "poolAppId",
+        ],
+        requiredAssetIds: [] as number[],
+        inputHints: {
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+          poolAppId: usdcPoolAppId,
+        },
+      },
+      {
+        shapeKey: FOLKS_USDC_WITHDRAW_SHAPE,
+        action: "withdraw",
+        variant: "escrow",
+        order: 16,
+        requiredInputs: [
+          "userAddress",
+          "amount",
+          "amountDenomination",
+          "poolAppId",
+        ],
+        requiredAssetIds: [USDC_ASSET_ID],
+        inputHints: { poolAppId: usdcPoolAppId, assetId: USDC_ASSET_ID },
+      },
+    ]) {
+      if (!shapes.some((shape) => shape.shapeKey === registry.shapeKey)) {
+        shapes.push(registry);
+      }
+    }
+    matched["folks-credit"] = pinnedCaseSchema.parse({
+      ...pinFromOpportunity("folks-credit", folksUsdc, {
+        enterShapeKey:
+          pickCapitalEnterShape(folksUsdc)?.shapeKey ?? FOLKS_DEPOSIT_SHAPE,
+        exitShapeKey: FOLKS_USDC_WITHDRAW_SHAPE,
+        borrowOpportunityId: folksAlgoLend.opportunityId,
+        borrowShapeKey: FOLKS_BORROW_VARIABLE_SHAPE,
+        repayShapeKey: FOLKS_REPAY_SHAPE,
+        notes:
+          "Folks credit: loanEscrow → addCollateral → deposit USDC to loan → sync → borrow ALGO → repay → reduce → withdraw",
+      }),
+      shapes,
+    });
   }
 
   const folksStake = ready.find(
@@ -512,6 +779,79 @@ export function matchProtocolVerifyCases(
   );
   if (compx) {
     matched["compx-lending"] = pinFromOpportunity("compx-lending", compx);
+  }
+
+  const compxBorrowMarket = ready.find(
+    (opportunity) =>
+      protocolIncludes(opportunity, "compx") &&
+      hasCompxBase(opportunity) &&
+      Boolean(pickCompXBorrowShape(opportunity)),
+  );
+  if (compx && compxBorrowMarket) {
+    const receiptAssetId = resolveCompXReceiptAssetId(compx);
+    const borrowShape = pickCompXBorrowShape(compxBorrowMarket);
+    const repayShape = pickCompXRepayShape(compxBorrowMarket);
+    const withdrawOnDeposit = compx.executionShapes.find(isExitShape);
+    const depositShapes = summarizeShapes(compx);
+    const borrowShapes = summarizeShapes(compxBorrowMarket);
+    const shapes = [
+      ...depositShapes,
+      ...borrowShapes.filter(
+        (shape) =>
+          !depositShapes.some(
+            (existing) => existing.shapeKey === shape.shapeKey,
+          ),
+      ),
+    ];
+    for (const registry of [
+      {
+        shapeKey: COMPX_BORROW_SHAPE,
+        action: "borrow",
+        variant: "asa",
+        order: 1,
+        requiredInputs: [
+          "userAddress",
+          "marketAppId",
+          "borrowAmount",
+          "collateralAmount",
+        ],
+        requiredAssetIds: [] as number[],
+      },
+      {
+        shapeKey: COMPX_REPAY_SHAPE,
+        action: "repay",
+        variant: "asa",
+        order: 2,
+        requiredInputs: ["userAddress", "marketAppId", "amount"],
+        requiredAssetIds: [] as number[],
+      },
+      {
+        shapeKey: COMPX_WITHDRAW_SHAPE,
+        action: "withdraw",
+        variant: "asa",
+        order: 3,
+        requiredInputs: ["userAddress", "marketAppId", "amount"],
+        requiredAssetIds: [] as number[],
+      },
+    ]) {
+      if (!shapes.some((shape) => shape.shapeKey === registry.shapeKey)) {
+        shapes.push(registry);
+      }
+    }
+    matched["compx-credit"] = pinnedCaseSchema.parse({
+      ...pinFromOpportunity("compx-credit", compx, {
+        enterShapeKey:
+          pickCapitalEnterShape(compx)?.shapeKey ?? COMPX_DEPOSIT_SHAPE,
+        exitShapeKey: withdrawOnDeposit?.shapeKey ?? COMPX_WITHDRAW_SHAPE,
+        receiptAssetId,
+        borrowOpportunityId: compxBorrowMarket.opportunityId,
+        borrowShapeKey: borrowShape?.shapeKey ?? COMPX_BORROW_SHAPE,
+        repayShapeKey: repayShape?.shapeKey ?? COMPX_REPAY_SHAPE,
+        notes:
+          "CompX credit: deposit USDC → borrow COMPX against cUSDC → repay → withdraw",
+      }),
+      shapes,
+    });
   }
 
   const dorkfi = ready.find(
@@ -721,6 +1061,79 @@ export async function refreshPinnedOpportunity(
   throw new Error(
     `Pinned opportunity ${pinned.opportunityId} for case ${pinned.caseId} was not found in ${pinned.protocol} opportunities`,
   );
+}
+
+export async function refreshOpportunityById(
+  canix: Canix402Client,
+  walletAddress: string,
+  protocol: string,
+  opportunityId: string,
+): Promise<Opportunity> {
+  return refreshPinnedOpportunity(canix, walletAddress, {
+    caseId: "compx-credit",
+    opportunityId,
+    protocol,
+    opportunityType: null,
+    assetPair: null,
+    assetIds: [],
+    enterShapeKey: null,
+    exitShapeKey: null,
+    shapes: [],
+  });
+}
+
+function ensureShapeOnOpportunity(
+  opportunity: Opportunity,
+  shape: OpportunityExecutionShape,
+): Opportunity {
+  if (
+    opportunity.executionShapes.some(
+      (candidate) => candidate.shapeKey === shape.shapeKey,
+    )
+  ) {
+    return opportunity;
+  }
+  return {
+    ...opportunity,
+    executionReady: true,
+    executionShapes: [...opportunity.executionShapes, shape],
+  };
+}
+
+/** Replace or attach a shape so verify can override live catalog quirks. */
+function upsertShapeOnOpportunity(
+  opportunity: Opportunity,
+  shape: OpportunityExecutionShape,
+): Opportunity {
+  const without = opportunity.executionShapes.filter(
+    (candidate) => candidate.shapeKey !== shape.shapeKey,
+  );
+  return {
+    ...opportunity,
+    executionReady: true,
+    executionShapes: [...without, shape],
+  };
+}
+
+function registryCompXShape(
+  shapeKey: string,
+  action: string,
+  requiredInputs: string[],
+  inputHints?: Record<string, unknown>,
+): OpportunityExecutionShape {
+  return {
+    shapeKey,
+    protocol: "compx",
+    protocolVersion: "v1",
+    action,
+    variant: "asa",
+    title: `CompX ${action}`,
+    summary: `CompX ${action} ASA`,
+    order: action === "deposit" ? 0 : action === "borrow" ? 1 : 2,
+    requiredInputs,
+    requiredAssetIds: [],
+    inputHints: inputHints as OpportunityExecutionShape["inputHints"],
+  };
 }
 
 /** Full catalog scan — discovery CLI only, not per-case verify refresh. */
@@ -1159,6 +1572,19 @@ export function amountsForCase(
     case "dorkfi-usdc-lending":
       amounts.set(USDC_ASSET_ID, usdcRaw);
       break;
+    case "folks-credit": {
+      amounts.set(USDC_ASSET_ID, usdcRaw);
+      amounts.set(ALGO_ASSET_ID, algoRaw);
+      break;
+    }
+    case "compx-credit": {
+      amounts.set(USDC_ASSET_ID, usdcRaw);
+      amounts.set(
+        COMPX_ASSET_ID,
+        toBaseUnits(config.PROTOCOL_VERIFY_AMOUNT_COMPX, COMPX_DECIMALS),
+      );
+      break;
+    }
     case "tinyman-lp":
     case "pact-lp":
       amounts.set(ALGO_ASSET_ID, algoRaw);
@@ -1192,6 +1618,41 @@ async function readSnapshot(
 ): Promise<PortfolioSnapshot> {
   const { snapshot } = await context.portfolioReader.read();
   return snapshot;
+}
+
+/** Free algod balance probe (no Canix x402). ALGO uses amount − min-balance. */
+async function readAlgodAssetSpendable(
+  algodUrl: string,
+  address: string,
+  assetId: number,
+): Promise<bigint> {
+  const base = algodUrl.replace(/\/$/, "");
+  if (assetId === ALGO_ASSET_ID) {
+    const response = await fetch(`${base}/v2/accounts/${address}`);
+    if (!response.ok) {
+      throw new Error(`Algod account lookup failed: ${response.status}`);
+    }
+    const body = (await response.json()) as {
+      amount?: number | string;
+      "min-balance"?: number | string;
+    };
+    const amount = BigInt(body.amount ?? 0);
+    const minimum = BigInt(body["min-balance"] ?? 0);
+    return amount > minimum ? amount - minimum : 0n;
+  }
+  const response = await fetch(
+    `${base}/v2/accounts/${address}/assets/${assetId}`,
+  );
+  if (response.status === 404) {
+    return 0n;
+  }
+  if (!response.ok) {
+    throw new Error(`Algod asset lookup failed: ${response.status}`);
+  }
+  const body = (await response.json()) as {
+    "asset-holding"?: { amount?: number | string };
+  };
+  return BigInt(body["asset-holding"]?.amount ?? 0);
 }
 
 export async function runEnterExitCase(
@@ -1587,7 +2048,1098 @@ export async function runProtocolVerifyCase(
     case "myth-dualstake":
       await runLstStakeCase(context, pinned);
       return;
+    case "compx-credit":
+      await runCompXCreditCase(context, pinned);
+      return;
+    case "folks-credit":
+      await runFolksCreditCase(context, pinned);
+      return;
     default:
       await runEnterExitCase(context, pinned);
   }
+}
+
+/**
+ * CompX credit round-trip: deposit USDC → borrow COMPX against cUSDC → repay → withdraw.
+ */
+export async function runCompXCreditCase(
+  context: ProtocolVerifyContext,
+  pinned: PinnedProtocolCase,
+): Promise<void> {
+  if (!pinned.borrowOpportunityId) {
+    throw new Error(
+      `Case ${pinned.caseId} missing borrowOpportunityId (re-run canix:discover-verify)`,
+    );
+  }
+  const borrowShapeKey = pinned.borrowShapeKey ?? COMPX_BORROW_SHAPE;
+  const repayShapeKey = pinned.repayShapeKey ?? COMPX_REPAY_SHAPE;
+  const withdrawShapeKey = pinned.exitShapeKey ?? COMPX_WITHDRAW_SHAPE;
+  const depositShapeKey = pinned.enterShapeKey ?? COMPX_DEPOSIT_SHAPE;
+
+  const amounts = amountsForCase(context.config, pinned.caseId);
+  const usdcRaw = amounts.get(USDC_ASSET_ID);
+  const borrowRaw = amounts.get(COMPX_ASSET_ID);
+  if (!usdcRaw || !borrowRaw) {
+    throw new Error("compx-credit amounts missing USDC or COMPX");
+  }
+
+  const x402FeeBufferRaw = 500_000n;
+  const minUsdcForRun = BigInt(usdcRaw) + x402FeeBufferRaw;
+
+  let liquidUsdc = await readAlgodAssetSpendable(
+    context.config.X402_ALGOD_URL,
+    context.walletAddress,
+    USDC_ASSET_ID,
+  );
+  if (liquidUsdc < minUsdcForRun) {
+    const algoTopUp = toBaseUnits(
+      Math.max(context.config.PROTOCOL_VERIFY_AMOUNT_ALGO, 3),
+      ALGO_DECIMALS,
+    );
+    const liquidAlgo = await readAlgodAssetSpendable(
+      context.config.X402_ALGOD_URL,
+      context.walletAddress,
+      ALGO_ASSET_ID,
+    );
+    if (liquidAlgo < BigInt(algoTopUp)) {
+      throw new Error(
+        `Underfunded for ${pinned.caseId} ALGO→USDC top-up: need ${algoTopUp} ALGO, have ${liquidAlgo.toString()}`,
+      );
+    }
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: topping up USDC via Haystack (have ${liquidUsdc.toString()}, need ≥ ${minUsdcForRun.toString()})`,
+    );
+    const topUpSnapshot: PortfolioSnapshot = {
+      address: context.walletAddress,
+      fetchedAt: new Date().toISOString(),
+      positions: [],
+      protocols: [],
+      totals: {
+        suppliedUsd: null,
+        borrowedUsd: null,
+        rewardsUsd: null,
+        netUsd: null,
+      },
+      liquidBalances: [
+        {
+          assetId: ALGO_ASSET_ID,
+          amountRaw: liquidAlgo.toString(),
+          spendableAmountRaw: liquidAlgo.toString(),
+          symbol: "ALGO",
+        },
+        {
+          assetId: USDC_ASSET_ID,
+          amountRaw: liquidUsdc.toString(),
+          spendableAmountRaw: liquidUsdc.toString(),
+          symbol: "USDC",
+        },
+      ],
+      minimumBalanceRaw: "0",
+      complete: true,
+      caveats: ["algod-only snapshot for CompX credit USDC top-up"],
+    };
+    const topUp = buildSwapAction({
+      id: `${pinned.caseId}-usdc-topup`,
+      fromAssetId: ALGO_ASSET_ID,
+      toAssetId: USDC_ASSET_ID,
+      amountRaw: algoTopUp,
+      rationale: "Protocol verify CompX credit USDC top-up",
+    });
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(topUpSnapshot, basePlan([topUp]), []).actions[0]!,
+      [],
+    );
+  }
+
+  let snapshot = await readSnapshot(context);
+
+  let depositOpportunity = await refreshPinnedOpportunity(
+    context.canix,
+    context.walletAddress,
+    pinned,
+  );
+  depositOpportunity = ensureShapeOnOpportunity(
+    depositOpportunity,
+    registryCompXShape(COMPX_DEPOSIT_SHAPE, "deposit", [
+      "userAddress",
+      "marketAppId",
+      "amount",
+    ]),
+  );
+  depositOpportunity = ensureShapeOnOpportunity(
+    depositOpportunity,
+    registryCompXShape(COMPX_WITHDRAW_SHAPE, "withdraw", [
+      "userAddress",
+      "marketAppId",
+      "amount",
+    ]),
+  );
+
+  const receiptAssetId =
+    resolveCompXReceiptAssetId(depositOpportunity, pinned.receiptAssetId) ??
+    pinned.receiptAssetId ??
+    null;
+  if (!receiptAssetId) {
+    throw new Error(
+      `CompX credit case missing cUSDC receipt ASA on ${depositOpportunity.opportunityId}`,
+    );
+  }
+
+  let borrowOpportunity = await refreshOpportunityById(
+    context.canix,
+    context.walletAddress,
+    pinned.protocol ?? "compx",
+    pinned.borrowOpportunityId,
+  );
+  const borrowMarketAppId = resolveCompXMarketAppId(
+    borrowOpportunity,
+    borrowShapeKey,
+    pinned.borrowOpportunityId,
+  );
+  if (borrowMarketAppId === null) {
+    throw new Error(
+      `Could not resolve CompX borrow marketAppId from ${pinned.borrowOpportunityId}`,
+    );
+  }
+
+  borrowOpportunity = upsertShapeOnOpportunity(
+    borrowOpportunity,
+    registryCompXShape(
+      borrowShapeKey,
+      "borrow",
+      [
+        "userAddress",
+        "marketAppId",
+        "borrowAmount",
+        "collateralAmount",
+        "collateralTokenId",
+      ],
+      { marketAppId: borrowMarketAppId },
+    ),
+  );
+  const borrowOnlyOpportunity: Opportunity = {
+    ...borrowOpportunity,
+    executionShapes: [
+      {
+        ...(borrowOpportunity.executionShapes.find(
+          (shape) => shape.shapeKey === borrowShapeKey,
+        ) ??
+          registryCompXShape(
+            borrowShapeKey,
+            "borrow",
+            [
+              "userAddress",
+              "marketAppId",
+              "borrowAmount",
+              "collateralAmount",
+              "collateralTokenId",
+            ],
+            { marketAppId: borrowMarketAppId },
+          )),
+        requiredInputs: [
+          "userAddress",
+          "marketAppId",
+          "borrowAmount",
+          "collateralAmount",
+          "collateralTokenId",
+        ],
+        requiredAssetIds: [],
+        inputHints: { marketAppId: borrowMarketAppId },
+      },
+    ],
+  };
+  const repayReadyOpportunity = upsertShapeOnOpportunity(
+    borrowOpportunity,
+    registryCompXShape(
+      repayShapeKey,
+      "repay",
+      ["userAddress", "marketAppId", "amount"],
+      { marketAppId: borrowMarketAppId, assetId: COMPX_ASSET_ID },
+    ),
+  );
+
+  let debt = snapshot.positions.find(
+    (position) =>
+      position.protocol === "compx" &&
+      position.positionType === "debt" &&
+      BigInt(position.amountRaw) > 0n &&
+      (position.opportunityId === pinned.borrowOpportunityId ||
+        position.assetId === COMPX_ASSET_ID),
+  );
+
+  if (!debt) {
+    // Withdraw stranded CompX supply from earlier failed runs before depositing.
+    const stranded = findPositionForOpportunity(
+      snapshot,
+      depositOpportunity.opportunityId,
+      depositOpportunity.protocol,
+    );
+    if (stranded && BigInt(stranded.amountRaw) > 0n) {
+      console.error(
+        `[protocol-verify] ${pinned.caseId}: bootstrap withdraw of stranded CompX supply ${stranded.amountRaw}`,
+      );
+      const withdrawKeys = [
+        ...stranded.compatibleExitShapeKeys,
+        ...stranded.compatibleManageShapeKeys,
+      ];
+      const bootstrapWithdrawKey = withdrawKeys.includes(withdrawShapeKey)
+        ? withdrawShapeKey
+        : withdrawKeys.find((key) => /withdraw/i.test(key)) ??
+          withdrawShapeKey;
+      if (
+        !stranded.compatibleExitShapeKeys.includes(bootstrapWithdrawKey) &&
+        !stranded.compatibleManageShapeKeys.includes(bootstrapWithdrawKey)
+      ) {
+        stranded.compatibleExitShapeKeys = [
+          ...stranded.compatibleExitShapeKeys,
+          bootstrapWithdrawKey,
+        ];
+      }
+      const bootstrap = buildExitAction({
+        id: `${pinned.caseId}-bootstrap-withdraw`,
+        position: stranded,
+        opportunity: depositOpportunity,
+        exitShapeKey: bootstrapWithdrawKey,
+        rationale: "Protocol verify CompX bootstrap withdraw before credit",
+      });
+      await executeConfirmed(
+        context,
+        validateAndNormalizePlan(
+          snapshot,
+          basePlan([bootstrap]),
+          [depositOpportunity],
+        ).actions[0]!,
+        [depositOpportunity],
+      );
+      snapshot = await readSnapshot(context);
+    }
+
+    requireSpendable(snapshot, USDC_ASSET_ID, usdcRaw, pinned.caseId);
+    const receiptBefore = spendableRaw(snapshot, receiptAssetId);
+    const deposit = buildEnterAction({
+      id: `${pinned.caseId}-deposit`,
+      opportunity: depositOpportunity,
+      enterShapeKey: depositShapeKey,
+      amountsByAsset: new Map([[USDC_ASSET_ID, usdcRaw]]),
+      rationale: "Protocol verify CompX USDC deposit",
+    });
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(
+        snapshot,
+        basePlan([deposit]),
+        [depositOpportunity],
+      ).actions[0]!,
+      [depositOpportunity],
+    );
+
+    snapshot = await readSnapshot(context);
+    let collateralRaw = spendableRaw(snapshot, receiptAssetId) - receiptBefore;
+    if (collateralRaw <= 0n) {
+      const supplied = findPositionForOpportunity(
+        snapshot,
+        depositOpportunity.opportunityId,
+        depositOpportunity.protocol,
+      );
+      if (supplied && BigInt(supplied.amountRaw) > 0n) {
+        const suppliedRaw = BigInt(supplied.amountRaw);
+        collateralRaw =
+          suppliedRaw < BigInt(usdcRaw) ? suppliedRaw : BigInt(usdcRaw);
+      }
+    }
+    if (collateralRaw <= 0n) {
+      throw new Error(
+        `CompX credit case has no cUSDC collateral (asset ${receiptAssetId})`,
+      );
+    }
+    const collateralAmount = collateralRaw.toString();
+
+    const borrowAction: PortfolioAction = {
+      id: `${pinned.caseId}-borrow`,
+      type: "open",
+      protocol: borrowOnlyOpportunity.protocol,
+      opportunityId: borrowOnlyOpportunity.opportunityId,
+      positionId: null,
+      amountRaw: borrowRaw,
+      fromAssetId: receiptAssetId,
+      toAssetId: COMPX_ASSET_ID,
+      targetWeightPct: 10,
+      executionShapeKey: borrowShapeKey,
+      executionInput: {
+        marketAppId: borrowMarketAppId,
+        borrowAmount: borrowRaw,
+        collateralAmount,
+        collateralTokenId: receiptAssetId,
+      },
+      authorizedSpends: [
+        { assetId: receiptAssetId, amountRaw: collateralAmount },
+      ],
+      rationale: "Protocol verify CompX borrow against cUSDC",
+      dependencies: [],
+    };
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(
+        snapshot,
+        basePlan([borrowAction]),
+        [borrowOnlyOpportunity],
+      ).actions[0]!,
+      [borrowOnlyOpportunity],
+    );
+
+    snapshot = await readSnapshot(context);
+    debt = snapshot.positions.find(
+      (position) =>
+        position.protocol === borrowOnlyOpportunity.protocol &&
+        position.positionType === "debt" &&
+        BigInt(position.amountRaw) > 0n &&
+        (position.assetId === COMPX_ASSET_ID ||
+          position.opportunityId === borrowOnlyOpportunity.opportunityId),
+    );
+    if (!debt) {
+      throw new Error(
+        `After CompX borrow, no debt position for ${borrowOnlyOpportunity.opportunityId}`,
+      );
+    }
+  } else {
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: resuming from open CompX debt ${debt.positionId}`,
+    );
+  }
+
+  const repayExitKeys = [
+    ...debt.compatibleExitShapeKeys,
+    ...debt.compatibleManageShapeKeys,
+  ];
+  const repayKey = repayExitKeys.includes(repayShapeKey)
+    ? repayShapeKey
+    : repayExitKeys.find((key) => /repay/i.test(key)) ?? repayShapeKey;
+  if (
+    !debt.compatibleExitShapeKeys.includes(repayKey) &&
+    !debt.compatibleManageShapeKeys.includes(repayKey)
+  ) {
+    debt.compatibleExitShapeKeys = [...debt.compatibleExitShapeKeys, repayKey];
+  }
+
+  // Canix may under-report CompX debt (seen as amountRaw "9" after borrowing
+  // 10 COMPX). Prefer borrowed size / wallet COMPX so repay clears the loan.
+  const walletCompx = spendableRaw(snapshot, COMPX_ASSET_ID);
+  let repayAmountRaw = BigInt(debt.amountRaw);
+  if (repayAmountRaw < BigInt(borrowRaw)) {
+    repayAmountRaw = BigInt(borrowRaw);
+  }
+  if (walletCompx > 0n && repayAmountRaw > walletCompx) {
+    repayAmountRaw = walletCompx;
+  }
+  if (repayAmountRaw <= 0n) {
+    throw new Error(
+      `CompX repay has no COMPX to repay (debt=${debt.amountRaw}, borrowed=${borrowRaw}, wallet=${walletCompx.toString()})`,
+    );
+  }
+
+  const repay = buildExitAction({
+    id: `${pinned.caseId}-repay`,
+    position: debt,
+    opportunity: repayReadyOpportunity,
+    exitShapeKey: repayKey,
+    withdrawAmountRaw: repayAmountRaw.toString(),
+    rationale: "Protocol verify CompX repay",
+  });
+  repay.executionInput = {
+    marketAppId: borrowMarketAppId,
+    amount: repayAmountRaw.toString(),
+  };
+  await executeConfirmed(
+    context,
+    validateAndNormalizePlan(
+      snapshot,
+      basePlan([repay]),
+      [repayReadyOpportunity],
+    ).actions[0]!,
+    [repayReadyOpportunity],
+  );
+
+  snapshot = await readSnapshot(context);
+  const debtAfter = snapshot.positions.find(
+    (position) => position.positionId === debt!.positionId,
+  );
+  if (debtAfter && BigInt(debtAfter.amountRaw) > 0n) {
+    // Allow residual dust from Canix under-reporting; require wallet COMPX gone.
+    const remainingCompx = spendableRaw(snapshot, COMPX_ASSET_ID);
+    if (remainingCompx > 1_000n) {
+      throw new Error(
+        `After CompX repay, still hold ${remainingCompx.toString()} COMPX and debt ${debtAfter.amountRaw}`,
+      );
+    }
+  }
+
+  const supplied = findPositionForOpportunity(
+    snapshot,
+    depositOpportunity.opportunityId,
+    depositOpportunity.protocol,
+  );
+  const unlockedCusdc = spendableRaw(snapshot, receiptAssetId);
+
+  if (supplied && BigInt(supplied.amountRaw) > 0n) {
+    const withdrawKeys = [
+      ...supplied.compatibleExitShapeKeys,
+      ...supplied.compatibleManageShapeKeys,
+    ];
+    const withdrawKey = withdrawKeys.includes(withdrawShapeKey)
+      ? withdrawShapeKey
+      : withdrawKeys.find((key) => /withdraw/i.test(key)) ?? withdrawShapeKey;
+    if (
+      !supplied.compatibleExitShapeKeys.includes(withdrawKey) &&
+      !supplied.compatibleManageShapeKeys.includes(withdrawKey)
+    ) {
+      supplied.compatibleExitShapeKeys = [
+        ...supplied.compatibleExitShapeKeys,
+        withdrawKey,
+      ];
+    }
+    const withdraw = buildExitAction({
+      id: `${pinned.caseId}-withdraw`,
+      position: supplied,
+      opportunity: depositOpportunity,
+      exitShapeKey: withdrawKey,
+      rationale: "Protocol verify CompX USDC withdraw",
+    });
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(
+        snapshot,
+        basePlan([withdraw]),
+        [depositOpportunity],
+      ).actions[0]!,
+      [depositOpportunity],
+    );
+    return;
+  }
+
+  if (unlockedCusdc <= 0n) {
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: no CompX supply/cUSDC left to withdraw (already clean)`,
+    );
+    return;
+  }
+
+  const syntheticSupply: Position = {
+    protocol: depositOpportunity.protocol,
+    positionType: "supplied",
+    positionId: `compx-credit:cusdc:${receiptAssetId}`,
+    opportunityId: depositOpportunity.opportunityId,
+    assetId: receiptAssetId,
+    assetSymbol: "cUSDC",
+    amountRaw: unlockedCusdc.toString(),
+    amount: unlockedCusdc.toString(),
+    usdValue: null,
+    compatibleExitShapeKeys: [withdrawShapeKey],
+    compatibleManageShapeKeys: [],
+    inputHints: {
+      marketAppId:
+        typeof depositOpportunity.executionShapes[0]?.inputHints
+          ?.marketAppId === "number"
+          ? depositOpportunity.executionShapes[0].inputHints.marketAppId
+          : undefined,
+      assetId: receiptAssetId,
+    },
+  };
+  snapshot = {
+    ...snapshot,
+    positions: [...snapshot.positions, syntheticSupply],
+  };
+  const withdraw = buildExitAction({
+    id: `${pinned.caseId}-withdraw`,
+    position: syntheticSupply,
+    opportunity: depositOpportunity,
+    exitShapeKey: withdrawShapeKey,
+    withdrawAmountRaw: unlockedCusdc.toString(),
+    rationale: "Protocol verify CompX withdraw after unlock",
+  });
+  await executeConfirmed(
+    context,
+    validateAndNormalizePlan(
+      snapshot,
+      basePlan([withdraw]),
+      [depositOpportunity],
+    ).actions[0]!,
+    [depositOpportunity],
+  );
+}
+
+function registryFolksShape(
+  shapeKey: string,
+  action: string,
+  variant: string,
+  requiredInputs: string[],
+  inputHints?: Record<string, unknown>,
+): OpportunityExecutionShape {
+  return {
+    shapeKey,
+    protocol: "folks-finance",
+    protocolVersion: "v2",
+    action,
+    variant,
+    title: `Folks ${action}:${variant}`,
+    summary: `Folks ${action} ${variant}`,
+    order: 0,
+    requiredInputs,
+    requiredAssetIds: [],
+    inputHints: inputHints ? { ...inputHints } : undefined,
+  };
+}
+
+function singleShapeOpportunity(
+  base: Opportunity,
+  shape: OpportunityExecutionShape,
+): Opportunity {
+  return {
+    ...base,
+    executionReady: true,
+    executionShapes: [shape],
+  };
+}
+
+/**
+ * Folks credit round-trip: loan escrow → USDC collateral on loan → borrow ALGO → repay → unwind.
+ *
+ * Deposit uses the loan escrow as fAsset receiver (SDK deposit receiverAddr), then
+ * collateral:sync registers it. Reduce returns collateral; withdraw clears any
+ * deposit-escrow residual.
+ */
+export async function runFolksCreditCase(
+  context: ProtocolVerifyContext,
+  pinned: PinnedProtocolCase,
+): Promise<void> {
+  if (!pinned.borrowOpportunityId) {
+    throw new Error(
+      `Case ${pinned.caseId} missing borrowOpportunityId (re-run canix:discover-verify)`,
+    );
+  }
+  const borrowShapeKey = pinned.borrowShapeKey ?? FOLKS_BORROW_VARIABLE_SHAPE;
+  const repayShapeKey = pinned.repayShapeKey ?? FOLKS_REPAY_SHAPE;
+  const withdrawShapeKey = pinned.exitShapeKey ?? FOLKS_USDC_WITHDRAW_SHAPE;
+
+  const amounts = amountsForCase(context.config, pinned.caseId);
+  const usdcRaw = amounts.get(USDC_ASSET_ID);
+  const borrowRaw = amounts.get(ALGO_ASSET_ID);
+  if (!usdcRaw || !borrowRaw) {
+    throw new Error("folks-credit amounts missing USDC or ALGO");
+  }
+
+  const x402FeeBufferRaw = 500_000n;
+  const minUsdcForRun = BigInt(usdcRaw) + x402FeeBufferRaw;
+  let liquidUsdc = await readAlgodAssetSpendable(
+    context.config.X402_ALGOD_URL,
+    context.walletAddress,
+    USDC_ASSET_ID,
+  );
+  if (liquidUsdc < minUsdcForRun) {
+    const algoTopUp = toBaseUnits(
+      Math.max(context.config.PROTOCOL_VERIFY_AMOUNT_ALGO, 3),
+      ALGO_DECIMALS,
+    );
+    const liquidAlgo = await readAlgodAssetSpendable(
+      context.config.X402_ALGOD_URL,
+      context.walletAddress,
+      ALGO_ASSET_ID,
+    );
+    if (liquidAlgo < BigInt(algoTopUp)) {
+      throw new Error(
+        `Underfunded for ${pinned.caseId} ALGO→USDC top-up: need ${algoTopUp} ALGO, have ${liquidAlgo.toString()}`,
+      );
+    }
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: topping up USDC via Haystack (have ${liquidUsdc.toString()}, need ≥ ${minUsdcForRun.toString()})`,
+    );
+    const topUpSnapshot: PortfolioSnapshot = {
+      address: context.walletAddress,
+      fetchedAt: new Date().toISOString(),
+      positions: [],
+      protocols: [],
+      totals: {
+        suppliedUsd: null,
+        borrowedUsd: null,
+        rewardsUsd: null,
+        netUsd: null,
+      },
+      liquidBalances: [
+        {
+          assetId: ALGO_ASSET_ID,
+          amountRaw: liquidAlgo.toString(),
+          spendableAmountRaw: liquidAlgo.toString(),
+          symbol: "ALGO",
+        },
+        {
+          assetId: USDC_ASSET_ID,
+          amountRaw: liquidUsdc.toString(),
+          spendableAmountRaw: liquidUsdc.toString(),
+          symbol: "USDC",
+        },
+      ],
+      minimumBalanceRaw: "0",
+      complete: true,
+      caveats: ["algod-only snapshot for Folks credit USDC top-up"],
+    };
+    const topUp = buildSwapAction({
+      id: `${pinned.caseId}-usdc-topup`,
+      fromAssetId: ALGO_ASSET_ID,
+      toAssetId: USDC_ASSET_ID,
+      amountRaw: algoTopUp,
+      rationale: "Protocol verify Folks credit USDC top-up",
+    });
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(topUpSnapshot, basePlan([topUp]), []).actions[0]!,
+      [],
+    );
+  }
+
+  const usdcOpportunity = await refreshPinnedOpportunity(
+    context.canix,
+    context.walletAddress,
+    pinned,
+  );
+  const usdcPoolAppId =
+    resolveFolksPoolAppId(usdcOpportunity) ?? FOLKS_USDC_POOL_APP_ID;
+  const algoOpportunity = await refreshOpportunityById(
+    context.canix,
+    context.walletAddress,
+    pinned.protocol ?? "folks-finance",
+    pinned.borrowOpportunityId,
+  );
+  const algoPoolAppId =
+    resolveFolksPoolAppId(algoOpportunity) ?? FOLKS_ALGO_POOL_APP_ID;
+
+  const escrowStore = new LocalFolksEscrowStore(
+    context.config.FOLKS_ESCROW_DATA_DIR,
+  );
+
+  const executeFolksStep = async (options: {
+    id: string;
+    type: "open" | "close";
+    shape: OpportunityExecutionShape;
+    baseOpportunity: Opportunity;
+    executionInput: Record<string, unknown>;
+    amountRaw?: string;
+    fromAssetId?: number | null;
+    toAssetId?: number | null;
+    authorizedSpends?: PortfolioAction["authorizedSpends"];
+    position?: Position;
+    rationale: string;
+  }): Promise<void> => {
+    const opportunity = singleShapeOpportunity(
+      options.baseOpportunity,
+      options.shape,
+    );
+    const action: PortfolioAction = {
+      id: options.id,
+      type: options.type,
+      protocol: opportunity.protocol,
+      opportunityId: opportunity.opportunityId,
+      positionId: options.position?.positionId ?? null,
+      amountRaw: options.amountRaw ?? null,
+      fromAssetId: options.fromAssetId ?? null,
+      toAssetId: options.toAssetId ?? null,
+      targetWeightPct: options.type === "open" ? 10 : null,
+      executionShapeKey: options.shape.shapeKey,
+      executionInput: options.executionInput,
+      authorizedSpends: options.authorizedSpends ?? [],
+      rationale: options.rationale,
+      dependencies: [],
+    };
+    const snapshot = await readSnapshot(context);
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(
+        snapshot,
+        basePlan([action]),
+        [opportunity],
+      ).actions[0]!,
+      [opportunity],
+    );
+  };
+
+  let snapshot = await readSnapshot(context);
+  let debt = snapshot.positions.find(
+    (position) =>
+      /folks/i.test(position.protocol) &&
+      position.positionType === "debt" &&
+      BigInt(position.amountRaw) > 0n,
+  );
+
+  let loanEscrow = await escrowStore.get(
+    context.walletAddress,
+    FOLKS_GENERAL_LOAN_APP_ID,
+  );
+
+  if (!debt) {
+    if (!loanEscrow) {
+      console.error(
+        `[protocol-verify] ${pinned.caseId}: creating Folks loan escrow`,
+      );
+      await executeFolksStep({
+        id: `${pinned.caseId}-loan-escrow`,
+        type: "open",
+        shape: registryFolksShape(
+          FOLKS_LOAN_SETUP_SHAPE,
+          "setup",
+          "loanEscrow",
+          ["userAddress", "loanAppId"],
+          { loanAppId: FOLKS_GENERAL_LOAN_APP_ID },
+        ),
+        baseOpportunity: usdcOpportunity,
+        executionInput: { loanAppId: FOLKS_GENERAL_LOAN_APP_ID },
+        rationale: "Protocol verify Folks loan escrow setup",
+      });
+      loanEscrow = await escrowStore.get(
+        context.walletAddress,
+        FOLKS_GENERAL_LOAN_APP_ID,
+      );
+    }
+    if (!loanEscrow) {
+      throw new Error(
+        `Folks credit missing loan escrow after setup (app ${FOLKS_GENERAL_LOAN_APP_ID})`,
+      );
+    }
+
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: addCollateral USDC pool ${usdcPoolAppId}`,
+    );
+    try {
+      await executeFolksStep({
+        id: `${pinned.caseId}-add-collateral`,
+        type: "open",
+        shape: registryFolksShape(
+          FOLKS_ADD_COLLATERAL_SHAPE,
+          "setup",
+          "addCollateral",
+          ["userAddress", "escrowAddress", "loanAppId", "poolAppId"],
+          {
+            loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+            poolAppId: usdcPoolAppId,
+          },
+        ),
+        baseOpportunity: usdcOpportunity,
+        executionInput: {
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+          poolAppId: usdcPoolAppId,
+          escrowAddress: loanEscrow.escrowAddress,
+        },
+        rationale: "Protocol verify Folks add USDC collateral slot",
+      });
+    } catch (error) {
+      console.error(
+        `[protocol-verify] ${pinned.caseId}: addCollateral skipped/failed (may already be opted): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    const folksFUsdcAssetId = 971_384_592;
+    const loanFUsdc = await readAlgodAssetSpendable(
+      context.config.X402_ALGOD_URL,
+      loanEscrow.escrowAddress,
+      folksFUsdcAssetId,
+    );
+    if (loanFUsdc <= 0n) {
+      snapshot = await readSnapshot(context);
+      requireSpendable(snapshot, USDC_ASSET_ID, usdcRaw, pinned.caseId);
+      console.error(
+        `[protocol-verify] ${pinned.caseId}: deposit ${usdcRaw} USDC to loan escrow`,
+      );
+      await executeFolksStep({
+        id: `${pinned.caseId}-deposit`,
+        type: "open",
+        shape: registryFolksShape(
+          FOLKS_DEPOSIT_SHAPE,
+          "deposit",
+          "escrow",
+          ["userAddress", "assetAmount", "escrowAddress", "poolAppId"],
+          { poolAppId: usdcPoolAppId },
+        ),
+        baseOpportunity: usdcOpportunity,
+        executionInput: {
+          poolAppId: usdcPoolAppId,
+          assetAmount: usdcRaw,
+          escrowAddress: loanEscrow.escrowAddress,
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+        },
+        amountRaw: usdcRaw,
+        fromAssetId: USDC_ASSET_ID,
+        authorizedSpends: [{ assetId: USDC_ASSET_ID, amountRaw: usdcRaw }],
+        rationale: "Protocol verify Folks USDC deposit onto loan escrow",
+      });
+    } else {
+      console.error(
+        `[protocol-verify] ${pinned.caseId}: loan escrow already holds fUSDC ${loanFUsdc.toString()}; skipping deposit`,
+      );
+    }
+
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: collateral:sync USDC`,
+    );
+    await executeFolksStep({
+      id: `${pinned.caseId}-sync`,
+      type: "open",
+      shape: registryFolksShape(
+        FOLKS_COLLATERAL_SYNC_SHAPE,
+        "collateral",
+        "sync",
+        ["userAddress", "escrowAddress", "loanAppId", "poolAppId"],
+        {
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+          poolAppId: usdcPoolAppId,
+        },
+      ),
+      baseOpportunity: usdcOpportunity,
+      executionInput: {
+        loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+        poolAppId: usdcPoolAppId,
+        escrowAddress: loanEscrow.escrowAddress,
+      },
+      rationale: "Protocol verify Folks sync USDC collateral",
+    });
+
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: borrow ${borrowRaw} ALGO`,
+    );
+    await executeFolksStep({
+      id: `${pinned.caseId}-borrow`,
+      type: "open",
+      shape: registryFolksShape(
+        borrowShapeKey,
+        "borrow",
+        "variable",
+        [
+          "userAddress",
+          "escrowAddress",
+          "borrowAmount",
+          "loanAppId",
+          "poolAppId",
+        ],
+        {
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+          poolAppId: algoPoolAppId,
+        },
+      ),
+      baseOpportunity: algoOpportunity,
+      executionInput: {
+        loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+        poolAppId: algoPoolAppId,
+        escrowAddress: loanEscrow.escrowAddress,
+        borrowAmount: borrowRaw,
+        includeOpUp: true,
+        // Host-only: Canix borrow quotes refresh only the borrow asset; Folks
+        // still needs collateral asset prices in the same oracle group.
+        oracleAssetIds: [USDC_ASSET_ID, ALGO_ASSET_ID],
+      },
+      // Borrow receives ALGO; do not declare a treasury spend.
+      toAssetId: ALGO_ASSET_ID,
+      rationale: "Protocol verify Folks borrow ALGO",
+    });
+
+    snapshot = await readSnapshot(context);
+    debt = snapshot.positions.find(
+      (position) =>
+        /folks/i.test(position.protocol) &&
+        position.positionType === "debt" &&
+        BigInt(position.amountRaw) > 0n,
+    );
+    if (!debt) {
+      // Canix may lag; proceed with synthetic debt using borrowed size.
+      console.error(
+        `[protocol-verify] ${pinned.caseId}: no Folks debt row yet; synthesizing repay from borrow amount`,
+      );
+      debt = {
+        protocol: "folks-finance",
+        positionType: "debt",
+        positionId: `folks-credit:debt:algo:${algoPoolAppId}`,
+        opportunityId: pinned.borrowOpportunityId,
+        assetId: ALGO_ASSET_ID,
+        assetSymbol: "ALGO",
+        amountRaw: borrowRaw,
+        amount: borrowRaw,
+        usdValue: null,
+        compatibleExitShapeKeys: [repayShapeKey],
+        compatibleManageShapeKeys: [],
+        inputHints: {
+          loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+          poolAppId: algoPoolAppId,
+          escrowAddress: loanEscrow.escrowAddress,
+        },
+      };
+    }
+  } else {
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: resuming from open Folks debt ${debt.positionId}`,
+    );
+    if (!loanEscrow) {
+      throw new Error(
+        `Folks credit resume needs loan escrow secret in ${context.config.FOLKS_ESCROW_DATA_DIR} (app ${FOLKS_GENERAL_LOAN_APP_ID})`,
+      );
+    }
+  }
+
+  if (!loanEscrow?.escrowAddress) {
+    throw new Error("Folks credit missing loan escrowAddress for repay");
+  }
+
+  snapshot = await readSnapshot(context);
+  const walletAlgo = spendableRaw(snapshot, ALGO_ASSET_ID);
+  let repayAmountRaw = BigInt(debt.amountRaw);
+  if (repayAmountRaw < BigInt(borrowRaw)) {
+    repayAmountRaw = BigInt(borrowRaw);
+  }
+  // Leave ALGO for fees; repay at most wallet balance minus a small fee buffer.
+  const feeBuffer = 200_000n;
+  const maxRepay =
+    walletAlgo > feeBuffer ? walletAlgo - feeBuffer : walletAlgo;
+  if (maxRepay > 0n && repayAmountRaw > maxRepay) {
+    repayAmountRaw = maxRepay;
+  }
+  if (repayAmountRaw <= 0n) {
+    throw new Error(
+      `Folks repay has no ALGO (debt=${debt.amountRaw}, borrowed=${borrowRaw}, wallet=${walletAlgo.toString()})`,
+    );
+  }
+
+  const repayKeys = [
+    ...debt.compatibleExitShapeKeys,
+    ...debt.compatibleManageShapeKeys,
+  ];
+  if (
+    !repayKeys.includes(repayShapeKey) &&
+    !debt.compatibleExitShapeKeys.includes(repayShapeKey)
+  ) {
+    debt.compatibleExitShapeKeys = [
+      ...debt.compatibleExitShapeKeys,
+      repayShapeKey,
+    ];
+  }
+
+  console.error(
+    `[protocol-verify] ${pinned.caseId}: repay ${repayAmountRaw.toString()} ALGO`,
+  );
+  await executeFolksStep({
+    id: `${pinned.caseId}-repay`,
+    type: "close",
+    shape: registryFolksShape(
+      repayShapeKey,
+      "repay",
+      "withTxn",
+      ["userAddress", "escrowAddress", "repayAmount", "loanAppId", "poolAppId"],
+      {
+        loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+        poolAppId: algoPoolAppId,
+      },
+    ),
+    baseOpportunity: algoOpportunity,
+    executionInput: {
+      loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+      poolAppId: algoPoolAppId,
+      escrowAddress: loanEscrow.escrowAddress,
+      repayAmount: repayAmountRaw.toString(),
+      includeOpUp: true,
+      oracleAssetIds: [USDC_ASSET_ID, ALGO_ASSET_ID],
+    },
+    amountRaw: repayAmountRaw.toString(),
+    fromAssetId: ALGO_ASSET_ID,
+    authorizedSpends: [
+      { assetId: ALGO_ASSET_ID, amountRaw: repayAmountRaw.toString() },
+    ],
+    position: debt,
+    rationale: "Protocol verify Folks repay ALGO",
+  });
+
+  console.error(
+    `[protocol-verify] ${pinned.caseId}: collateral:reduce ${usdcRaw} USDC`,
+  );
+  await executeFolksStep({
+    id: `${pinned.caseId}-reduce`,
+    type: "open",
+    shape: registryFolksShape(
+      FOLKS_COLLATERAL_REDUCE_SHAPE,
+      "collateral",
+      "reduce",
+      [
+        "userAddress",
+        "escrowAddress",
+        "amount",
+        "amountDenomination",
+        "loanAppId",
+        "poolAppId",
+      ],
+      {
+        loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+        poolAppId: usdcPoolAppId,
+      },
+    ),
+    baseOpportunity: usdcOpportunity,
+    executionInput: {
+      loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
+      poolAppId: usdcPoolAppId,
+      escrowAddress: loanEscrow.escrowAddress,
+      amount: usdcRaw,
+      amountDenomination: "asset",
+      includeOpUp: true,
+      oracleAssetIds: [USDC_ASSET_ID, ALGO_ASSET_ID],
+    },
+    rationale: "Protocol verify Folks reduce USDC collateral",
+  });
+
+  snapshot = await readSnapshot(context);
+  const supplied = findPositionForOpportunity(
+    snapshot,
+    usdcOpportunity.opportunityId,
+    usdcOpportunity.protocol,
+  );
+  if (supplied && BigInt(supplied.amountRaw) > 0n) {
+    const withdrawKeys = [
+      ...supplied.compatibleExitShapeKeys,
+      ...supplied.compatibleManageShapeKeys,
+    ];
+    const withdrawKey = withdrawKeys.includes(withdrawShapeKey)
+      ? withdrawShapeKey
+      : withdrawKeys.find((key) => /withdraw/i.test(key)) ?? withdrawShapeKey;
+    if (
+      !supplied.compatibleExitShapeKeys.includes(withdrawKey) &&
+      !supplied.compatibleManageShapeKeys.includes(withdrawKey)
+    ) {
+      supplied.compatibleExitShapeKeys = [
+        ...supplied.compatibleExitShapeKeys,
+        withdrawKey,
+      ];
+    }
+    const withdrawAmount =
+      BigInt(supplied.amountRaw) < BigInt(usdcRaw)
+        ? supplied.amountRaw
+        : usdcRaw;
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: withdraw ${withdrawAmount} USDC from deposit escrow`,
+    );
+    const withdraw = buildExitAction({
+      id: `${pinned.caseId}-withdraw`,
+      position: supplied,
+      opportunity: usdcOpportunity,
+      exitShapeKey: withdrawKey,
+      withdrawAmountRaw: withdrawAmount,
+      rationale: "Protocol verify Folks USDC withdraw after credit",
+    });
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(
+        snapshot,
+        basePlan([withdraw]),
+        [usdcOpportunity],
+      ).actions[0]!,
+      [usdcOpportunity],
+    );
+    return;
+  }
+
+  console.error(
+    `[protocol-verify] ${pinned.caseId}: no Folks deposit position after reduce (collateral returned to wallet)`,
+  );
 }

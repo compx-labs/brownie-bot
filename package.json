@@ -29,7 +29,9 @@
     "test:smoke": "vitest run tests/live-canix402.smoke.test.ts",
     "test:protocol-verify": "vitest run --bail=1 tests/protocol-verify.test.ts",
     "test:protocol-verify:reti": "vitest run --bail=1 tests/protocol-verify.test.ts -t reti-pooling",
-    "test:protocol-verify:myth": "vitest run --bail=1 tests/protocol-verify.test.ts -t myth-dualstake"
+    "test:protocol-verify:myth": "vitest run --bail=1 tests/protocol-verify.test.ts -t myth-dualstake",
+    "test:protocol-verify:compx-credit": "vitest run --bail=1 tests/protocol-verify.test.ts -t compx-credit",
+    "test:protocol-verify:folks-credit": "vitest run --bail=1 tests/protocol-verify.test.ts -t folks-credit"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1088.0",

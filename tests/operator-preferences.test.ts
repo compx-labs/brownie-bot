@@ -12,6 +12,17 @@ import {
 } from "../src/services/portfolio-agent.js";
 
 describe("portfolio agent base prompt", () => {
+  it("describes preferred holds as economic exposure with lend/borrow paths", () => {
+    for (const prompt of [
+      PORTFOLIO_AGENT_PROMPT_V1,
+      PORTFOLIO_AGENT_PROMPT_LITE,
+    ]) {
+      expect(prompt).toMatch(/economic exposure/i);
+      expect(prompt).toMatch(/Lending and borrowing are first-class/i);
+      expect(prompt).toMatch(/LP\/farm\/lend/i);
+    }
+  });
+
   it("has no CompX ASA / core CompX mandate strings", () => {
     for (const prompt of [
       PORTFOLIO_AGENT_PROMPT_V1,
