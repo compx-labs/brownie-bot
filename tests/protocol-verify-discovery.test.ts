@@ -12,6 +12,10 @@ import {
   COMPX_REPAY_SHAPE,
   COMPX_WITHDRAW_SHAPE,
   DEFAULT_PROTOCOL_VERIFY_FIXTURE_PATH,
+  DORKFI_BORROW_SHAPE,
+  DORKFI_DEPOSIT_SHAPE,
+  DORKFI_REPAY_SHAPE,
+  DORKFI_WITHDRAW_SHAPE,
   FOLKS_BORROW_VARIABLE_SHAPE,
   FOLKS_REPAY_SHAPE,
   MYTH_MINT_SHAPE,
@@ -20,6 +24,7 @@ import {
   RETI_STAKE_SHAPE,
   RETI_UNSTAKE_SHAPE,
   RETI_VERIFY_OPPORTUNITY_ID,
+  UNIT_ASSET_ID,
   USDC_ASSET_ID,
   assertAllCasesPinned,
   buildExitAction,
@@ -53,6 +58,7 @@ const PINNED_OPPORTUNITY_IDS = {
   "compx-lending": "compx-lending-3491050310",
   "compx-credit": "compx-lending-3491050310",
   "dorkfi-usdc-lending": "dorkfi:algorand:3333688282:31566704:lending",
+  "dorkfi-credit": "dorkfi:algorand:3333688282:31566704:lending",
   "pact-lp": "2966876920:lp",
   "haystack-swap": null,
   "reti-pooling": "reti-staking-220",
@@ -67,6 +73,7 @@ const PINNED_ENTER_SHAPE_KEYS = {
   "compx-lending": "mainnet:compx:v1:deposit:asa",
   "compx-credit": "mainnet:compx:v1:deposit:asa",
   "dorkfi-usdc-lending": "mainnet:dorkfi:v1:deposit:asa",
+  "dorkfi-credit": "mainnet:dorkfi:v1:deposit:asa",
   "pact-lp": "mainnet:pact:v1:addLiquidity:twoSided",
   "haystack-swap": null,
   "reti-pooling": "mainnet:reti:v1:stake:algo",
@@ -372,26 +379,94 @@ describe("protocol-verify discovery matching", () => {
       opportunity({
         protocol: "dorkfi",
         opportunityType: "lending",
-        opportunityId: "dorkfi:usdc:1",
+        opportunityId: "dorkfi:algorand:3333688282:31566704:lending",
         assetPair: "USDC",
         assetIds: [USDC_ASSET_ID],
         executionShapes: [
           enterShape({
-            shapeKey: "mainnet:dorkfi:v1:deposit:usdc",
+            shapeKey: DORKFI_DEPOSIT_SHAPE,
             protocol: "dorkfi",
             action: "deposit",
-            variant: "usdc",
-            requiredInputs: ["assetAmount"],
+            variant: "asa",
+            requiredInputs: [
+              "userAddress",
+              "poolAppId",
+              "marketAppId",
+              "assetId",
+              "amount",
+            ],
             requiredAssetIds: [USDC_ASSET_ID],
-            inputHints: { assetId: USDC_ASSET_ID },
+            inputHints: {
+              assetId: USDC_ASSET_ID,
+              poolAppId: 3_333_688_282,
+              marketAppId: 3_210_682_240,
+            },
           }),
           enterShape({
-            shapeKey: "mainnet:dorkfi:v1:withdraw:usdc",
+            shapeKey: DORKFI_WITHDRAW_SHAPE,
             protocol: "dorkfi",
             action: "withdraw",
-            variant: "usdc",
-            requiredInputs: ["assetAmount"],
+            variant: "asa",
+            requiredInputs: [
+              "userAddress",
+              "poolAppId",
+              "marketAppId",
+              "assetId",
+              "amount",
+            ],
             requiredAssetIds: [USDC_ASSET_ID],
+            inputHints: {
+              assetId: USDC_ASSET_ID,
+              poolAppId: 3_333_688_282,
+              marketAppId: 3_210_682_240,
+            },
+          }),
+        ],
+      }),
+      opportunity({
+        protocol: "dorkfi",
+        opportunityType: "lending",
+        opportunityId: "dorkfi:algorand:3333688282:3121954282:lending",
+        assetPair: "UNIT",
+        assetIds: [UNIT_ASSET_ID],
+        executionShapes: [
+          enterShape({
+            shapeKey: DORKFI_BORROW_SHAPE,
+            protocol: "dorkfi",
+            action: "borrow",
+            variant: "asa",
+            requiredInputs: [
+              "userAddress",
+              "poolAppId",
+              "marketAppId",
+              "assetId",
+              "amount",
+            ],
+            requiredAssetIds: [UNIT_ASSET_ID],
+            inputHints: {
+              assetId: UNIT_ASSET_ID,
+              poolAppId: 3_333_688_282,
+              marketAppId: 3_220_125_024,
+            },
+          }),
+          enterShape({
+            shapeKey: DORKFI_REPAY_SHAPE,
+            protocol: "dorkfi",
+            action: "repay",
+            variant: "asa",
+            requiredInputs: [
+              "userAddress",
+              "poolAppId",
+              "marketAppId",
+              "assetId",
+              "amount",
+            ],
+            requiredAssetIds: [UNIT_ASSET_ID],
+            inputHints: {
+              assetId: UNIT_ASSET_ID,
+              poolAppId: 3_333_688_282,
+              marketAppId: 3_220_125_024,
+            },
           }),
         ],
       }),
@@ -466,6 +541,15 @@ describe("protocol-verify discovery matching", () => {
     expect(matched["compx-credit"].exitShapeKey).toBe(COMPX_WITHDRAW_SHAPE);
     expect(matched["compx-credit"].receiptAssetId).toBe(3_491_050_538);
     expect(matched["dorkfi-usdc-lending"].protocol).toBe("dorkfi");
+    expect(matched["dorkfi-credit"].opportunityId).toBe(
+      "dorkfi:algorand:3333688282:31566704:lending",
+    );
+    expect(matched["dorkfi-credit"].borrowOpportunityId).toBe(
+      "dorkfi:algorand:3333688282:3121954282:lending",
+    );
+    expect(matched["dorkfi-credit"].borrowShapeKey).toBe(DORKFI_BORROW_SHAPE);
+    expect(matched["dorkfi-credit"].repayShapeKey).toBe(DORKFI_REPAY_SHAPE);
+    expect(matched["dorkfi-credit"].exitShapeKey).toBe(DORKFI_WITHDRAW_SHAPE);
     expect(matched["pact-lp"].opportunityId).toBe("pact:pool:algo-usdc");
     expect(matched["haystack-swap"].fromAssetId).toBe(ALGO_ASSET_ID);
     expect(matched["reti-pooling"].opportunityId).toBe(RETI_VERIFY_OPPORTUNITY_ID);
@@ -663,6 +747,12 @@ describe("protocol-verify pinned fixture", () => {
       FOLKS_BORROW_VARIABLE_SHAPE,
     );
     expect(fixture.cases["folks-credit"].repayShapeKey).toBe(FOLKS_REPAY_SHAPE);
+    expect(fixture.cases["dorkfi-credit"].borrowOpportunityId).toBe(
+      "dorkfi:algorand:3333688282:3121954282:lending",
+    );
+    expect(fixture.cases["dorkfi-credit"].borrowShapeKey).toBe(DORKFI_BORROW_SHAPE);
+    expect(fixture.cases["dorkfi-credit"].repayShapeKey).toBe(DORKFI_REPAY_SHAPE);
+    expect(fixture.cases["dorkfi-credit"].exitShapeKey).toBe(DORKFI_WITHDRAW_SHAPE);
   });
 });
 
@@ -828,6 +918,7 @@ describe("loadProtocolVerifyConfig", () => {
     expect(config.PROTOCOL_VERIFY_AMOUNT_USDC).toBe(1);
     expect(config.PROTOCOL_VERIFY_AMOUNT_ALGO).toBe(1);
     expect(config.PROTOCOL_VERIFY_AMOUNT_ORA).toBe(1);
+    expect(config.PROTOCOL_VERIFY_AMOUNT_UNIT).toBe(0.1);
     expect(config.FOLKS_ESCROW_DATA_DIR).toBe("data/folks-escrows-verify");
 
     expect(() =>

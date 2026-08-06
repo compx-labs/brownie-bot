@@ -22,7 +22,10 @@ For architecture, HTTP API, and signing details, see [README.md](./README.md).
     — see [§2b](#2b-local-host-zs-proxy)
 - Optional: Telegram bot + chat ID (otherwise reports print to the terminal)
 - Optional: DigitalOcean Spaces (otherwise accounting JSON goes under
-  `data/accounting/`)
+  `data/accounting/`). With Spaces configured, each accounting run also
+  publishes a redacted public PnL JSON at
+  `{DO_SPACES_PREFIX}/public/pnl.json` for websites — see README
+  **Public PnL JSON (website)** for CDN/CORS setup.
 
 ## 2a. DigitalOcean / Docker (recommended for cloud)
 
@@ -210,6 +213,7 @@ TEST_MNEMONIC=
 # PROTOCOL_VERIFY_AMOUNT_USDC=1
 # PROTOCOL_VERIFY_AMOUNT_ALGO=1
 # PROTOCOL_VERIFY_AMOUNT_ORA=1
+# PROTOCOL_VERIFY_AMOUNT_UNIT=0.1
 ```
 
 Fund ALGO, USDC, and ORA (`1284444444`) on `TEST_WALLET`. Réti stakes at least
@@ -227,12 +231,13 @@ RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify
 # Or one case only:
 # RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify:reti
 # RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify:myth
+# RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify:dorkfi-credit
 ```
 
 Cases covered: Folks USDC deposit, Folks ALGO stake, Tinyman LP, CompX lending,
-Dorkfi USDC lending, PAct LP, Haystack ALGO↔USDC swap, Réti pooling, Myth
-dualSTAKE (ORA). Tinyman farm claimRewards is live on reward positions; farm
-stake/unstake protocol-verify remains deferred.
+CompX credit, Dorkfi USDC lending, DorkFi credit (USDC→UNIT), PAct LP, Haystack
+ALGO↔USDC swap, Réti pooling, Myth dualSTAKE (ORA). Tinyman farm claimRewards is
+live on reward positions; farm stake/unstake protocol-verify remains deferred.
 
 ---
 

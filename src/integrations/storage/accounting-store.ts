@@ -17,6 +17,7 @@ import {
   type AccountingCashflow,
   type AccountingSnapshot,
   type AccountingSummary,
+  type PublicPnl,
 } from "../../domain.js";
 
 export interface AccountingStore {
@@ -34,6 +35,8 @@ export interface AccountingStore {
     summary: AccountingSummary,
     yearMonth: string,
   ): Promise<string>;
+  /** Fixed public PnL artifact at `{prefix}/public/pnl.json`. */
+  putPublicPnl(payload: PublicPnl): Promise<string>;
   listCashflows(
     walletAddress: string,
     fromInclusive: string,
@@ -202,6 +205,12 @@ export class LocalFilesystemAccountingStore implements AccountingStore {
     return key;
   }
 
+  async putPublicPnl(payload: PublicPnl): Promise<string> {
+    const key = publicPnlKey(this.prefix);
+    await this.putMutableJson(key, payload);
+    return key;
+  }
+
   async listCashflows(
     walletAddress: string,
     fromInclusive: string,
@@ -269,7 +278,7 @@ export class LocalFilesystemAccountingStore implements AccountingStore {
 
   private async putMutableJson(
     key: string,
-    body: AccountingSnapshot | AccountingCashflow | AccountingSummary,
+    body: AccountingSnapshot | AccountingCashflow | AccountingSummary | PublicPnl,
   ): Promise<void> {
     const filePath = this.resolvePath(key);
     await mkdir(dirname(filePath), { recursive: true });
@@ -455,6 +464,15 @@ export class SpacesAccountingStore implements AccountingStore {
     return key;
   }
 
+  async putPublicPnl(payload: PublicPnl): Promise<string> {
+    const key = publicPnlKey(this.prefix);
+    await this.putMutableJson(key, payload, {
+      acl: "public-read",
+      cacheControl: "public, max-age=60",
+    });
+    return key;
+  }
+
   async listCashflows(
     walletAddress: string,
     fromInclusive: string,
@@ -522,7 +540,8 @@ export class SpacesAccountingStore implements AccountingStore {
 
   private async putMutableJson(
     key: string,
-    body: AccountingSnapshot | AccountingCashflow | AccountingSummary,
+    body: AccountingSnapshot | AccountingCashflow | AccountingSummary | PublicPnl,
+    options?: { acl?: "public-read"; cacheControl?: string },
   ): Promise<void> {
     await this.client.send(
       new PutObjectCommand({
@@ -530,7 +549,8 @@ export class SpacesAccountingStore implements AccountingStore {
         Key: key,
         Body: JSON.stringify(body),
         ContentType: "application/json",
-        CacheControl: "no-store",
+        CacheControl: options?.cacheControl ?? "no-store",
+        ...(options?.acl ? { ACL: options.acl } : {}),
       }),
     );
   }
@@ -611,6 +631,10 @@ function joinKey(...parts: string[]): string {
     .map(trimSlashes)
     .filter((part) => part.length > 0)
     .join("/");
+}
+
+function publicPnlKey(prefix: string): string {
+  return joinKey(prefix, "public", "pnl.json");
 }
 
 function trimSlashes(value: string): string {

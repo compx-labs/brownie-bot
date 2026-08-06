@@ -9,6 +9,7 @@ import type {
   LiquidBalance,
   Position,
   ProtocolValue,
+  PublicPnl,
 } from "../domain.js";
 import type { PortfolioReader } from "../integrations/algorand/portfolio.js";
 import {
@@ -361,6 +362,16 @@ export class AccountingService {
       summaryWithKey.checksum = canonicalChecksum(summaryWithKey);
     }
 
+    try {
+      await this.store.putPublicPnl(toPublicPnl(summaryWithKey));
+    } catch (error) {
+      summaryWithKey.notes = [
+        ...summaryWithKey.notes,
+        `Public PnL write failed: ${safeErrorMessage(error)}`,
+      ];
+      summaryWithKey.checksum = canonicalChecksum(summaryWithKey);
+    }
+
     return {
       id,
       startedAt,
@@ -371,6 +382,27 @@ export class AccountingService {
       snapshotKey,
     };
   }
+}
+
+/**
+ * Redact an accounting summary into the public website payload.
+ */
+export function toPublicPnl(summary: AccountingSummary): PublicPnl {
+  return {
+    schemaVersion: 1,
+    walletAddress: summary.walletAddress,
+    asOf: summary.asOf,
+    navUsd: summary.latestTotalValueUsd,
+    previousNavUsd: summary.previousTotalValueUsd,
+    pnlUsd: summary.pnlUsd,
+    pnlAvailable: summary.pnlAvailable,
+    navDeltaUsd: summary.navDeltaUsd ?? null,
+    netExternalCashflowUsd: summary.netExternalCashflowUsd ?? null,
+    defiByProtocol: summary.defiByProtocol,
+    defiValueUsd: summary.defiValueUsd,
+    walletAsaValueUsd: summary.walletAsaValueUsd,
+    algoBalance: summary.algoBalance,
+  };
 }
 
 /**

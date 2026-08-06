@@ -459,6 +459,25 @@ export const accountingSummarySchema = z.object({
 
 export type AccountingSummary = z.infer<typeof accountingSummarySchema>;
 
+/** Redacted NAV/P&L payload for public website consumption. */
+export const publicPnlSchema = z.object({
+  schemaVersion: z.literal(1),
+  walletAddress: z.string().min(1),
+  asOf: z.iso.datetime(),
+  navUsd: moneyStringSchema.nullable(),
+  previousNavUsd: moneyStringSchema.nullable(),
+  pnlUsd: moneyStringSchema.nullable(),
+  pnlAvailable: z.boolean(),
+  navDeltaUsd: moneyStringSchema.nullable(),
+  netExternalCashflowUsd: moneyStringSchema.nullable(),
+  defiByProtocol: z.array(protocolValueSchema),
+  defiValueUsd: moneyStringSchema.nullable(),
+  walletAsaValueUsd: moneyStringSchema.nullable(),
+  algoBalance: z.string().regex(/^[0-9]+(?:\.[0-9]+)?$/),
+});
+
+export type PublicPnl = z.infer<typeof publicPnlSchema>;
+
 export interface AccountingRun {
   id: string;
   startedAt: string;

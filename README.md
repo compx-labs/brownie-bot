@@ -247,6 +247,55 @@ in the window adjust the NAV delta so funding is not profit. Prefer Telegram
 `/deposit <txid>` / `/withdraw <txid>` (or `POST /accounting/cashflows` for
 manual overrides including profit-share withdrawals).
 
+### Public PnL JSON (website)
+
+After each successful accounting run the bot also writes a **redacted** public
+artifact at `{DO_SPACES_PREFIX}/public/pnl.json` (locally:
+`{ACCOUNTING_DATA_DIR}/{prefix}/public/pnl.json`). Private wallet snapshots and
+summaries stay private; only this object is uploaded with `ACL: public-read`
+and `Cache-Control: public, max-age=60`. Point an external website at the CDN
+URL — do not expose the bot HTTP port for this.
+
+Public payload fields: `schemaVersion`, `walletAddress`, `asOf`, `navUsd`,
+`previousNavUsd`, `pnlUsd`, `pnlAvailable`, `navDeltaUsd`,
+`netExternalCashflowUsd`, `defiByProtocol`, `defiValueUsd`, `walletAsaValueUsd`,
+`algoBalance`. Internal notes, checksums, and snapshot keys are omitted.
+
+#### DigitalOcean Spaces setup
+
+Do this once on the Space used by `DO_SPACES_*`. Keep the Space **private**
+overall; only `public/pnl.json` is world-readable via object ACL.
+
+1. **Confirm the Space** — Control Panel → **Spaces Object Storage** → open
+   `DO_SPACES_BUCKET` (region must match `DO_SPACES_REGION`, e.g. `nyc3`).
+2. **Do not make the whole Space public** — private Space + per-object
+   `public-read` on upload keeps `wallets/...` inaccessible.
+3. **Enable CDN** (recommended) — Space → **Settings** → **CDN** → Enable.
+   Public URL:
+   ```text
+   https://{bucket}.{region}.cdn.digitaloceanspaces.com/{DO_SPACES_PREFIX}/public/pnl.json
+   ```
+   Non-CDN:
+   ```text
+   https://{bucket}.{region}.digitaloceanspaces.com/{DO_SPACES_PREFIX}/public/pnl.json
+   ```
+   Example with defaults:
+   `https://your-bucket.nyc3.cdn.digitaloceanspaces.com/brownie-bot/public/pnl.json`
+4. **CORS** (required for browser `fetch`) — Space → **Settings** → **CORS
+   Configurations** → add a rule:
+   - Allowed Origins: your site origin(s), e.g. `https://yoursite.com`
+   - Allowed Methods: `GET`, `HEAD`
+   - Allowed Headers: `*` (or default)
+   - Max Age: `3600`
+5. **Force one accounting run** after deploy — `POST /accounting/run` (bearer
+   token), Telegram `/accounting`, or wait for the accounting cron. Confirm
+   `{prefix}/public/pnl.json` appears in the Spaces browser with public read.
+6. **Smoke-test**:
+   ```bash
+   curl -i "https://{bucket}.{region}.cdn.digitaloceanspaces.com/{prefix}/public/pnl.json"
+   ```
+   Expect `200` and `Content-Type: application/json`. CDN may cache up to ~60s.
+
 ## HTTP API
 
 - `GET /health` — operator health: config readiness, busy flag, latest
@@ -406,18 +455,20 @@ fields (shape key, amounts, position id)—not a parallel verify-only builder.
 
 ```bash
 RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify
-# Single case (also: test:protocol-verify:reti / :myth)
+# Single case (also: test:protocol-verify:reti / :myth / :compx-credit / :dorkfi-credit / :folks-credit)
 # RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify:reti
+# RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify:dorkfi-credit
 ```
 
 Stops after the first failing case (`--bail=1`) so later protocols do not keep
 spending. This suite is **not** CI. It spends real mainnet USDC/ALGO/ORA and
 Canix x402 fees.
 
-Cases: Folks USDC deposit, Folks ALGO stake, Tinyman LP, CompX lending, Dorkfi
-USDC lending, PAct LP, Haystack ALGO↔USDC swap, **Réti pooling**, **Myth
-dualSTAKE (ORA)**. Tinyman farm **claimRewards** is live on reward positions;
-farm stake/unstake protocol-verify remains deferred.
+Cases: Folks USDC deposit, Folks ALGO stake, Tinyman LP, CompX lending, CompX
+credit, Dorkfi USDC lending, **DorkFi credit (USDC→UNIT)**, PAct LP, Haystack
+ALGO↔USDC swap, **Réti pooling**, **Myth dualSTAKE (ORA)**. Tinyman farm
+**claimRewards** is live on reward positions; farm stake/unstake protocol-verify
+remains deferred.
 
 ## Container (DigitalOcean)
 

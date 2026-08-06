@@ -31,6 +31,7 @@
     "test:protocol-verify:reti": "vitest run --bail=1 tests/protocol-verify.test.ts -t reti-pooling",
     "test:protocol-verify:myth": "vitest run --bail=1 tests/protocol-verify.test.ts -t myth-dualstake",
     "test:protocol-verify:compx-credit": "vitest run --bail=1 tests/protocol-verify.test.ts -t compx-credit",
+    "test:protocol-verify:dorkfi-credit": "vitest run --bail=1 tests/protocol-verify.test.ts -t dorkfi-credit",
     "test:protocol-verify:folks-credit": "vitest run --bail=1 tests/protocol-verify.test.ts -t folks-credit"
   },
   "dependencies": {

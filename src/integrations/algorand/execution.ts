@@ -197,11 +197,16 @@ export class AlgorandExecutionService {
   /**
    * After swaps (or any fill shortfall), planned stake/deposit amounts can exceed
    * spendable balance. Clamp open/increase sizes to on-chain spendable before quoting.
+   * Borrow shapes name the received asset in executionInput.assetId (e.g. DorkFi UNIT)
+   * without spending it from the wallet — skip clamping for those.
    */
   private async clampCapitalEnterToSpendable(
     action: PortfolioAction,
   ): Promise<PortfolioAction> {
     if (!["open", "increase"].includes(action.type)) {
+      return action;
+    }
+    if (/borrow/i.test(action.executionShapeKey ?? "")) {
       return action;
     }
     const assetId = resolveCapitalEnterSpendAssetId(action);

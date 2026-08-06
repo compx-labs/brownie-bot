@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,8 +13,10 @@ import {
 
 function createMemoryS3() {
   const objects = new Map<string, string>();
+  const putInputs: Array<Record<string, unknown>> = [];
   return {
     objects,
+    putInputs,
     client: {
       send: vi.fn(
         (command: {
@@ -42,6 +44,7 @@ function createMemoryS3() {
             });
           }
           if (name === "PutObjectCommand") {
+            putInputs.push(input);
             objects.set(String(input.Key), String(input.Body));
             return Promise.resolve({});
           }
@@ -166,6 +169,87 @@ describe("SpacesAccountingStore", () => {
     );
     expect(listed.map((item) => item.eventId)).toEqual(["b"]);
   });
+
+  it("writes public PnL with public-read ACL and short cache", async () => {
+    const memory = createMemoryS3();
+    const store = new SpacesAccountingStore({
+      endpoint: "https://nyc3.digitaloceanspaces.com",
+      region: "nyc3",
+      bucket: "bucket",
+      accessKeyId: "key",
+      secretAccessKey: "secret",
+      prefix: "brownie",
+      client: memory.client as never,
+    });
+
+    const key = await store.putPublicPnl({
+      schemaVersion: 1,
+      walletAddress: "WALLET",
+      asOf: "2026-07-16T08:00:00.000Z",
+      navUsd: "10.00",
+      previousNavUsd: "8.00",
+      pnlUsd: "2.00",
+      pnlAvailable: true,
+      navDeltaUsd: "2.00",
+      netExternalCashflowUsd: "0",
+      defiByProtocol: [{ protocol: "folks", valueUsd: "5.00", positionCount: 1 }],
+      defiValueUsd: "5.00",
+      walletAsaValueUsd: "5.00",
+      algoBalance: "1",
+    });
+
+    expect(key).toBe("brownie/public/pnl.json");
+    const put = memory.putInputs.find(
+      (input) => input.Key === "brownie/public/pnl.json",
+    );
+    expect(put?.ACL).toBe("public-read");
+    expect(put?.CacheControl).toBe("public, max-age=60");
+    expect(put?.ContentType).toBe("application/json");
+    expect(JSON.parse(String(put?.Body))).toMatchObject({
+      schemaVersion: 1,
+      navUsd: "10.00",
+      pnlUsd: "2.00",
+    });
+  });
+
+  it("keeps private summary puts without public ACL", async () => {
+    const memory = createMemoryS3();
+    const store = new SpacesAccountingStore({
+      endpoint: "https://nyc3.digitaloceanspaces.com",
+      region: "nyc3",
+      bucket: "bucket",
+      accessKeyId: "key",
+      secretAccessKey: "secret",
+      prefix: "brownie",
+      client: memory.client as never,
+    });
+    const body = {
+      schemaVersion: 2 as const,
+      walletAddress: "WALLET",
+      asOf: "2026-07-16T08:00:00.000Z",
+      latestSnapshotId: "run-1",
+      latestSnapshotKey: "key",
+      latestTotalValueUsd: "10",
+      previousTotalValueUsd: null,
+      pnlUsd: null,
+      pnlAvailable: false,
+      defiByProtocol: [],
+      defiValueUsd: "0",
+      walletAsaValueUsd: "10",
+      unpricedAssetIds: [],
+      algoBalance: "1",
+      minimumBalance: "0.1",
+      notes: ["secret note"],
+      checksum: "",
+    };
+    body.checksum = canonicalChecksum(body);
+    await store.putLatestSummary(body);
+    const put = memory.putInputs.find((input) =>
+      String(input.Key).endsWith("/state/latest.json"),
+    );
+    expect(put?.ACL).toBeUndefined();
+    expect(put?.CacheControl).toBe("no-store");
+  });
 });
 
 describe("LocalFilesystemAccountingStore", () => {
@@ -209,6 +293,36 @@ describe("LocalFilesystemAccountingStore", () => {
       const listed = await store.listSnapshots("WALLET", 2026, 7);
       expect(listed).toHaveLength(1);
       expect(listed[0]?.id).toBe("run-1");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes public PnL under the fixed public path", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "brownie-accounting-"));
+    try {
+      const store = new LocalFilesystemAccountingStore({
+        rootDir,
+        prefix: "brownie",
+      });
+      const key = await store.putPublicPnl({
+        schemaVersion: 1,
+        walletAddress: "WALLET",
+        asOf: "2026-07-16T08:00:00.000Z",
+        navUsd: "10.00",
+        previousNavUsd: null,
+        pnlUsd: null,
+        pnlAvailable: false,
+        navDeltaUsd: null,
+        netExternalCashflowUsd: null,
+        defiByProtocol: [],
+        defiValueUsd: "0",
+        walletAsaValueUsd: "10.00",
+        algoBalance: "1",
+      });
+      expect(key).toBe("brownie/public/pnl.json");
+      const text = await readFile(join(rootDir, key), "utf8");
+      expect(JSON.parse(text).navUsd).toBe("10.00");
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
