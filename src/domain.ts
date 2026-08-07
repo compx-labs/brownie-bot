@@ -429,6 +429,30 @@ export const accountingSnapshotSchema = z.object({
 
 export type AccountingSnapshot = z.infer<typeof accountingSnapshotSchema>;
 
+export const pnlWindowIdSchema = z.enum(["7d", "30d", "all"]);
+
+export type PnlWindowId = z.infer<typeof pnlWindowIdSchema>;
+
+export const pnlWindowSchema = z.object({
+  id: pnlWindowIdSchema,
+  available: z.boolean(),
+  startAsOf: z.iso.datetime().nullable(),
+  navStartUsd: moneyStringSchema.nullable(),
+  pnlUsd: moneyStringSchema.nullable(),
+  navDeltaUsd: moneyStringSchema.nullable(),
+  netExternalCashflowUsd: moneyStringSchema.nullable(),
+  reason: z.string().optional(),
+});
+
+export type PnlWindow = z.infer<typeof pnlWindowSchema>;
+
+export const navSeriesPointSchema = z.object({
+  asOf: z.iso.datetime(),
+  navUsd: moneyStringSchema,
+});
+
+export type NavSeriesPoint = z.infer<typeof navSeriesPointSchema>;
+
 export const accountingSummarySchema = z.object({
   schemaVersion: z.literal(2),
   walletAddress: z.string().min(1),
@@ -447,6 +471,16 @@ export const accountingSummarySchema = z.object({
    * summaries.
    */
   netExternalCashflowUsd: moneyStringSchema.nullable().optional(),
+  /** Multi-window P&L (7d / 30d / all). Optional on older summaries. */
+  windows: z
+    .object({
+      "7d": pnlWindowSchema,
+      "30d": pnlWindowSchema,
+      all: pnlWindowSchema,
+    })
+    .optional(),
+  /** Weekly NAV points for charts. Optional on older summaries. */
+  navSeries: z.array(navSeriesPointSchema).optional(),
   defiByProtocol: z.array(protocolValueSchema),
   defiValueUsd: moneyStringSchema.nullable(),
   walletAsaValueUsd: moneyStringSchema.nullable(),
@@ -458,6 +492,100 @@ export const accountingSummarySchema = z.object({
 });
 
 export type AccountingSummary = z.infer<typeof accountingSummarySchema>;
+
+/** Sticky all-time baseline written by inception review commit. */
+export const accountingInceptionSchema = z.object({
+  schemaVersion: z.literal(1),
+  walletAddress: z.string().min(1),
+  asOf: z.iso.datetime(),
+  navUsd: moneyStringSchema,
+  minRound: z.number().int().nonnegative(),
+  recordedAt: z.iso.datetime(),
+  reviewChecksum: z.string().min(1),
+  notes: z.array(z.string()).optional(),
+});
+
+export type AccountingInception = z.infer<typeof accountingInceptionSchema>;
+
+export const inceptionReviewClassificationSchema = z.enum([
+  "external_deposit",
+  "external_withdrawal",
+  "flagged",
+  "ignored",
+]);
+
+export type InceptionReviewClassification = z.infer<
+  typeof inceptionReviewClassificationSchema
+>;
+
+export const inceptionReviewRowSchema = z.object({
+  transactionId: z.string().min(1),
+  confirmedRound: z.number().int().nonnegative(),
+  occurredAt: z.iso.datetime(),
+  txType: z.string().min(1),
+  assetId: z.number().int().nonnegative(),
+  symbol: z.string().min(1),
+  decimals: z.number().int().nonnegative(),
+  amountRaw: z.string().regex(/^[0-9]+$/),
+  amountLabel: z.string().min(1),
+  amountUsd: moneyStringSchema.nullable(),
+  /** May be empty on ignored/noise rows (e.g. opt-in). */
+  sender: z.string(),
+  receiver: z.string(),
+  counterparty: z.string(),
+  groupId: z.string().nullable(),
+  classification: inceptionReviewClassificationSchema,
+  /** When classification is flagged, why (e.g. appl in atomic group). */
+  flagReason: z.string().optional(),
+  /** Operator may promote a flagged row to external_* before commit. */
+  commitAs: z
+    .enum(["external_deposit", "external_withdrawal"])
+    .optional(),
+});
+
+export type InceptionReviewRow = z.infer<typeof inceptionReviewRowSchema>;
+
+export const inceptionReviewSchema = z.object({
+  schemaVersion: z.literal(1),
+  walletAddress: z.string().min(1),
+  minRound: z.number().int().nonnegative(),
+  asOf: z.iso.datetime(),
+  generatedAt: z.iso.datetime(),
+  proposedInceptionNavUsd: moneyStringSchema.nullable(),
+  proposedDepositsUsd: moneyStringSchema,
+  proposedWithdrawalsUsd: moneyStringSchema,
+  priceNote: z.string().min(1),
+  checksum: z.string().min(1),
+  rows: z.array(inceptionReviewRowSchema),
+});
+
+export type InceptionReview = z.infer<typeof inceptionReviewSchema>;
+
+/** Redacted NAV/P&L payload for public website consumption. */
+export const publicPnlSchema = z.object({
+  schemaVersion: z.literal(2),
+  walletAddress: z.string().min(1),
+  asOf: z.iso.datetime(),
+  navUsd: moneyStringSchema.nullable(),
+  previousNavUsd: moneyStringSchema.nullable(),
+  /** Vs previous accounting run (operator convenience). */
+  pnlUsd: moneyStringSchema.nullable(),
+  pnlAvailable: z.boolean(),
+  navDeltaUsd: moneyStringSchema.nullable(),
+  netExternalCashflowUsd: moneyStringSchema.nullable(),
+  defiByProtocol: z.array(protocolValueSchema),
+  defiValueUsd: moneyStringSchema.nullable(),
+  walletAsaValueUsd: moneyStringSchema.nullable(),
+  algoBalance: z.string().regex(/^[0-9]+(?:\.[0-9]+)?$/),
+  windows: z.object({
+    "7d": pnlWindowSchema,
+    "30d": pnlWindowSchema,
+    all: pnlWindowSchema,
+  }),
+  navSeries: z.array(navSeriesPointSchema),
+});
+
+export type PublicPnl = z.infer<typeof publicPnlSchema>;
 
 export interface AccountingRun {
   id: string;

@@ -64,6 +64,8 @@ export function loadProtocolVerifyConfig(
       PROTOCOL_VERIFY_AMOUNT_ALGO: z.coerce.number().positive().default(1),
       /** CompX credit verify: borrow size in whole COMPX tokens. */
       PROTOCOL_VERIFY_AMOUNT_COMPX: z.coerce.number().positive().default(10),
+      /** DorkFi credit verify: borrow size in whole UNIT tokens. */
+      PROTOCOL_VERIFY_AMOUNT_UNIT: z.coerce.number().positive().default(0.1),
       /** Myth dualSTAKE paired ASA (ORA) balance check; Canix derives exact transfer. */
       PROTOCOL_VERIFY_AMOUNT_ORA: z.coerce.number().positive().default(1),
       MAX_SLIPPAGE_BPS: z.coerce.number().int().min(0).max(10_000).default(100),

@@ -4,12 +4,14 @@ import type {
   AccountingCashflow,
   AccountingSnapshot,
   AccountingSummary,
+  PublicPnl,
 } from "../src/domain.js";
 import type { AccountingStore } from "../src/integrations/storage/accounting-store.js";
 import {
   AccountingService,
   CashflowAlreadyRecordedError,
   computeCashflowAdjustment,
+  toPublicPnl,
 } from "../src/services/accounting.js";
 import { RunCoordinator } from "../src/services/run-coordinator.js";
 import { portfolioSnapshot } from "./fixtures.js";
@@ -18,13 +20,23 @@ function memoryStore(cashflows: AccountingCashflow[] = []): AccountingStore & {
   snapshots: AccountingSnapshot[];
   summaries: AccountingSummary[];
   cashflows: AccountingCashflow[];
+  publicPnls: PublicPnl[];
+  failPublicPnlWith?: Error;
 } {
   const snapshots: AccountingSnapshot[] = [];
   const summaries: AccountingSummary[] = [];
-  return {
+  const publicPnls: PublicPnl[] = [];
+  const store: AccountingStore & {
+    snapshots: AccountingSnapshot[];
+    summaries: AccountingSummary[];
+    cashflows: AccountingCashflow[];
+    publicPnls: PublicPnl[];
+    failPublicPnlWith?: Error;
+  } = {
     snapshots,
     summaries,
     cashflows,
+    publicPnls,
     putSnapshot(snapshot) {
       snapshots.push(snapshot);
       return Promise.resolve(
@@ -49,6 +61,25 @@ function memoryStore(cashflows: AccountingCashflow[] = []): AccountingStore & {
       summaries.push(summary);
       return Promise.resolve("monthly");
     },
+    putPublicPnl(payload) {
+      if (store.failPublicPnlWith) {
+        return Promise.reject(store.failPublicPnlWith);
+      }
+      publicPnls.push(payload);
+      return Promise.resolve("public/pnl.json");
+    },
+    getInception() {
+      return Promise.resolve(undefined);
+    },
+    putInception() {
+      return Promise.resolve("inception");
+    },
+    getInceptionReview() {
+      return Promise.resolve(undefined);
+    },
+    putInceptionReview() {
+      return Promise.resolve("inception-review");
+    },
     listCashflows(_wallet, fromInclusive, toExclusive) {
       const from = new Date(fromInclusive).getTime();
       const to = new Date(toExclusive).getTime();
@@ -62,12 +93,16 @@ function memoryStore(cashflows: AccountingCashflow[] = []): AccountingStore & {
     listSnapshots() {
       return Promise.resolve(snapshots);
     },
+    listSnapshotsBetween() {
+      return Promise.resolve(snapshots);
+    },
     getCashflowByEventId(_wallet, eventId) {
       return Promise.resolve(
         cashflows.find((cashflow) => cashflow.eventId === eventId),
       );
     },
   };
+  return store;
 }
 
 describe("computeCashflowAdjustment", () => {
@@ -210,6 +245,16 @@ describe("AccountingService", () => {
       false,
     );
     expect(store.snapshots).toHaveLength(1);
+    expect(store.publicPnls).toHaveLength(1);
+    expect(store.publicPnls[0]).toMatchObject({
+      schemaVersion: 2,
+      walletAddress: "WALLET",
+      navUsd: "4.00",
+      pnlAvailable: false,
+    });
+    expect(store.publicPnls[0]?.windows.all.available).toBe(false);
+    expect(store.publicPnls[0]).not.toHaveProperty("notes");
+    expect(store.publicPnls[0]).not.toHaveProperty("checksum");
     expect(notifier.sendAccounting).toHaveBeenCalledOnce();
   });
 
@@ -408,5 +453,106 @@ describe("AccountingService", () => {
         transactionId: "TXDEPOSIT",
       }),
     ).rejects.toBeInstanceOf(CashflowAlreadyRecordedError);
+  });
+
+  it("completes when public PnL publish fails", async () => {
+    const store = memoryStore();
+    store.failPublicPnlWith = new Error("spaces unavailable");
+    const notifier = { sendAccounting: vi.fn().mockResolvedValue(undefined) };
+    const service = new AccountingService(
+      {
+        read: vi.fn().mockResolvedValue({
+          snapshot: portfolioSnapshot({
+            liquidBalances: [
+              {
+                assetId: 31_566_704,
+                amountRaw: "1000000",
+                decimals: 6,
+                symbol: "USDC",
+              },
+            ],
+            positions: [],
+          }),
+          payments: [],
+        }),
+      },
+      {
+        getTokenPrices: vi.fn().mockResolvedValue([
+          {
+            assetId: 31_566_704,
+            priceUsd: "1",
+            source: "compx",
+            fetchedAt: new Date().toISOString(),
+            stale: false,
+          },
+        ]),
+      },
+      store,
+      notifier,
+      new RunCoordinator(),
+      {},
+      { walletAddress: "WALLET", maxSourceAgeHours: 24 },
+    );
+
+    const run = await service.run("wait");
+    expect(run.status).toBe("completed");
+    expect(store.publicPnls).toHaveLength(0);
+    expect(
+      run.summary?.notes.some((note) => note.includes("Public PnL write failed")),
+    ).toBe(true);
+    expect(notifier.sendAccounting).toHaveBeenCalledOnce();
+  });
+});
+
+describe("toPublicPnl", () => {
+  it("redacts internal summary fields", () => {
+    const publicPnl = toPublicPnl({
+      schemaVersion: 2,
+      walletAddress: "WALLET",
+      asOf: "2026-07-16T08:00:00.000Z",
+      latestSnapshotId: "secret-id",
+      latestSnapshotKey: "wallets/WALLET/state/latest.json",
+      latestTotalValueUsd: "10.00",
+      previousTotalValueUsd: "8.00",
+      pnlUsd: "2.00",
+      pnlAvailable: true,
+      navDeltaUsd: "2.00",
+      netExternalCashflowUsd: "0",
+      defiByProtocol: [{ protocol: "folks", valueUsd: "5.00", positionCount: 1 }],
+      defiValueUsd: "5.00",
+      walletAsaValueUsd: "5.00",
+      unpricedAssetIds: [99],
+      algoBalance: "1",
+      minimumBalance: "0.1",
+      notes: ["internal"],
+      checksum: "abc",
+    });
+
+    expect(publicPnl).toEqual({
+      schemaVersion: 2,
+      walletAddress: "WALLET",
+      asOf: "2026-07-16T08:00:00.000Z",
+      navUsd: "10.00",
+      previousNavUsd: "8.00",
+      pnlUsd: "2.00",
+      pnlAvailable: true,
+      navDeltaUsd: "2.00",
+      netExternalCashflowUsd: "0",
+      defiByProtocol: [{ protocol: "folks", valueUsd: "5.00", positionCount: 1 }],
+      defiValueUsd: "5.00",
+      walletAsaValueUsd: "5.00",
+      algoBalance: "1",
+      windows: {
+        "7d": expect.objectContaining({ id: "7d", available: false }),
+        "30d": expect.objectContaining({ id: "30d", available: false }),
+        all: expect.objectContaining({ id: "all", available: false }),
+      },
+      navSeries: [],
+    });
+    expect(publicPnl).not.toHaveProperty("notes");
+    expect(publicPnl).not.toHaveProperty("checksum");
+    expect(publicPnl).not.toHaveProperty("latestSnapshotKey");
+    expect(publicPnl).not.toHaveProperty("unpricedAssetIds");
+    expect(publicPnl).not.toHaveProperty("minimumBalance");
   });
 });

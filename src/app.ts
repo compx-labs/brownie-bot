@@ -77,6 +77,7 @@ export interface AppContext {
   reviewService: TreasuryReviewService;
   accountingService: AccountingService;
   canix: Canix402Client;
+  store: AccountingStore;
   state: ReviewState;
   accountingState: AccountingState;
   coordinator: RunCoordinator;
@@ -371,6 +372,39 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     return accountingState.latest;
   });
 
+  app.get("/accounting/inception", async (_request, reply) => {
+    const inception = await accountingService.getInception();
+    if (!inception) {
+      return reply.code(404).send({
+        error: "NO_INCEPTION",
+        message: "Inception baseline has not been set",
+      });
+    }
+    return inception;
+  });
+
+  app.post("/accounting/inception", async (request, reply) => {
+    if (!config.MANUAL_TRIGGER_TOKEN) {
+      return reply.code(404).send({
+        error: "NOT_FOUND",
+        message: "Manual inception writes are disabled",
+      });
+    }
+    if (
+      request.headers.authorization !== `Bearer ${config.MANUAL_TRIGGER_TOKEN}`
+    ) {
+      return reply.code(401).send({
+        error: "UNAUTHORIZED",
+        message: "A valid bearer token is required",
+      });
+    }
+    return reply.code(400).send({
+      error: "USE_CLI",
+      message:
+        "Set inception via npm run accounting-inception-review (verify then --commit)",
+    });
+  });
+
   app.post("/accounting/run", async (request, reply) => {
     if (!config.MANUAL_TRIGGER_TOKEN) {
       return reply.code(404).send({
@@ -479,6 +513,7 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     reviewService,
     accountingService,
     canix,
+    store,
     state,
     accountingState,
     coordinator,

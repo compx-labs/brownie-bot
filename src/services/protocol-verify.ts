@@ -32,8 +32,14 @@ export const USDC_ASSET_ID = 31_566_704;
 export const FOLKS_XALGO_ASSET_ID = 1_134_696_561;
 /** CompX governance / market base ASA. */
 export const COMPX_ASSET_ID = 1_732_165_149;
+/** DorkFi governance / market base ASA (Algorand). */
+export const UNIT_ASSET_ID = 3_121_954_282;
 /** Myth Finance dualSTAKE paired ASA used by the verify suite. */
 export const ORA_ASSET_ID = 1_284_444_444;
+/** DorkFi Algorand pool A (USDC + UNIT markets). */
+export const DORKFI_POOL_APP_ID = 3_333_688_282;
+export const DORKFI_USDC_MARKET_APP_ID = 3_210_682_240;
+export const DORKFI_UNIT_MARKET_APP_ID = 3_220_125_024;
 export const FOLKS_XALGO_STAKE_SHAPE =
   "mainnet:folks-finance:xalgo-v1:stake:immediate";
 /** Exists in Canix registry with opportunityRole=exit; not attached to opportunity enter shapes. */
@@ -57,6 +63,10 @@ export const COMPX_DEPOSIT_SHAPE = "mainnet:compx:v1:deposit:asa";
 export const COMPX_WITHDRAW_SHAPE = "mainnet:compx:v1:withdraw:asa";
 export const COMPX_BORROW_SHAPE = "mainnet:compx:v1:borrow:asa";
 export const COMPX_REPAY_SHAPE = "mainnet:compx:v1:repay:asa";
+export const DORKFI_DEPOSIT_SHAPE = "mainnet:dorkfi:v1:deposit:asa";
+export const DORKFI_WITHDRAW_SHAPE = "mainnet:dorkfi:v1:withdraw:asa";
+export const DORKFI_BORROW_SHAPE = "mainnet:dorkfi:v1:borrow:asa";
+export const DORKFI_REPAY_SHAPE = "mainnet:dorkfi:v1:repay:asa";
 export const RETI_STAKE_SHAPE = "mainnet:reti:v1:stake:algo";
 export const RETI_UNSTAKE_SHAPE = "mainnet:reti:v1:unstake:algo";
 /** Stable verify pin — ungated validator the TEST_WALLET can enter. */
@@ -68,6 +78,7 @@ export const MYTH_REDEEM_SHAPE =
 export const ALGO_DECIMALS = 6;
 export const USDC_DECIMALS = 6;
 export const COMPX_DECIMALS = 6;
+export const UNIT_DECIMALS = 8;
 export const ORA_DECIMALS = 6;
 /** Protocol verify ignores research freshness; some venues lag for days. */
 export const PROTOCOL_VERIFY_MAX_SOURCE_AGE_HOURS = 24 * 365;
@@ -82,6 +93,7 @@ export const PROTOCOL_VERIFY_CASE_IDS = [
   "compx-lending",
   "compx-credit",
   "dorkfi-usdc-lending",
+  "dorkfi-credit",
   "pact-lp",
   "haystack-swap",
   "reti-pooling",
@@ -111,7 +123,7 @@ export const pinnedCaseSchema = z.object({
   exitShapeKey: z.string().min(1).nullable(),
   /** LST receipt ASA (xALGO / tALGO / cUSDC); set for stake/credit cases. */
   receiptAssetId: z.number().int().positive().nullable().optional(),
-  /** CompX credit: market opportunity used for borrow/repay (base ASA = COMPX). */
+  /** Credit cases: market opportunity used for borrow/repay (COMPX / UNIT / ALGO). */
   borrowOpportunityId: z.string().min(1).nullable().optional(),
   borrowShapeKey: z.string().min(1).nullable().optional(),
   repayShapeKey: z.string().min(1).nullable().optional(),
@@ -434,6 +446,87 @@ function resolveCompXMarketAppId(
     }
   }
   return null;
+}
+
+function hasUnitBase(opportunity: Opportunity): boolean {
+  if (opportunity.assetIds?.includes(UNIT_ASSET_ID)) {
+    return true;
+  }
+  if (/^unit$/i.test(opportunity.assetPair.trim())) {
+    return true;
+  }
+  return opportunity.opportunityId.includes(`:${UNIT_ASSET_ID}:`);
+}
+
+function pickDorkFiBorrowShape(
+  opportunity: Opportunity,
+): OpportunityExecutionShape | undefined {
+  return opportunity.executionShapes.find(
+    (shape) =>
+      /borrow/i.test(shape.action) ||
+      shape.shapeKey === DORKFI_BORROW_SHAPE ||
+      /borrow:asa/i.test(shape.shapeKey),
+  );
+}
+
+function pickDorkFiRepayShape(
+  opportunity: Opportunity,
+): OpportunityExecutionShape | undefined {
+  return opportunity.executionShapes.find(
+    (shape) =>
+      /repay/i.test(shape.action) ||
+      shape.shapeKey === DORKFI_REPAY_SHAPE ||
+      /repay:asa/i.test(shape.shapeKey),
+  );
+}
+
+function resolveDorkFiHintId(
+  opportunity: Opportunity,
+  key: "poolAppId" | "marketAppId" | "assetId",
+  shapeKey?: string,
+): number | null {
+  if (shapeKey) {
+    const hinted = opportunity.executionShapes.find(
+      (shape) => shape.shapeKey === shapeKey,
+    );
+    const fromShape = hinted?.inputHints?.[key];
+    if (typeof fromShape === "number" && fromShape > 0) {
+      return fromShape;
+    }
+  }
+  for (const shape of opportunity.executionShapes) {
+    const value = shape.inputHints?.[key];
+    if (typeof value === "number" && value > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function resolveDorkFiPoolAppId(opportunity: Opportunity): number {
+  return (
+    resolveDorkFiHintId(opportunity, "poolAppId") ??
+    (() => {
+      const match = /^dorkfi:algorand:(\d+):/i.exec(opportunity.opportunityId);
+      if (match?.[1]) {
+        const parsed = Number(match[1]);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          return parsed;
+        }
+      }
+      return DORKFI_POOL_APP_ID;
+    })()
+  );
+}
+
+function resolveDorkFiMarketAppId(
+  opportunity: Opportunity,
+  shapeKey: string,
+  fallback: number,
+): number {
+  return (
+    resolveDorkFiHintId(opportunity, "marketAppId", shapeKey) ?? fallback
+  );
 }
 
 function resolveFolksPoolAppId(opportunity: Opportunity): number | null {
@@ -871,6 +964,136 @@ export function matchProtocolVerifyCases(
     );
   }
 
+  const dorkfiUnitMarket = ready.find(
+    (opportunity) =>
+      protocolIncludes(opportunity, "dorkfi") &&
+      hasUnitBase(opportunity) &&
+      (Boolean(pickDorkFiBorrowShape(opportunity)) ||
+        opportunity.opportunityId.includes(`:${UNIT_ASSET_ID}:`)),
+  );
+  if (dorkfi && dorkfiUnitMarket) {
+    const borrowShape = pickDorkFiBorrowShape(dorkfiUnitMarket);
+    const repayShape = pickDorkFiRepayShape(dorkfiUnitMarket);
+    const withdrawOnDeposit = dorkfi.executionShapes.find(isExitShape);
+    const depositShapes = summarizeShapes(dorkfi);
+    const borrowShapes = summarizeShapes(dorkfiUnitMarket);
+    const shapes = [
+      ...depositShapes,
+      ...borrowShapes.filter(
+        (shape) =>
+          !depositShapes.some(
+            (existing) => existing.shapeKey === shape.shapeKey,
+          ),
+      ),
+    ];
+    const poolAppId = resolveDorkFiPoolAppId(dorkfi);
+    const usdcMarketAppId = resolveDorkFiMarketAppId(
+      dorkfi,
+      DORKFI_DEPOSIT_SHAPE,
+      DORKFI_USDC_MARKET_APP_ID,
+    );
+    const unitMarketAppId = resolveDorkFiMarketAppId(
+      dorkfiUnitMarket,
+      DORKFI_BORROW_SHAPE,
+      DORKFI_UNIT_MARKET_APP_ID,
+    );
+    for (const registry of [
+      {
+        shapeKey: DORKFI_DEPOSIT_SHAPE,
+        action: "deposit",
+        variant: "asa",
+        order: 0,
+        requiredInputs: [
+          "userAddress",
+          "poolAppId",
+          "marketAppId",
+          "assetId",
+          "amount",
+        ],
+        requiredAssetIds: [USDC_ASSET_ID],
+        inputHints: {
+          assetId: USDC_ASSET_ID,
+          poolAppId,
+          marketAppId: usdcMarketAppId,
+        },
+      },
+      {
+        shapeKey: DORKFI_BORROW_SHAPE,
+        action: "borrow",
+        variant: "asa",
+        order: 1,
+        requiredInputs: [
+          "userAddress",
+          "poolAppId",
+          "marketAppId",
+          "assetId",
+          "amount",
+        ],
+        requiredAssetIds: [UNIT_ASSET_ID],
+        inputHints: {
+          assetId: UNIT_ASSET_ID,
+          poolAppId,
+          marketAppId: unitMarketAppId,
+        },
+      },
+      {
+        shapeKey: DORKFI_REPAY_SHAPE,
+        action: "repay",
+        variant: "asa",
+        order: 2,
+        requiredInputs: [
+          "userAddress",
+          "poolAppId",
+          "marketAppId",
+          "assetId",
+          "amount",
+        ],
+        requiredAssetIds: [UNIT_ASSET_ID],
+        inputHints: {
+          assetId: UNIT_ASSET_ID,
+          poolAppId,
+          marketAppId: unitMarketAppId,
+        },
+      },
+      {
+        shapeKey: DORKFI_WITHDRAW_SHAPE,
+        action: "withdraw",
+        variant: "asa",
+        order: 3,
+        requiredInputs: [
+          "userAddress",
+          "poolAppId",
+          "marketAppId",
+          "assetId",
+          "amount",
+        ],
+        requiredAssetIds: [USDC_ASSET_ID],
+        inputHints: {
+          assetId: USDC_ASSET_ID,
+          poolAppId,
+          marketAppId: usdcMarketAppId,
+        },
+      },
+    ]) {
+      if (!shapes.some((shape) => shape.shapeKey === registry.shapeKey)) {
+        shapes.push(registry);
+      }
+    }
+    matched["dorkfi-credit"] = pinnedCaseSchema.parse({
+      ...pinFromOpportunity("dorkfi-credit", dorkfi, {
+        enterShapeKey:
+          pickCapitalEnterShape(dorkfi)?.shapeKey ?? DORKFI_DEPOSIT_SHAPE,
+        exitShapeKey: withdrawOnDeposit?.shapeKey ?? DORKFI_WITHDRAW_SHAPE,
+        borrowOpportunityId: dorkfiUnitMarket.opportunityId,
+        borrowShapeKey: borrowShape?.shapeKey ?? DORKFI_BORROW_SHAPE,
+        repayShapeKey: repayShape?.shapeKey ?? DORKFI_REPAY_SHAPE,
+        notes:
+          "DorkFi credit: deposit USDC → borrow UNIT → repay → withdraw",
+      }),
+      shapes,
+    });
+  }
+
   const pact = ready.find(
     (opportunity) =>
       protocolIncludes(opportunity, "pact") &&
@@ -1133,6 +1356,63 @@ function registryCompXShape(
     requiredInputs,
     requiredAssetIds: [],
     inputHints: inputHints as OpportunityExecutionShape["inputHints"],
+  };
+}
+
+function registryDorkFiShape(
+  shapeKey: string,
+  action: string,
+  requiredInputs: string[],
+  requiredAssetIds: number[],
+  inputHints?: Record<string, unknown>,
+): OpportunityExecutionShape {
+  return {
+    shapeKey,
+    protocol: "dorkfi",
+    protocolVersion: "v1",
+    action,
+    variant: "asa",
+    title: `DorkFi ${action}`,
+    summary: `DorkFi ${action} ASA`,
+    order:
+      action === "deposit"
+        ? 0
+        : action === "borrow"
+          ? 1
+          : action === "repay"
+            ? 2
+            : 3,
+    requiredInputs,
+    requiredAssetIds,
+    inputHints: inputHints as OpportunityExecutionShape["inputHints"],
+  };
+}
+
+/** Canix often omits DorkFi debt rows; synthesize from wallet UNIT for repay. */
+function synthesizeDorkFiUnitDebt(options: {
+  amountRaw: string;
+  borrowOpportunityId: string;
+  repayShapeKey: string;
+  poolAppId: number;
+  marketAppId: number;
+}): Position {
+  return {
+    protocol: "dorkfi",
+    positionType: "debt",
+    positionId: `dorkfi-credit:unit:${options.marketAppId}`,
+    opportunityId: options.borrowOpportunityId,
+    assetId: UNIT_ASSET_ID,
+    assetSymbol: "UNIT",
+    amountRaw: options.amountRaw,
+    amount: options.amountRaw,
+    usdValue: null,
+    compatibleExitShapeKeys: [options.repayShapeKey],
+    compatibleManageShapeKeys: [],
+    inputHints: {
+      poolAppId: options.poolAppId,
+      marketAppId: options.marketAppId,
+      assetId: UNIT_ASSET_ID,
+    },
   };
 }
 
@@ -1582,6 +1862,14 @@ export function amountsForCase(
       amounts.set(
         COMPX_ASSET_ID,
         toBaseUnits(config.PROTOCOL_VERIFY_AMOUNT_COMPX, COMPX_DECIMALS),
+      );
+      break;
+    }
+    case "dorkfi-credit": {
+      amounts.set(USDC_ASSET_ID, usdcRaw);
+      amounts.set(
+        UNIT_ASSET_ID,
+        toBaseUnits(config.PROTOCOL_VERIFY_AMOUNT_UNIT, UNIT_DECIMALS),
       );
       break;
     }
@@ -2050,6 +2338,9 @@ export async function runProtocolVerifyCase(
       return;
     case "compx-credit":
       await runCompXCreditCase(context, pinned);
+      return;
+    case "dorkfi-credit":
+      await runDorkFiCreditCase(context, pinned);
       return;
     case "folks-credit":
       await runFolksCreditCase(context, pinned);
@@ -2557,6 +2848,532 @@ export async function runCompXCreditCase(
     withdrawAmountRaw: unlockedCusdc.toString(),
     rationale: "Protocol verify CompX withdraw after unlock",
   });
+  await executeConfirmed(
+    context,
+    validateAndNormalizePlan(
+      snapshot,
+      basePlan([withdraw]),
+      [depositOpportunity],
+    ).actions[0]!,
+    [depositOpportunity],
+  );
+}
+
+/**
+ * DorkFi credit round-trip: deposit USDC → borrow UNIT → repay → withdraw.
+ * Same pool cross-market collateral (no receipt ASA handoff like CompX).
+ */
+export async function runDorkFiCreditCase(
+  context: ProtocolVerifyContext,
+  pinned: PinnedProtocolCase,
+): Promise<void> {
+  if (!pinned.borrowOpportunityId) {
+    throw new Error(
+      `Case ${pinned.caseId} missing borrowOpportunityId (re-run canix:discover-verify)`,
+    );
+  }
+  const borrowShapeKey = pinned.borrowShapeKey ?? DORKFI_BORROW_SHAPE;
+  const repayShapeKey = pinned.repayShapeKey ?? DORKFI_REPAY_SHAPE;
+  const withdrawShapeKey = pinned.exitShapeKey ?? DORKFI_WITHDRAW_SHAPE;
+  const depositShapeKey = pinned.enterShapeKey ?? DORKFI_DEPOSIT_SHAPE;
+
+  const amounts = amountsForCase(context.config, pinned.caseId);
+  const usdcRaw = amounts.get(USDC_ASSET_ID);
+  const borrowRaw = amounts.get(UNIT_ASSET_ID);
+  if (!usdcRaw || !borrowRaw) {
+    throw new Error("dorkfi-credit amounts missing USDC or UNIT");
+  }
+
+  const x402FeeBufferRaw = 500_000n;
+  const minUsdcForRun = BigInt(usdcRaw) + x402FeeBufferRaw;
+
+  let liquidUsdc = await readAlgodAssetSpendable(
+    context.config.X402_ALGOD_URL,
+    context.walletAddress,
+    USDC_ASSET_ID,
+  );
+  if (liquidUsdc < minUsdcForRun) {
+    const algoTopUp = toBaseUnits(
+      Math.max(context.config.PROTOCOL_VERIFY_AMOUNT_ALGO, 3),
+      ALGO_DECIMALS,
+    );
+    const liquidAlgo = await readAlgodAssetSpendable(
+      context.config.X402_ALGOD_URL,
+      context.walletAddress,
+      ALGO_ASSET_ID,
+    );
+    if (liquidAlgo < BigInt(algoTopUp)) {
+      throw new Error(
+        `Underfunded for ${pinned.caseId} ALGO→USDC top-up: need ${algoTopUp} ALGO, have ${liquidAlgo.toString()}`,
+      );
+    }
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: topping up USDC via Haystack (have ${liquidUsdc.toString()}, need ≥ ${minUsdcForRun.toString()})`,
+    );
+    const topUpSnapshot: PortfolioSnapshot = {
+      address: context.walletAddress,
+      fetchedAt: new Date().toISOString(),
+      positions: [],
+      protocols: [],
+      totals: {
+        suppliedUsd: null,
+        borrowedUsd: null,
+        rewardsUsd: null,
+        netUsd: null,
+      },
+      liquidBalances: [
+        {
+          assetId: ALGO_ASSET_ID,
+          amountRaw: liquidAlgo.toString(),
+          spendableAmountRaw: liquidAlgo.toString(),
+          symbol: "ALGO",
+        },
+        {
+          assetId: USDC_ASSET_ID,
+          amountRaw: liquidUsdc.toString(),
+          spendableAmountRaw: liquidUsdc.toString(),
+          symbol: "USDC",
+        },
+      ],
+      minimumBalanceRaw: "0",
+      complete: true,
+      caveats: ["algod-only snapshot for DorkFi credit USDC top-up"],
+    };
+    const topUp = buildSwapAction({
+      id: `${pinned.caseId}-usdc-topup`,
+      fromAssetId: ALGO_ASSET_ID,
+      toAssetId: USDC_ASSET_ID,
+      amountRaw: algoTopUp,
+      rationale: "Protocol verify DorkFi credit USDC top-up",
+    });
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(topUpSnapshot, basePlan([topUp]), []).actions[0]!,
+      [],
+    );
+  }
+
+  let snapshot = await readSnapshot(context);
+
+  let depositOpportunity = await refreshPinnedOpportunity(
+    context.canix,
+    context.walletAddress,
+    pinned,
+  );
+  const poolAppId = resolveDorkFiPoolAppId(depositOpportunity);
+  const usdcMarketAppId = resolveDorkFiMarketAppId(
+    depositOpportunity,
+    depositShapeKey,
+    DORKFI_USDC_MARKET_APP_ID,
+  );
+  const dorkFiInputs = [
+    "userAddress",
+    "poolAppId",
+    "marketAppId",
+    "assetId",
+    "amount",
+  ];
+  depositOpportunity = ensureShapeOnOpportunity(
+    depositOpportunity,
+    registryDorkFiShape(
+      DORKFI_DEPOSIT_SHAPE,
+      "deposit",
+      dorkFiInputs,
+      [USDC_ASSET_ID],
+      {
+        poolAppId,
+        marketAppId: usdcMarketAppId,
+        assetId: USDC_ASSET_ID,
+      },
+    ),
+  );
+  depositOpportunity = ensureShapeOnOpportunity(
+    depositOpportunity,
+    registryDorkFiShape(
+      DORKFI_WITHDRAW_SHAPE,
+      "withdraw",
+      dorkFiInputs,
+      [USDC_ASSET_ID],
+      {
+        poolAppId,
+        marketAppId: usdcMarketAppId,
+        assetId: USDC_ASSET_ID,
+      },
+    ),
+  );
+
+  let borrowOpportunity = await refreshOpportunityById(
+    context.canix,
+    context.walletAddress,
+    pinned.protocol ?? "dorkfi",
+    pinned.borrowOpportunityId,
+  );
+  const unitMarketAppId = resolveDorkFiMarketAppId(
+    borrowOpportunity,
+    borrowShapeKey,
+    DORKFI_UNIT_MARKET_APP_ID,
+  );
+  const unitPoolAppId = resolveDorkFiPoolAppId(borrowOpportunity);
+
+  borrowOpportunity = upsertShapeOnOpportunity(
+    borrowOpportunity,
+    registryDorkFiShape(
+      borrowShapeKey,
+      "borrow",
+      dorkFiInputs,
+      [UNIT_ASSET_ID],
+      {
+        poolAppId: unitPoolAppId,
+        marketAppId: unitMarketAppId,
+        assetId: UNIT_ASSET_ID,
+      },
+    ),
+  );
+  const borrowOnlyOpportunity: Opportunity = {
+    ...borrowOpportunity,
+    executionShapes: [
+      {
+        ...(borrowOpportunity.executionShapes.find(
+          (shape) => shape.shapeKey === borrowShapeKey,
+        ) ??
+          registryDorkFiShape(
+            borrowShapeKey,
+            "borrow",
+            dorkFiInputs,
+            [],
+            {
+              poolAppId: unitPoolAppId,
+              marketAppId: unitMarketAppId,
+              assetId: UNIT_ASSET_ID,
+            },
+          )),
+        requiredInputs: dorkFiInputs,
+        // Borrow receives UNIT; do not require holding it beforehand (CompX pattern).
+        requiredAssetIds: [],
+        inputHints: {
+          poolAppId: unitPoolAppId,
+          marketAppId: unitMarketAppId,
+          assetId: UNIT_ASSET_ID,
+        },
+      },
+    ],
+  };
+  const repayReadyOpportunity = upsertShapeOnOpportunity(
+    borrowOpportunity,
+    registryDorkFiShape(
+      repayShapeKey,
+      "repay",
+      dorkFiInputs,
+      [UNIT_ASSET_ID],
+      {
+        poolAppId: unitPoolAppId,
+        marketAppId: unitMarketAppId,
+        assetId: UNIT_ASSET_ID,
+      },
+    ),
+  );
+
+  let debt = snapshot.positions.find(
+    (position) =>
+      /dorkfi/i.test(position.protocol) &&
+      position.positionType === "debt" &&
+      BigInt(position.amountRaw) > 0n &&
+      (position.opportunityId === pinned.borrowOpportunityId ||
+        position.assetId === UNIT_ASSET_ID),
+  );
+
+  // Canix may omit DorkFi debt; resume when wallet holds UNIT against USDC supply.
+  if (!debt) {
+    const walletUnitBefore = spendableRaw(snapshot, UNIT_ASSET_ID);
+    const openSupply = findPositionForOpportunity(
+      snapshot,
+      depositOpportunity.opportunityId,
+      depositOpportunity.protocol,
+    );
+    if (
+      walletUnitBefore > 0n &&
+      openSupply &&
+      BigInt(openSupply.amountRaw) > 0n
+    ) {
+      debt = synthesizeDorkFiUnitDebt({
+        amountRaw: walletUnitBefore.toString(),
+        borrowOpportunityId: pinned.borrowOpportunityId,
+        repayShapeKey,
+        poolAppId: unitPoolAppId,
+        marketAppId: unitMarketAppId,
+      });
+      snapshot = {
+        ...snapshot,
+        positions: [...snapshot.positions, debt],
+      };
+      console.error(
+        `[protocol-verify] ${pinned.caseId}: resuming from wallet UNIT ${walletUnitBefore.toString()} (Canix debt omitted)`,
+      );
+    }
+  }
+
+  if (!debt) {
+    const stranded = findPositionForOpportunity(
+      snapshot,
+      depositOpportunity.opportunityId,
+      depositOpportunity.protocol,
+    );
+    if (stranded && BigInt(stranded.amountRaw) > 0n) {
+      console.error(
+        `[protocol-verify] ${pinned.caseId}: bootstrap withdraw of stranded DorkFi supply ${stranded.amountRaw}`,
+      );
+      const withdrawKeys = [
+        ...stranded.compatibleExitShapeKeys,
+        ...stranded.compatibleManageShapeKeys,
+      ];
+      const bootstrapWithdrawKey = withdrawKeys.includes(withdrawShapeKey)
+        ? withdrawShapeKey
+        : withdrawKeys.find((key) => /withdraw/i.test(key)) ??
+          withdrawShapeKey;
+      if (
+        !stranded.compatibleExitShapeKeys.includes(bootstrapWithdrawKey) &&
+        !stranded.compatibleManageShapeKeys.includes(bootstrapWithdrawKey)
+      ) {
+        stranded.compatibleExitShapeKeys = [
+          ...stranded.compatibleExitShapeKeys,
+          bootstrapWithdrawKey,
+        ];
+      }
+      const bootstrap = buildExitAction({
+        id: `${pinned.caseId}-bootstrap-withdraw`,
+        position: stranded,
+        opportunity: depositOpportunity,
+        exitShapeKey: bootstrapWithdrawKey,
+        rationale: "Protocol verify DorkFi bootstrap withdraw before credit",
+      });
+      await executeConfirmed(
+        context,
+        validateAndNormalizePlan(
+          snapshot,
+          basePlan([bootstrap]),
+          [depositOpportunity],
+        ).actions[0]!,
+        [depositOpportunity],
+      );
+      snapshot = await readSnapshot(context);
+    }
+
+    requireSpendable(snapshot, USDC_ASSET_ID, usdcRaw, pinned.caseId);
+    const unitBeforeBorrow = spendableRaw(snapshot, UNIT_ASSET_ID);
+    const deposit = buildEnterAction({
+      id: `${pinned.caseId}-deposit`,
+      opportunity: depositOpportunity,
+      enterShapeKey: depositShapeKey,
+      amountsByAsset: new Map([[USDC_ASSET_ID, usdcRaw]]),
+      rationale: "Protocol verify DorkFi USDC deposit",
+    });
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(
+        snapshot,
+        basePlan([deposit]),
+        [depositOpportunity],
+      ).actions[0]!,
+      [depositOpportunity],
+    );
+
+    snapshot = await readSnapshot(context);
+    const suppliedAfterDeposit = findPositionForOpportunity(
+      snapshot,
+      depositOpportunity.opportunityId,
+      depositOpportunity.protocol,
+    );
+    if (!suppliedAfterDeposit || BigInt(suppliedAfterDeposit.amountRaw) <= 0n) {
+      throw new Error(
+        `DorkFi credit case has no USDC supply after deposit on ${depositOpportunity.opportunityId}`,
+      );
+    }
+
+    const borrowAction: PortfolioAction = {
+      id: `${pinned.caseId}-borrow`,
+      type: "open",
+      protocol: borrowOnlyOpportunity.protocol,
+      opportunityId: borrowOnlyOpportunity.opportunityId,
+      positionId: null,
+      amountRaw: borrowRaw,
+      fromAssetId: USDC_ASSET_ID,
+      toAssetId: UNIT_ASSET_ID,
+      targetWeightPct: 10,
+      executionShapeKey: borrowShapeKey,
+      executionInput: {
+        poolAppId: unitPoolAppId,
+        marketAppId: unitMarketAppId,
+        assetId: UNIT_ASSET_ID,
+        amount: borrowRaw,
+      },
+      authorizedSpends: [],
+      rationale: "Protocol verify DorkFi borrow UNIT against USDC",
+      dependencies: [],
+    };
+    await executeConfirmed(
+      context,
+      validateAndNormalizePlan(
+        snapshot,
+        basePlan([borrowAction]),
+        [borrowOnlyOpportunity],
+      ).actions[0]!,
+      [borrowOnlyOpportunity],
+    );
+
+    snapshot = await readSnapshot(context);
+    debt = snapshot.positions.find(
+      (position) =>
+        /dorkfi/i.test(position.protocol) &&
+        position.positionType === "debt" &&
+        BigInt(position.amountRaw) > 0n &&
+        (position.assetId === UNIT_ASSET_ID ||
+          position.opportunityId === borrowOnlyOpportunity.opportunityId),
+    );
+    const unitAfterBorrow = spendableRaw(snapshot, UNIT_ASSET_ID);
+    const borrowedUnit = unitAfterBorrow - unitBeforeBorrow;
+    if (!debt) {
+      if (borrowedUnit <= 0n && unitAfterBorrow < BigInt(borrowRaw)) {
+        throw new Error(
+          `After DorkFi borrow, no debt position and UNIT balance did not increase (before=${unitBeforeBorrow.toString()}, after=${unitAfterBorrow.toString()}, expected≈${borrowRaw})`,
+        );
+      }
+      const debtAmount =
+        borrowedUnit > 0n
+          ? borrowedUnit.toString()
+          : unitAfterBorrow > 0n
+            ? unitAfterBorrow.toString()
+            : borrowRaw;
+      debt = synthesizeDorkFiUnitDebt({
+        amountRaw: debtAmount,
+        borrowOpportunityId: borrowOnlyOpportunity.opportunityId,
+        repayShapeKey,
+        poolAppId: unitPoolAppId,
+        marketAppId: unitMarketAppId,
+      });
+      snapshot = {
+        ...snapshot,
+        positions: [...snapshot.positions, debt],
+      };
+      console.error(
+        `[protocol-verify] ${pinned.caseId}: Canix omitted debt; using wallet UNIT ${debtAmount} for repay`,
+      );
+    }
+  } else {
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: resuming from open DorkFi debt ${debt.positionId}`,
+    );
+  }
+
+  // Ensure synthetic debt is present in the snapshot for policy position lookup.
+  if (!snapshot.positions.some((position) => position.positionId === debt!.positionId)) {
+    snapshot = {
+      ...snapshot,
+      positions: [...snapshot.positions, debt],
+    };
+  }
+
+  const repayExitKeys = [
+    ...debt.compatibleExitShapeKeys,
+    ...debt.compatibleManageShapeKeys,
+  ];
+  const repayKey = repayExitKeys.includes(repayShapeKey)
+    ? repayShapeKey
+    : repayExitKeys.find((key) => /repay/i.test(key)) ?? repayShapeKey;
+  if (
+    !debt.compatibleExitShapeKeys.includes(repayKey) &&
+    !debt.compatibleManageShapeKeys.includes(repayKey)
+  ) {
+    debt.compatibleExitShapeKeys = [...debt.compatibleExitShapeKeys, repayKey];
+  }
+
+  const walletUnit = spendableRaw(snapshot, UNIT_ASSET_ID);
+  let repayAmountRaw = BigInt(debt.amountRaw);
+  if (repayAmountRaw < BigInt(borrowRaw)) {
+    repayAmountRaw = BigInt(borrowRaw);
+  }
+  if (walletUnit > 0n && repayAmountRaw > walletUnit) {
+    repayAmountRaw = walletUnit;
+  }
+  if (repayAmountRaw <= 0n) {
+    throw new Error(
+      `DorkFi repay has no UNIT to repay (debt=${debt.amountRaw}, borrowed=${borrowRaw}, wallet=${walletUnit.toString()})`,
+    );
+  }
+
+  const repay = buildExitAction({
+    id: `${pinned.caseId}-repay`,
+    position: debt,
+    opportunity: repayReadyOpportunity,
+    exitShapeKey: repayKey,
+    withdrawAmountRaw: repayAmountRaw.toString(),
+    rationale: "Protocol verify DorkFi repay",
+  });
+  repay.executionInput = {
+    poolAppId: unitPoolAppId,
+    marketAppId: unitMarketAppId,
+    assetId: UNIT_ASSET_ID,
+    amount: repayAmountRaw.toString(),
+  };
+  await executeConfirmed(
+    context,
+    validateAndNormalizePlan(
+      snapshot,
+      basePlan([repay]),
+      [repayReadyOpportunity],
+    ).actions[0]!,
+    [repayReadyOpportunity],
+  );
+
+  snapshot = await readSnapshot(context);
+  const remainingUnit = spendableRaw(snapshot, UNIT_ASSET_ID);
+  // UNIT has 8 decimals; allow tiny residual dust after repay.
+  if (remainingUnit > 10_000n) {
+    throw new Error(
+      `After DorkFi repay, still hold ${remainingUnit.toString()} UNIT (expected ~0)`,
+    );
+  }
+
+  const supplied = findPositionForOpportunity(
+    snapshot,
+    depositOpportunity.opportunityId,
+    depositOpportunity.protocol,
+  );
+  if (!supplied || BigInt(supplied.amountRaw) <= 0n) {
+    console.error(
+      `[protocol-verify] ${pinned.caseId}: no DorkFi USDC supply left to withdraw (already clean)`,
+    );
+    return;
+  }
+
+  const withdrawKeys = [
+    ...supplied.compatibleExitShapeKeys,
+    ...supplied.compatibleManageShapeKeys,
+  ];
+  const withdrawKey = withdrawKeys.includes(withdrawShapeKey)
+    ? withdrawShapeKey
+    : withdrawKeys.find((key) => /withdraw/i.test(key)) ?? withdrawShapeKey;
+  if (
+    !supplied.compatibleExitShapeKeys.includes(withdrawKey) &&
+    !supplied.compatibleManageShapeKeys.includes(withdrawKey)
+  ) {
+    supplied.compatibleExitShapeKeys = [
+      ...supplied.compatibleExitShapeKeys,
+      withdrawKey,
+    ];
+  }
+  const withdraw = buildExitAction({
+    id: `${pinned.caseId}-withdraw`,
+    position: supplied,
+    opportunity: depositOpportunity,
+    exitShapeKey: withdrawKey,
+    rationale: "Protocol verify DorkFi USDC withdraw",
+  });
+  withdraw.executionInput = {
+    poolAppId,
+    marketAppId: usdcMarketAppId,
+    assetId: USDC_ASSET_ID,
+    amount: supplied.amountRaw,
+  };
   await executeConfirmed(
     context,
     validateAndNormalizePlan(

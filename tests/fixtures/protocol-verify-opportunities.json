@@ -561,6 +561,109 @@
         }
       ]
     },
+    "dorkfi-credit": {
+      "caseId": "dorkfi-credit",
+      "opportunityId": "dorkfi:algorand:3333688282:31566704:lending",
+      "protocol": "dorkfi",
+      "opportunityType": "lending",
+      "assetPair": "USDC",
+      "assetIds": [
+        31566704,
+        3121954282
+      ],
+      "enterShapeKey": "mainnet:dorkfi:v1:deposit:asa",
+      "exitShapeKey": "mainnet:dorkfi:v1:withdraw:asa",
+      "borrowOpportunityId": "dorkfi:algorand:3333688282:3121954282:lending",
+      "borrowShapeKey": "mainnet:dorkfi:v1:borrow:asa",
+      "repayShapeKey": "mainnet:dorkfi:v1:repay:asa",
+      "shapes": [
+        {
+          "shapeKey": "mainnet:dorkfi:v1:deposit:asa",
+          "action": "deposit",
+          "variant": "asa",
+          "order": 0,
+          "requiredInputs": [
+            "userAddress",
+            "poolAppId",
+            "marketAppId",
+            "assetId",
+            "amount"
+          ],
+          "requiredAssetIds": [
+            31566704
+          ],
+          "inputHints": {
+            "assetId": 31566704,
+            "poolAppId": 3333688282,
+            "marketAppId": 3210682240
+          }
+        },
+        {
+          "shapeKey": "mainnet:dorkfi:v1:borrow:asa",
+          "action": "borrow",
+          "variant": "asa",
+          "order": 1,
+          "requiredInputs": [
+            "userAddress",
+            "poolAppId",
+            "marketAppId",
+            "assetId",
+            "amount"
+          ],
+          "requiredAssetIds": [
+            3121954282
+          ],
+          "inputHints": {
+            "assetId": 3121954282,
+            "poolAppId": 3333688282,
+            "marketAppId": 3220125024
+          }
+        },
+        {
+          "shapeKey": "mainnet:dorkfi:v1:repay:asa",
+          "action": "repay",
+          "variant": "asa",
+          "order": 2,
+          "requiredInputs": [
+            "userAddress",
+            "poolAppId",
+            "marketAppId",
+            "assetId",
+            "amount"
+          ],
+          "requiredAssetIds": [
+            3121954282
+          ],
+          "inputHints": {
+            "assetId": 3121954282,
+            "poolAppId": 3333688282,
+            "marketAppId": 3220125024
+          }
+        },
+        {
+          "shapeKey": "mainnet:dorkfi:v1:withdraw:asa",
+          "action": "withdraw",
+          "variant": "asa",
+          "order": 3,
+          "requiredInputs": [
+            "userAddress",
+            "poolAppId",
+            "marketAppId",
+            "assetId",
+            "amount"
+          ],
+          "requiredAssetIds": [
+            31566704
+          ],
+          "inputHints": {
+            "assetId": 31566704,
+            "poolAppId": 3333688282,
+            "marketAppId": 3210682240
+          }
+        }
+      ],
+      "notes": "DorkFi credit: deposit USDC \u2192 borrow UNIT \u2192 repay \u2192 withdraw"
+    },
     "pact-lp": {
       "caseId": "pact-lp",
       "opportunityId": "2966876920:lp",

@@ -14,6 +14,7 @@
     "run-once-with-docker": "docker build -t brownie-bot . && docker run --rm --env-file .env brownie-bot once",
     "smoke:llm": "tsx src/smoke-llm.ts",
     "accounting-once": "tsx src/accounting-once.ts",
+    "accounting-inception-review": "tsx src/accounting-inception-review.ts",
     "canix:opportunities": "tsx src/cli/opportunities.ts",
     "canix:personalized": "tsx src/cli/personalized-opportunities.ts",
     "canix:wallet-scan": "tsx src/cli/wallet-scan.ts",
@@ -31,6 +32,7 @@
     "test:protocol-verify:reti": "vitest run --bail=1 tests/protocol-verify.test.ts -t reti-pooling",
     "test:protocol-verify:myth": "vitest run --bail=1 tests/protocol-verify.test.ts -t myth-dualstake",
     "test:protocol-verify:compx-credit": "vitest run --bail=1 tests/protocol-verify.test.ts -t compx-credit",
+    "test:protocol-verify:dorkfi-credit": "vitest run --bail=1 tests/protocol-verify.test.ts -t dorkfi-credit",
     "test:protocol-verify:folks-credit": "vitest run --bail=1 tests/protocol-verify.test.ts -t folks-credit"
   },
   "dependencies": {
