@@ -183,7 +183,7 @@ describe("SpacesAccountingStore", () => {
     });
 
     const key = await store.putPublicPnl({
-      schemaVersion: 1,
+      schemaVersion: 2,
       walletAddress: "WALLET",
       asOf: "2026-07-16T08:00:00.000Z",
       navUsd: "10.00",
@@ -196,6 +196,38 @@ describe("SpacesAccountingStore", () => {
       defiValueUsd: "5.00",
       walletAsaValueUsd: "5.00",
       algoBalance: "1",
+      windows: {
+        "7d": {
+          id: "7d",
+          available: false,
+          startAsOf: null,
+          navStartUsd: null,
+          pnlUsd: null,
+          navDeltaUsd: null,
+          netExternalCashflowUsd: null,
+          reason: "n/a",
+        },
+        "30d": {
+          id: "30d",
+          available: false,
+          startAsOf: null,
+          navStartUsd: null,
+          pnlUsd: null,
+          navDeltaUsd: null,
+          netExternalCashflowUsd: null,
+          reason: "n/a",
+        },
+        all: {
+          id: "all",
+          available: true,
+          startAsOf: "2026-07-01T00:00:00.000Z",
+          navStartUsd: "1.00",
+          pnlUsd: "9.00",
+          navDeltaUsd: "9.00",
+          netExternalCashflowUsd: "0",
+        },
+      },
+      navSeries: [{ asOf: "2026-07-16T08:00:00.000Z", navUsd: "10.00" }],
     });
 
     expect(key).toBe("brownie/public/pnl.json");
@@ -206,7 +238,7 @@ describe("SpacesAccountingStore", () => {
     expect(put?.CacheControl).toBe("public, max-age=60");
     expect(put?.ContentType).toBe("application/json");
     expect(JSON.parse(String(put?.Body))).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       navUsd: "10.00",
       pnlUsd: "2.00",
     });
@@ -306,7 +338,7 @@ describe("LocalFilesystemAccountingStore", () => {
         prefix: "brownie",
       });
       const key = await store.putPublicPnl({
-        schemaVersion: 1,
+        schemaVersion: 2,
         walletAddress: "WALLET",
         asOf: "2026-07-16T08:00:00.000Z",
         navUsd: "10.00",
@@ -319,6 +351,37 @@ describe("LocalFilesystemAccountingStore", () => {
         defiValueUsd: "0",
         walletAsaValueUsd: "10.00",
         algoBalance: "1",
+        windows: {
+          "7d": {
+            id: "7d",
+            available: false,
+            startAsOf: null,
+            navStartUsd: null,
+            pnlUsd: null,
+            navDeltaUsd: null,
+            netExternalCashflowUsd: null,
+          },
+          "30d": {
+            id: "30d",
+            available: false,
+            startAsOf: null,
+            navStartUsd: null,
+            pnlUsd: null,
+            navDeltaUsd: null,
+            netExternalCashflowUsd: null,
+          },
+          all: {
+            id: "all",
+            available: false,
+            startAsOf: null,
+            navStartUsd: null,
+            pnlUsd: null,
+            navDeltaUsd: null,
+            netExternalCashflowUsd: null,
+            reason: "Inception baseline not set",
+          },
+        },
+        navSeries: [],
       });
       expect(key).toBe("brownie/public/pnl.json");
       const text = await readFile(join(rootDir, key), "utf8");

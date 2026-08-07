@@ -68,6 +68,18 @@ function memoryStore(cashflows: AccountingCashflow[] = []): AccountingStore & {
       publicPnls.push(payload);
       return Promise.resolve("public/pnl.json");
     },
+    getInception() {
+      return Promise.resolve(undefined);
+    },
+    putInception() {
+      return Promise.resolve("inception");
+    },
+    getInceptionReview() {
+      return Promise.resolve(undefined);
+    },
+    putInceptionReview() {
+      return Promise.resolve("inception-review");
+    },
     listCashflows(_wallet, fromInclusive, toExclusive) {
       const from = new Date(fromInclusive).getTime();
       const to = new Date(toExclusive).getTime();
@@ -79,6 +91,9 @@ function memoryStore(cashflows: AccountingCashflow[] = []): AccountingStore & {
       );
     },
     listSnapshots() {
+      return Promise.resolve(snapshots);
+    },
+    listSnapshotsBetween() {
       return Promise.resolve(snapshots);
     },
     getCashflowByEventId(_wallet, eventId) {
@@ -232,11 +247,12 @@ describe("AccountingService", () => {
     expect(store.snapshots).toHaveLength(1);
     expect(store.publicPnls).toHaveLength(1);
     expect(store.publicPnls[0]).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       walletAddress: "WALLET",
       navUsd: "4.00",
       pnlAvailable: false,
     });
+    expect(store.publicPnls[0]?.windows.all.available).toBe(false);
     expect(store.publicPnls[0]).not.toHaveProperty("notes");
     expect(store.publicPnls[0]).not.toHaveProperty("checksum");
     expect(notifier.sendAccounting).toHaveBeenCalledOnce();
@@ -513,7 +529,7 @@ describe("toPublicPnl", () => {
     });
 
     expect(publicPnl).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       walletAddress: "WALLET",
       asOf: "2026-07-16T08:00:00.000Z",
       navUsd: "10.00",
@@ -526,6 +542,12 @@ describe("toPublicPnl", () => {
       defiValueUsd: "5.00",
       walletAsaValueUsd: "5.00",
       algoBalance: "1",
+      windows: {
+        "7d": expect.objectContaining({ id: "7d", available: false }),
+        "30d": expect.objectContaining({ id: "30d", available: false }),
+        all: expect.objectContaining({ id: "all", available: false }),
+      },
+      navSeries: [],
     });
     expect(publicPnl).not.toHaveProperty("notes");
     expect(publicPnl).not.toHaveProperty("checksum");

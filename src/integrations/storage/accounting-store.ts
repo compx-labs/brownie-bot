@@ -12,11 +12,15 @@ import {
 
 import {
   accountingCashflowSchema,
+  accountingInceptionSchema,
   accountingSnapshotSchema,
   accountingSummarySchema,
+  inceptionReviewSchema,
   type AccountingCashflow,
+  type AccountingInception,
   type AccountingSnapshot,
   type AccountingSummary,
+  type InceptionReview,
   type PublicPnl,
 } from "../../domain.js";
 
@@ -37,6 +41,12 @@ export interface AccountingStore {
   ): Promise<string>;
   /** Fixed public PnL artifact at `{prefix}/public/pnl.json`. */
   putPublicPnl(payload: PublicPnl): Promise<string>;
+  getInception(walletAddress: string): Promise<AccountingInception | undefined>;
+  putInception(inception: AccountingInception): Promise<string>;
+  getInceptionReview(
+    walletAddress: string,
+  ): Promise<InceptionReview | undefined>;
+  putInceptionReview(review: InceptionReview): Promise<string>;
   listCashflows(
     walletAddress: string,
     fromInclusive: string,
@@ -46,6 +56,11 @@ export interface AccountingStore {
     walletAddress: string,
     year: number,
     month: number,
+  ): Promise<AccountingSnapshot[]>;
+  listSnapshotsBetween(
+    walletAddress: string,
+    fromInclusive: string,
+    toInclusive: string,
   ): Promise<AccountingSnapshot[]>;
   getCashflowByEventId(
     walletAddress: string,
@@ -211,6 +226,42 @@ export class LocalFilesystemAccountingStore implements AccountingStore {
     return key;
   }
 
+  async getInception(
+    walletAddress: string,
+  ): Promise<AccountingInception | undefined> {
+    const key = inceptionKey(this.prefix, walletAddress);
+    const payload = await this.getJson(key);
+    if (payload === undefined) {
+      return undefined;
+    }
+    const parsed = accountingInceptionSchema.safeParse(payload);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  async putInception(inception: AccountingInception): Promise<string> {
+    const key = inceptionKey(this.prefix, inception.walletAddress);
+    await this.putMutableJson(key, inception);
+    return key;
+  }
+
+  async getInceptionReview(
+    walletAddress: string,
+  ): Promise<InceptionReview | undefined> {
+    const key = inceptionReviewKey(this.prefix, walletAddress);
+    const payload = await this.getJson(key);
+    if (payload === undefined) {
+      return undefined;
+    }
+    const parsed = inceptionReviewSchema.safeParse(payload);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  async putInceptionReview(review: InceptionReview): Promise<string> {
+    const key = inceptionReviewKey(this.prefix, review.walletAddress);
+    await this.putMutableJson(key, review);
+    return key;
+  }
+
   async listCashflows(
     walletAddress: string,
     fromInclusive: string,
@@ -265,6 +316,18 @@ export class LocalFilesystemAccountingStore implements AccountingStore {
     return snapshots.sort((left, right) => left.asOf.localeCompare(right.asOf));
   }
 
+  async listSnapshotsBetween(
+    walletAddress: string,
+    fromInclusive: string,
+    toInclusive: string,
+  ): Promise<AccountingSnapshot[]> {
+    return listSnapshotsBetweenImpl(
+      (year, month) => this.listSnapshots(walletAddress, year, month),
+      fromInclusive,
+      toInclusive,
+    );
+  }
+
   private async putImmutableJson(
     key: string,
     body: AccountingSnapshot | AccountingCashflow,
@@ -278,7 +341,13 @@ export class LocalFilesystemAccountingStore implements AccountingStore {
 
   private async putMutableJson(
     key: string,
-    body: AccountingSnapshot | AccountingCashflow | AccountingSummary | PublicPnl,
+    body:
+      | AccountingSnapshot
+      | AccountingCashflow
+      | AccountingSummary
+      | AccountingInception
+      | InceptionReview
+      | PublicPnl,
   ): Promise<void> {
     const filePath = this.resolvePath(key);
     await mkdir(dirname(filePath), { recursive: true });
@@ -473,6 +542,42 @@ export class SpacesAccountingStore implements AccountingStore {
     return key;
   }
 
+  async getInception(
+    walletAddress: string,
+  ): Promise<AccountingInception | undefined> {
+    const key = inceptionKey(this.prefix, walletAddress);
+    const payload = await this.getJson(key);
+    if (payload === undefined) {
+      return undefined;
+    }
+    const parsed = accountingInceptionSchema.safeParse(payload);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  async putInception(inception: AccountingInception): Promise<string> {
+    const key = inceptionKey(this.prefix, inception.walletAddress);
+    await this.putMutableJson(key, inception);
+    return key;
+  }
+
+  async getInceptionReview(
+    walletAddress: string,
+  ): Promise<InceptionReview | undefined> {
+    const key = inceptionReviewKey(this.prefix, walletAddress);
+    const payload = await this.getJson(key);
+    if (payload === undefined) {
+      return undefined;
+    }
+    const parsed = inceptionReviewSchema.safeParse(payload);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  async putInceptionReview(review: InceptionReview): Promise<string> {
+    const key = inceptionReviewKey(this.prefix, review.walletAddress);
+    await this.putMutableJson(key, review);
+    return key;
+  }
+
   async listCashflows(
     walletAddress: string,
     fromInclusive: string,
@@ -527,6 +632,18 @@ export class SpacesAccountingStore implements AccountingStore {
     return snapshots.sort((left, right) => left.asOf.localeCompare(right.asOf));
   }
 
+  async listSnapshotsBetween(
+    walletAddress: string,
+    fromInclusive: string,
+    toInclusive: string,
+  ): Promise<AccountingSnapshot[]> {
+    return listSnapshotsBetweenImpl(
+      (year, month) => this.listSnapshots(walletAddress, year, month),
+      fromInclusive,
+      toInclusive,
+    );
+  }
+
   private async putImmutableJson(
     key: string,
     body: AccountingSnapshot | AccountingCashflow,
@@ -540,7 +657,13 @@ export class SpacesAccountingStore implements AccountingStore {
 
   private async putMutableJson(
     key: string,
-    body: AccountingSnapshot | AccountingCashflow | AccountingSummary | PublicPnl,
+    body:
+      | AccountingSnapshot
+      | AccountingCashflow
+      | AccountingSummary
+      | AccountingInception
+      | InceptionReview
+      | PublicPnl,
     options?: { acl?: "public-read"; cacheControl?: string },
   ): Promise<void> {
     await this.client.send(
@@ -635,6 +758,78 @@ function joinKey(...parts: string[]): string {
 
 function publicPnlKey(prefix: string): string {
   return joinKey(prefix, "public", "pnl.json");
+}
+
+function inceptionKey(prefix: string, walletAddress: string): string {
+  return joinKey(prefix, "wallets", walletAddress, "state", "inception.json");
+}
+
+function inceptionReviewKey(prefix: string, walletAddress: string): string {
+  return joinKey(
+    prefix,
+    "wallets",
+    walletAddress,
+    "state",
+    "inception-review.json",
+  );
+}
+
+/** Walk year/month buckets between two ISO timestamps and filter by asOf. */
+export async function listSnapshotsBetweenImpl(
+  listMonth: (
+    year: number,
+    month: number,
+  ) => Promise<AccountingSnapshot[]>,
+  fromInclusive: string,
+  toInclusive: string,
+): Promise<AccountingSnapshot[]> {
+  const from = new Date(fromInclusive);
+  const to = new Date(toInclusive);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    throw new Error("Invalid snapshot range timestamps");
+  }
+  const snapshots: AccountingSnapshot[] = [];
+  let year = from.getUTCFullYear();
+  let month = from.getUTCMonth() + 1;
+  const endYear = to.getUTCFullYear();
+  const endMonth = to.getUTCMonth() + 1;
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    const monthSnapshots = await listMonth(year, month);
+    for (const snapshot of monthSnapshots) {
+      const asOf = new Date(snapshot.asOf).getTime();
+      if (asOf >= from.getTime() && asOf <= to.getTime()) {
+        snapshots.push(snapshot);
+      }
+    }
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return snapshots.sort((left, right) => left.asOf.localeCompare(right.asOf));
+}
+
+/** Greatest snapshot with asOf ≤ target and a known totalValueUsd. */
+export function pickSnapshotAtOrBefore(
+  snapshots: AccountingSnapshot[],
+  targetAsOf: string,
+): AccountingSnapshot | undefined {
+  const target = new Date(targetAsOf).getTime();
+  let best: AccountingSnapshot | undefined;
+  for (const snapshot of snapshots) {
+    if (snapshot.totalValueUsd === null) {
+      continue;
+    }
+    const asOf = new Date(snapshot.asOf).getTime();
+    if (asOf > target) {
+      continue;
+    }
+    if (!best || snapshot.asOf > best.asOf) {
+      best = snapshot;
+    }
+  }
+  return best;
 }
 
 function trimSlashes(value: string): string {

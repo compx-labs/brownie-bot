@@ -247,6 +247,28 @@ in the window adjust the NAV delta so funding is not profit. Prefer Telegram
 `/deposit <txid>` / `/withdraw <txid>` (or `POST /accounting/cashflows` for
 manual overrides including profit-share withdrawals).
 
+### Multi-window P&L and inception
+
+Each accounting summary includes cashflow-aware windows **`7d`**, **`30d`**, and
+**`all`** (plus a weekly `navSeries` for charts). Rolling windows need prior
+snapshots; all-time needs an **inception** baseline.
+
+Bootstrap (verify then commit):
+
+```bash
+# Defaults: min-round 63163056, asOf 2026-07-16T21:21:50.000Z
+npm run accounting-inception-review
+
+# Inspect the JSON (external_* vs flagged protocol groups), then:
+npm run accounting-inception-review -- --commit
+# Optional: --inception-nav 1234.56 --force --review path/to/review.json
+
+npm run accounting-once
+```
+
+Telegram `/inception` shows the stored baseline. `GET /accounting/inception`
+returns it over HTTP.
+
 ### Public PnL JSON (website)
 
 After each successful accounting run the bot also writes a **redacted** public
@@ -256,10 +278,10 @@ summaries stay private; only this object is uploaded with `ACL: public-read`
 and `Cache-Control: public, max-age=60`. Point an external website at the CDN
 URL — do not expose the bot HTTP port for this.
 
-Public payload fields: `schemaVersion`, `walletAddress`, `asOf`, `navUsd`,
-`previousNavUsd`, `pnlUsd`, `pnlAvailable`, `navDeltaUsd`,
-`netExternalCashflowUsd`, `defiByProtocol`, `defiValueUsd`, `walletAsaValueUsd`,
-`algoBalance`. Internal notes, checksums, and snapshot keys are omitted.
+Public payload (`schemaVersion: 2`): `walletAddress`, `asOf`, `navUsd`,
+`previousNavUsd`, vs-previous `pnlUsd`, `windows` (`7d` / `30d` / `all`),
+`navSeries`, protocol/wallet totals. Internal notes, checksums, and snapshot
+keys are omitted.
 
 #### DigitalOcean Spaces setup
 
@@ -311,6 +333,7 @@ overall; only `public/pnl.json` is world-readable via object ACL.
   `MANUAL_TRIGGER_TOKEN` is set and requires
   `Authorization: Bearer <token>`
 - `GET /accounting/latest` — latest accounting run
+- `GET /accounting/inception` — all-time inception baseline (404 if unset)
 - `POST /accounting/run` — manually run accounting; same bearer token model
 - `POST /accounting/cashflows` — record an immutable external cashflow event
 

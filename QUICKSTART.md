@@ -25,7 +25,9 @@ For architecture, HTTP API, and signing details, see [README.md](./README.md).
   `data/accounting/`). With Spaces configured, each accounting run also
   publishes a redacted public PnL JSON at
   `{DO_SPACES_PREFIX}/public/pnl.json` for websites — see README
-  **Public PnL JSON (website)** for CDN/CORS setup.
+  **Public PnL JSON (website)** for CDN/CORS setup. For all-time PnL, run
+  `npm run accounting-inception-review` then `--commit` (see README
+  **Multi-window P&L and inception**).
 
 ## 2a. DigitalOcean / Docker (recommended for cloud)
 

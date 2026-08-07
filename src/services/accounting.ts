@@ -39,6 +39,7 @@ import {
   collectRepriceAssetIds,
   repricePositionsFromTokenPrices,
 } from "./position-pricing.js";
+import { buildPnlWindows, buildWeeklyNavSeries, unavailableWindow } from "./pnl-windows.js";
 import { sanitizeErrorMessage } from "../util/errors.js";
 
 const ALGO_ASSET_ID = 0;
@@ -164,6 +165,10 @@ export class AccountingService {
     };
     await this.store.putCashflow(cashflow);
     return cashflow;
+  }
+
+  async getInception() {
+    return this.store.getInception(this.options.walletAddress);
   }
 
   /**
@@ -299,6 +304,32 @@ export class AccountingService {
       }
     }
 
+    const inception = await this.store.getInception(this.options.walletAddress);
+    const seriesFrom = new Date(
+      new Date(asOf).getTime() - 400 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const historySnapshots = await this.store.listSnapshotsBetween(
+      this.options.walletAddress,
+      seriesFrom,
+      asOf,
+    );
+    const windows = await buildPnlWindows({
+      endAsOf: asOf,
+      endNavUsd: totalValueUsd,
+      inception,
+      snapshots: historySnapshots,
+      listCashflows: (fromInclusive, toExclusive) =>
+        this.store.listCashflows(
+          this.options.walletAddress,
+          fromInclusive,
+          toExclusive,
+        ),
+    });
+    const navSeries = buildWeeklyNavSeries(historySnapshots, {
+      asOf,
+      navUsd: moneyToString(totalValueUsd),
+    });
+
     const snapshotBody = {
       schemaVersion: 2 as const,
       id,
@@ -334,6 +365,8 @@ export class AccountingService {
       pnlAvailable: previousTotal !== null && totalValueUsd !== null,
       navDeltaUsd: moneyToString(navDeltaUsd),
       netExternalCashflowUsd: moneyToString(netExternalCashflowUsd),
+      windows,
+      navSeries,
       defiByProtocol,
       defiValueUsd: moneyToString(defiValueUsd),
       walletAsaValueUsd: moneyToString(walletAsaValueUsd),
@@ -388,8 +421,13 @@ export class AccountingService {
  * Redact an accounting summary into the public website payload.
  */
 export function toPublicPnl(summary: AccountingSummary): PublicPnl {
+  const fallbackWindows = {
+    "7d": unavailableWindow("7d", "Not computed"),
+    "30d": unavailableWindow("30d", "Not computed"),
+    all: unavailableWindow("all", "Not computed"),
+  };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     walletAddress: summary.walletAddress,
     asOf: summary.asOf,
     navUsd: summary.latestTotalValueUsd,
@@ -402,6 +440,8 @@ export function toPublicPnl(summary: AccountingSummary): PublicPnl {
     defiValueUsd: summary.defiValueUsd,
     walletAsaValueUsd: summary.walletAsaValueUsd,
     algoBalance: summary.algoBalance,
+    windows: summary.windows ?? fallbackWindows,
+    navSeries: summary.navSeries ?? [],
   };
 }
 

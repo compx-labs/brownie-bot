@@ -898,12 +898,27 @@ function formatAccountingPnlPlainLines(
     summary.pnlAvailable
       ? `P&L vs previous: ${formatMoneyLabel(summary.pnlUsd)}`
       : "P&L vs previous: no previous baseline",
+    ...formatWindowPnlPlainLines(summary),
   ];
   const funding = formatNetExternalFundingLabel(summary.netExternalCashflowUsd);
   if (funding) {
     lines.push(`External funding (window): ${funding}`);
   }
   return lines;
+}
+
+function formatWindowPnlPlainLines(
+  summary: NonNullable<AccountingRun["summary"]>,
+): string[] {
+  if (!summary.windows) {
+    return [];
+  }
+  return (["7d", "30d", "all"] as const).map((id) => {
+    const window = summary.windows![id];
+    return window.available
+      ? `P&L ${id}: ${formatMoneyLabel(window.pnlUsd)}`
+      : `P&L ${id}: n/a${window.reason ? ` (${window.reason})` : ""}`;
+  });
 }
 
 function formatAccountingPnlRichLines(
@@ -913,12 +928,27 @@ function formatAccountingPnlRichLines(
     summary.pnlAvailable
       ? `P&L vs previous: **${formatMoneyLabel(summary.pnlUsd)}**`
       : "P&L vs previous: _no previous baseline_",
+    ...formatWindowPnlRichLines(summary),
   ];
   const funding = formatNetExternalFundingLabel(summary.netExternalCashflowUsd);
   if (funding) {
     lines.push(`External funding (window): **${funding}**`);
   }
   return lines;
+}
+
+function formatWindowPnlRichLines(
+  summary: NonNullable<AccountingRun["summary"]>,
+): string[] {
+  if (!summary.windows) {
+    return [];
+  }
+  return (["7d", "30d", "all"] as const).map((id) => {
+    const window = summary.windows![id];
+    return window.available
+      ? `P&L ${id}: **${formatMoneyLabel(window.pnlUsd)}**`
+      : `P&L ${id}: _n/a_`;
+  });
 }
 
 function formatAccountingPnlHtmlLines(
@@ -928,6 +958,7 @@ function formatAccountingPnlHtmlLines(
     summary.pnlAvailable
       ? `P&amp;L vs previous: <b>${escapeHtml(formatMoneyLabel(summary.pnlUsd))}</b>`
       : "P&amp;L vs previous: <i>no previous baseline</i>",
+    ...formatWindowPnlHtmlLines(summary),
   ];
   const funding = formatNetExternalFundingLabel(summary.netExternalCashflowUsd);
   if (funding) {
@@ -936,6 +967,20 @@ function formatAccountingPnlHtmlLines(
     );
   }
   return lines;
+}
+
+function formatWindowPnlHtmlLines(
+  summary: NonNullable<AccountingRun["summary"]>,
+): string[] {
+  if (!summary.windows) {
+    return [];
+  }
+  return (["7d", "30d", "all"] as const).map((id) => {
+    const window = summary.windows![id];
+    return window.available
+      ? `P&amp;L ${id}: <b>${escapeHtml(formatMoneyLabel(window.pnlUsd))}</b>`
+      : `P&amp;L ${id}: <i>n/a</i>`;
+  });
 }
 
 /** Net capital in: deposits − withdrawals. Null/zero omitted from reports. */

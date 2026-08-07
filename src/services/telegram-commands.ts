@@ -59,6 +59,7 @@ const HELP_TEXT = [
   "/accounting — start an accounting snapshot now (acks immediately)",
   "/deposit <txid> — record external funding (paste pay/axfer txid)",
   "/withdraw <txid> — record external withdrawal (paste pay/axfer txid)",
+  "/inception — show all-time PnL inception baseline",
   "/unwind — preview host close-all (positions + LST); then /unwind confirm",
   "/unwind confirm — execute pending unwind (multi-wave)",
   "/unwind cancel — discard pending unwind preview",
@@ -161,6 +162,22 @@ export function createOperatorCommandHandlers(
         "external_withdrawal",
         ctx.command.args,
       ),
+    inception: async () => {
+      const inception = await deps.accountingService.getInception();
+      if (!inception) {
+        return (
+          "No inception baseline set. Run:\n" +
+          "npm run accounting-inception-review\n" +
+          "then verify and --commit"
+        );
+      }
+      return [
+        `Inception NAV: $${inception.navUsd}`,
+        `asOf: ${inception.asOf}`,
+        `minRound: ${inception.minRound}`,
+        `recorded: ${inception.recordedAt}`,
+      ].join("\n");
+    },
     unwind: async (ctx) => handleUnwindCommand(deps, ctx),
     pause: async () => {
       const already = deps.pauseStore.isPaused();
