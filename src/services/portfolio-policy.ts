@@ -272,11 +272,21 @@ export class PortfolioPolicy {
           `${incompleteMessage}; continuing despite incomplete snapshot`,
         );
       }
+    } else if (snapshot.complete && snapshot.caveats.length > 0) {
+      // Soft caveats (e.g. stale position sourceTimestamp) stay visible without
+      // flipping complete=false or hard-blocking non-hold plans.
+      soft.push(...snapshot.caveats);
     }
     const positions = new Map(
       snapshot.positions.map((position) => [position.positionId, position]),
     );
-    this.validateOpportunityActions(plan, opportunities, hard, positions);
+    this.validateOpportunityActions(
+      plan,
+      opportunities,
+      hard,
+      soft,
+      positions,
+    );
     if (this.config.signingEnabled) {
       return {
         approved: hard.length === 0,
@@ -526,6 +536,7 @@ export class PortfolioPolicy {
     plan: PortfolioPlan,
     opportunities: Opportunity[],
     violations: string[],
+    soft: string[],
     positions: Map<string, PortfolioSnapshot["positions"][number]>,
   ): void {
     const now = Date.now();
@@ -573,7 +584,7 @@ export class PortfolioPolicy {
         !Number.isFinite(ageHours) ||
         ageHours > this.config.maxSourceAgeHours
       ) {
-        violations.push(
+        soft.push(
           `Action ${action.id} opportunity data is stale (${ageHours.toFixed(2)}h)`,
         );
       }

@@ -1155,7 +1155,7 @@ export function buildQuoteRequests(
       shapeKey: action.executionShapeKey!,
       input: sanitizeFolksIdentifierFields(
         {
-          shapeKey: action.executionShapeKey,
+          shapeKey: action.executionShapeKey ?? undefined,
           action: action.executionShapeKey?.split(":")[3],
           variant: action.executionShapeKey?.split(":")[4],
         },
@@ -1318,7 +1318,13 @@ export function patchFolksOracleRefreshAssets(
     for (const [index, assetId] of merged.entries()) {
       rebuilt.writeBigUInt64BE(BigInt(assetId), 2 + index * 8);
     }
-    appArgs[2] = new Uint8Array(rebuilt);
+    const nextArgs = [...appArgs];
+    nextArgs[2] = new Uint8Array(rebuilt);
+    (
+      transaction.applicationCall as unknown as {
+        appArgs: Uint8Array[];
+      }
+    ).appArgs = nextArgs;
     patched = true;
     return transaction;
   });

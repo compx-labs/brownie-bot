@@ -18,7 +18,7 @@ Agent plan JSON
 
 If schema parse fails, status is `reported` and **policy never runs** (`Policy n/a`). That is not a policy block.
 
-When signing is enabled, the host executes only **no-dependency** actions in the approved plan. Actions that depend on earlier plan steps are marked `skipped` with `Deferred to next review (depends on earlier plan steps)`. The next review sees a fresh snapshot (and optional `priorReview` continuity in the agent task) and can replan sizes against live balances. Dry-run still validates the full plan without deferred skips.
+When signing is enabled, the host executes only **no-dependency** actions in the approved plan. Actions that depend on earlier plan steps are marked `skipped` with `Deferred to next review (depends on earlier plan steps)`. The next review sees a fresh snapshot and a richer `priorReview` continuity brief (plan summary, policy outcome, deferred/failed actions — not only execution status rows) and can replan sizes against live balances. Dry-run still validates the full plan without deferred skips.
 
 ## Approval model
 
@@ -47,7 +47,7 @@ Returned fields:
 | `MAX_PROTOCOL_PCT` | `50` | Soft: max sum of target weights per protocol |
 | `MIN_LIQUID_RESERVE_PCT` | `10` | Soft: min sum of target weights with `protocol === null` |
 | `MIN_TVL_USD` | `6000` | Hard (open/increase): opportunity TVL floor; **waived** when the opportunity’s `assetIds` intersect `PREFERRED_HOLD_ASSETS` |
-| `MAX_SOURCE_AGE_HOURS` | `24` | Hard (open/increase): opportunity `sourceTimestamp` age; also used when building snapshot caveats for stale positions |
+| `MAX_SOURCE_AGE_HOURS` | `24` | Soft: opportunity `sourceTimestamp` age on open/increase; also used for soft position freshness caveats (does not mark the snapshot incomplete) |
 | `MIN_PROJECTED_NET_IMPROVEMENT_USD` | `1` | Soft: when any non-`hold` action exists |
 | `ENABLE_TRANSACTION_SIGNING` | required | Switches hard vs soft treatment (see above) |
 | `PREFERRED_HOLD_ASSETS` | empty | Soft agent steer; waives Haystack price-impact on buys into listed ASAs; waives `MIN_TVL_USD` on open/increase into opportunities that include those ASAs |
@@ -117,7 +117,7 @@ Swaps are validated separately and **do not** require an execution shape key in 
 | `executionShapeKey` must be in opportunity enter shapes | `… is not in opportunity … enter shapes […]` |
 | Declared treasury spend when capital is transferred | `Action … has no declared treasury spend` |
 | Opportunity TVL ≥ `MIN_TVL_USD` (unless opportunity `assetIds` intersects `PREFERRED_HOLD_ASSETS`) | `Action … TVL is below $…` |
-| Opportunity source age ≤ `MAX_SOURCE_AGE_HOURS` | `Action … opportunity data is stale (…h)` |
+| Opportunity source age ≤ `MAX_SOURCE_AGE_HOURS` | Soft: `Action … opportunity data is stale (…h)` |
 
 **When is declared spend required?** (`authorizedSpends` non-empty):
 
@@ -181,14 +181,17 @@ Liquid allocations are a **reserve floor**, not counted toward the position-size
 
 ## Snapshot completeness (feeds incomplete-snapshot policy)
 
-Built in `AlgorandPortfolioReader` (`src/integrations/algorand/portfolio.ts`). Any caveat → `complete: false`.
+Built in `AlgorandPortfolioReader` (`src/integrations/algorand/portfolio.ts`).
+Hard caveats → `complete: false`. Soft caveats (stale position `sourceTimestamp`)
+remain listed on the snapshot and become policy warnings, but do **not** flip
+`complete` or hard-block signing runs.
 
-| Caveat source | Example |
-| --- | --- |
-| Account is rekeyed | `Treasury account is rekeyed to …` |
-| Canix protocol status ≠ `ok` (`partial` / `unavailable`) | `{protocol} positions are partial: …` |
-| Position `sourceTimestamp` older than `MAX_SOURCE_AGE_HOURS` | `Position … source data exceeds … hours` |
-| Any aggregate total valuation is `null` | `At least one aggregate position valuation is incomplete` |
+| Caveat source | Severity | Example |
+| --- | --- | --- |
+| Account is rekeyed | Hard | `Treasury account is rekeyed to …` |
+| Canix protocol status ≠ `ok` (`partial` / `unavailable`) | Hard | `{protocol} positions are partial: …` |
+| Position `sourceTimestamp` older than `MAX_SOURCE_AGE_HOURS` | Soft | `Position … source data exceeds … hours` |
+| Any aggregate total valuation is `null` | Hard | `At least one aggregate position valuation is incomplete` |
 
 Partial Canix protocol messages (e.g. missing debt/health index) currently mark the whole snapshot incomplete and can hard-block signing runs even when the operator believes debt is irrelevant. That is host policy reacting to Canix status, not a separate “debt” rule in Brownie.
 

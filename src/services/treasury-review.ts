@@ -14,15 +14,15 @@ import type { ReviewRunStore } from "../integrations/storage/review-run-store.js
 import { sanitizeErrorMessage } from "../util/errors.js";
 import {
   buildPriorReviewContext,
+  DEFERRED_DEPENDENT_ACTION_ERROR,
   type PortfolioAgent,
 } from "./portfolio-agent.js";
 import type { CoordinatorMode, RunCoordinator } from "./run-coordinator.js";
 import { RunCoordinatorBusyError } from "./run-coordinator.js";
 import type { RunNotifier } from "./telegram.js";
 
-/** Signing runs only execute no-dependency actions; dependents wait for a later review. */
-export const DEFERRED_DEPENDENT_ACTION_ERROR =
-  "Deferred to next review (depends on earlier plan steps)";
+/** Re-export for callers/tests that import from treasury-review. */
+export { DEFERRED_DEPENDENT_ACTION_ERROR };
 
 export class RunInProgressError extends Error {
   constructor(message = "A treasury review is already running") {

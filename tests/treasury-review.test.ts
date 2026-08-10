@@ -754,6 +754,8 @@ describe("TreasuryReviewService", () => {
         id: "prior-run",
         status: "partially-executed",
         completedAt: "2026-07-30T12:01:00.000Z",
+        summary: "No compelling risk-adjusted changes are available.",
+        confidence: 0.8,
         actions: [
           {
             actionId: "reduce-1",
@@ -761,11 +763,13 @@ describe("TreasuryReviewService", () => {
             protocol: "tinyman",
             status: "confirmed",
             transactionId: "TX-PRIOR",
+            rationale: "Free USDC.",
           },
           {
             actionId: "swap-1",
             status: "skipped",
             error: DEFERRED_DEPENDENT_ACTION_ERROR,
+            deferred: true,
           },
         ],
       },

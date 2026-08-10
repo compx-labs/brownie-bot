@@ -3,11 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { Canix402Client } from "../src/integrations/canix402/client.js";
 import type { PortfolioReader } from "../src/integrations/algorand/portfolio.js";
 import { portfolioPlanSchema } from "../src/domain.js";
+import type { ReviewRun } from "../src/domain.js";
 import {
   OpenAiPortfolioAgent,
   MAX_OPPORTUNITY_TOOL_LIMIT,
   PORTFOLIO_AGENT_PROMPT_LITE,
   buildPortfolioAgentInstructions,
+  buildPriorReviewContext,
+  DEFERRED_DEPENDENT_ACTION_ERROR,
   clampOpportunityToolArgs,
   coercePortfolioPlanValue,
   compactToolResultForModel,
@@ -1270,5 +1273,195 @@ describe("OpenAiPortfolioAgent", () => {
     expect(input.some((item) => item.type === "function_call_output")).toBe(
       true,
     );
+  });
+});
+
+describe("buildPriorReviewContext", () => {
+  const baseRun = {
+    id: "run-1",
+    startedAt: "2026-08-10T09:00:00.000Z",
+    completedAt: "2026-08-10T09:01:00.000Z",
+    status: "planned" as const,
+    mode: "autonomous" as const,
+    signingEnabled: true,
+    walletAddress: managedWallet,
+    opportunities: [],
+  };
+
+  it("returns undefined for missing or empty runs", () => {
+    expect(buildPriorReviewContext(undefined)).toBeUndefined();
+    expect(
+      buildPriorReviewContext({
+        ...baseRun,
+        status: "no-op",
+      } as ReviewRun),
+    ).toBeUndefined();
+  });
+
+  it("emits summary and policy for policy-blocked runs without executions", () => {
+    const longSummary = "x".repeat(500);
+    const context = buildPriorReviewContext({
+      ...baseRun,
+      plan: portfolioPlan({
+        summary: longSummary,
+        confidence: 0.5,
+        actions: [
+          {
+            id: "claim-1",
+            type: "claim",
+            protocol: "tinyman",
+            opportunityId: null,
+            positionId: "pos-1",
+            amountRaw: null,
+            fromAssetId: null,
+            toAssetId: null,
+            targetWeightPct: null,
+            executionShapeKey: "tinyman:claim",
+            executionInput: {},
+            authorizedSpends: [],
+            rationale: "Claim farm rewards.",
+            dependencies: [],
+          },
+        ],
+      }),
+      policy: {
+        approved: false,
+        violations: [
+          "Portfolio snapshot is incomplete",
+          "a".repeat(200),
+          "v3",
+          "v4",
+          "v5",
+          "v6",
+        ],
+        warnings: ["soft note"],
+        metrics: {
+          maxPositionPct: 0,
+          maxProtocolPct: 0,
+          liquidReservePct: 6.5,
+          turnoverPct: 0,
+        },
+      },
+      executions: [],
+    } as ReviewRun);
+
+    expect(context).toMatchObject({
+      id: "run-1",
+      status: "planned",
+      confidence: 0.5,
+      policyApproved: false,
+      policyWarnings: ["soft note"],
+    });
+    expect(context?.summary).toHaveLength(400);
+    expect(context?.policyViolations).toHaveLength(5);
+    expect(context?.policyViolations?.[1]).toHaveLength(160);
+    expect(context?.actions).toEqual([
+      {
+        actionId: "claim-1",
+        type: "claim",
+        protocol: "tinyman",
+        status: "not-executed",
+        rationale: "Claim farm rewards.",
+      },
+    ]);
+  });
+
+  it("marks deferred dependents and keeps confirmed action rationale", () => {
+    const context = buildPriorReviewContext({
+      ...baseRun,
+      status: "partially-executed",
+      plan: portfolioPlan({
+        actions: [
+          {
+            id: "swap-1",
+            type: "swap",
+            protocol: null,
+            opportunityId: null,
+            positionId: null,
+            amountRaw: "1000",
+            fromAssetId: 0,
+            toAssetId: 31_566_704,
+            targetWeightPct: null,
+            executionShapeKey: null,
+            executionInput: null,
+            authorizedSpends: [],
+            rationale: "Free USDC for ops.",
+            dependencies: [],
+          },
+          {
+            id: "open-1",
+            type: "open",
+            protocol: "folks",
+            opportunityId: "folks:1",
+            positionId: null,
+            amountRaw: "1000",
+            fromAssetId: 31_566_704,
+            toAssetId: null,
+            targetWeightPct: null,
+            executionShapeKey: "folks:deposit",
+            executionInput: {},
+            authorizedSpends: [],
+            rationale: "Deploy after swap.",
+            dependencies: ["swap-1"],
+          },
+        ],
+      }),
+      executions: [
+        {
+          actionId: "swap-1",
+          status: "confirmed",
+          transactionId: "TX1",
+        },
+        {
+          actionId: "open-1",
+          status: "skipped",
+          error: DEFERRED_DEPENDENT_ACTION_ERROR,
+        },
+      ],
+    } as ReviewRun);
+
+    expect(context?.actions).toEqual([
+      {
+        actionId: "swap-1",
+        type: "swap",
+        protocol: null,
+        status: "confirmed",
+        transactionId: "TX1",
+        rationale: "Free USDC for ops.",
+      },
+      {
+        actionId: "open-1",
+        type: "open",
+        protocol: "folks",
+        status: "skipped",
+        error: DEFERRED_DEPENDENT_ACTION_ERROR,
+        deferred: true,
+        dependencies: ["swap-1"],
+        rationale: "Deploy after swap.",
+      },
+    ]);
+  });
+
+  it("includes planParseError for report-only runs", () => {
+    const context = buildPriorReviewContext({
+      ...baseRun,
+      status: "reported",
+      planParseError: "invalid portfolio_plan JSON",
+    } as ReviewRun);
+
+    expect(context).toEqual({
+      id: "run-1",
+      status: "reported",
+      completedAt: "2026-08-10T09:01:00.000Z",
+      planParseError: "invalid portfolio_plan JSON",
+      actions: [],
+    });
+  });
+
+  it("mentions richer priorReview fields in the agent prompt", () => {
+    expect(PORTFOLIO_AGENT_PROMPT_LITE).toContain(
+      "policyApproved/violations/warnings",
+    );
+    expect(PORTFOLIO_AGENT_PROMPT_LITE).toContain("replan sizes against today's snapshot");
   });
 });

@@ -56,15 +56,16 @@ export class AlgorandPortfolioReader implements PortfolioReader {
       prices,
     );
     const totals = recomputeWalletPositionTotals(pricedPositions);
-    const caveats: string[] = [];
+    const hardCaveats: string[] = [];
+    const softCaveats: string[] = [];
     if (accountState.authAddress) {
-      caveats.push(
+      hardCaveats.push(
         `Treasury account is rekeyed to ${accountState.authAddress}; local signing requires that authorized signer`,
       );
     }
     for (const protocol of positions.protocols) {
       if (protocol.status !== "ok") {
-        caveats.push(
+        hardCaveats.push(
           `${protocol.protocol} positions are ${protocol.status}: ${protocol.message ?? "no details"}`,
         );
       }
@@ -75,14 +76,17 @@ export class AlgorandPortfolioReader implements PortfolioReader {
         position.sourceTimestamp &&
         new Date(position.sourceTimestamp).getTime() < oldestAllowed
       ) {
-        caveats.push(
+        // Informational only — stale source timestamps must not mark the
+        // snapshot incomplete or hard-block signing runs.
+        softCaveats.push(
           `Position ${position.positionId} source data exceeds ${this.maxSourceAgeHours} hours`,
         );
       }
     }
     if (Object.values(totals).some((value) => value === null)) {
-      caveats.push("At least one aggregate position valuation is incomplete");
+      hardCaveats.push("At least one aggregate position valuation is incomplete");
     }
+    const caveats = [...hardCaveats, ...softCaveats];
     return {
       snapshot: {
         address: this.address,
@@ -92,7 +96,7 @@ export class AlgorandPortfolioReader implements PortfolioReader {
         totals,
         liquidBalances,
         minimumBalanceRaw: accountState.minimumBalanceRaw,
-        complete: caveats.length === 0,
+        complete: hardCaveats.length === 0,
         caveats,
       },
       payments: payment ? [payment] : [],
