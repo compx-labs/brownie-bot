@@ -156,6 +156,15 @@ export interface PortfolioAgentResult {
   inferenceCost?: InferenceCostSummary;
 }
 
+/** Signing runs skip dependents; next review replans against fresh balances. */
+export const DEFERRED_DEPENDENT_ACTION_ERROR =
+  "Deferred to next review (depends on earlier plan steps)";
+
+const PRIOR_REVIEW_SUMMARY_MAX = 400;
+const PRIOR_REVIEW_ERROR_MAX = 160;
+const PRIOR_REVIEW_RATIONALE_MAX = 120;
+const PRIOR_REVIEW_POLICY_LIST_MAX = 5;
+
 /** Compact prior-run continuity for the agent task input. */
 export interface PriorReviewActionSummary {
   actionId: string;
@@ -164,12 +173,23 @@ export interface PriorReviewActionSummary {
   status: string;
   error?: string;
   transactionId?: string;
+  /** True when host deferred this action to the next review (dependency wave). */
+  deferred?: boolean;
+  dependencies?: string[];
+  rationale?: string;
 }
 
 export interface PriorReviewContext {
   id: string;
   status: string;
   completedAt?: string;
+  summary?: string;
+  confidence?: number;
+  policyApproved?: boolean;
+  policyViolations?: string[];
+  policyWarnings?: string[];
+  planParseError?: string;
+  error?: string;
   actions: PriorReviewActionSummary[];
 }
 
@@ -239,7 +259,7 @@ PLAN ACTIONS
 - Swaps: (1) unlock required assets for a following open/increase, (2) consolidate USDC ops buffer, (3) rotate non-preferred idle liquid into deployable capital or preferred holds. Prefer canix_get_quote before sizing. If a quote tool returns an error (timeout, liquidity, impact), retry with a different size/pair or skip that swap and continue the plan—do not stop the whole review.
 - Missing required assets: prior swap action(s), then depend on those action ids only.
 - dependencies: only other action ids in this plan. Host signing runs execute only foundation actions (empty dependencies); dependents are deferred to the next review after balances refresh—so size each action to current spendable balances, not hoped-for proceeds from earlier steps in the same plan.
-- priorReview (when present): what already landed or was deferred/failed last run. Use it as continuity context, not a mandate to replay the same chain blindly.
+- priorReview (when present): last run continuity — summary, policyApproved/violations/warnings, and actions (status, deferred, dependencies, short rationale, errors). Use it to finish deferred work and avoid blind retries; replan sizes against today's snapshot. Not a mandate to replay the same chain.
 - projectedNetBenefitUsd: honest yield-vs-idle over holdingHorizonDays (often 30–90) minus one-time costs; use base supply/deposit APY, not reward boosts.
 - Re-evaluate every position each run; avoid churn only when net improvement is small vs costs.
 
@@ -927,37 +947,163 @@ function formatStreamFailure(record: Record<string, unknown>): string {
 }
 
 /**
- * Slim last-run summary for agent continuity. Omits empty / report-only noise.
+ * Slim last-run brief for agent continuity. Emits when the latest run has a
+ * plan, policy, executions, or parse/error signal (including policy-blocked
+ * runs with empty executions).
  */
 export function buildPriorReviewContext(
   run: ReviewRun | undefined,
 ): PriorReviewContext | undefined {
-  if (!run?.executions || run.executions.length === 0) {
+  if (!run) {
     return undefined;
   }
+  const executions = run.executions ?? [];
+  const hasPlan = run.plan !== undefined;
+  const hasPolicy = run.policy !== undefined;
+  const hasParseError =
+    typeof run.planParseError === "string" &&
+    run.planParseError.trim().length > 0;
+  const hasRunError =
+    typeof run.error === "string" && run.error.trim().length > 0;
+  if (
+    executions.length === 0 &&
+    !hasPlan &&
+    !hasPolicy &&
+    !hasParseError &&
+    !hasRunError
+  ) {
+    return undefined;
+  }
+
   const planById = new Map(
     (run.plan?.actions ?? []).map((action) => [action.id, action]),
   );
+
+  const actions: PriorReviewActionSummary[] =
+    executions.length > 0
+      ? executions.map((execution) => {
+          const planned = planById.get(execution.actionId);
+          const deferred =
+            execution.error === DEFERRED_DEPENDENT_ACTION_ERROR ||
+            (typeof execution.error === "string" &&
+              execution.error.startsWith("Deferred to next review"));
+          const rationale =
+            planned && planned.type !== "hold" && planned.rationale
+              ? truncateForPriorReview(
+                  planned.rationale,
+                  PRIOR_REVIEW_RATIONALE_MAX,
+                )
+              : undefined;
+          return {
+            actionId: execution.actionId,
+            ...(planned?.type ? { type: planned.type } : {}),
+            ...(planned ? { protocol: planned.protocol } : {}),
+            status: execution.status,
+            ...(execution.error
+              ? {
+                  error: truncateForPriorReview(
+                    execution.error,
+                    PRIOR_REVIEW_ERROR_MAX,
+                  ),
+                }
+              : {}),
+            ...(execution.transactionId
+              ? { transactionId: execution.transactionId }
+              : {}),
+            ...(deferred ? { deferred: true } : {}),
+            ...(planned?.dependencies && planned.dependencies.length > 0
+              ? { dependencies: planned.dependencies }
+              : {}),
+            ...(rationale ? { rationale } : {}),
+          };
+        })
+      : hasPlan
+        ? (run.plan?.actions ?? [])
+            .filter((action) => action.type !== "hold")
+            .map((planned) => {
+              const rationale = planned.rationale
+                ? truncateForPriorReview(
+                    planned.rationale,
+                    PRIOR_REVIEW_RATIONALE_MAX,
+                  )
+                : undefined;
+              return {
+                actionId: planned.id,
+                type: planned.type,
+                protocol: planned.protocol,
+                status: "not-executed",
+                ...(planned.dependencies.length > 0
+                  ? { dependencies: planned.dependencies }
+                  : {}),
+                ...(rationale ? { rationale } : {}),
+              };
+            })
+        : [];
+
+  const summary = run.plan?.summary
+    ? truncateForPriorReview(run.plan.summary, PRIOR_REVIEW_SUMMARY_MAX)
+    : undefined;
+
   return {
     id: run.id,
     status: run.status,
-    completedAt: run.completedAt,
-    actions: run.executions.map((execution) => {
-      const planned = planById.get(execution.actionId);
-      return {
-        actionId: execution.actionId,
-        ...(planned?.type ? { type: planned.type } : {}),
-        ...(planned ? { protocol: planned.protocol } : {}),
-        status: execution.status,
-        ...(execution.error
-          ? { error: truncateForLog(execution.error, 160) }
-          : {}),
-        ...(execution.transactionId
-          ? { transactionId: execution.transactionId }
-          : {}),
-      };
-    }),
+    ...(run.completedAt ? { completedAt: run.completedAt } : {}),
+    ...(summary ? { summary } : {}),
+    ...(run.plan && typeof run.plan.confidence === "number"
+      ? { confidence: run.plan.confidence }
+      : {}),
+    ...(hasPolicy ? { policyApproved: run.policy!.approved } : {}),
+    ...(hasPolicy && run.policy!.violations.length > 0
+      ? {
+          policyViolations: capTruncatedStrings(
+            run.policy!.violations,
+            PRIOR_REVIEW_POLICY_LIST_MAX,
+            PRIOR_REVIEW_ERROR_MAX,
+          ),
+        }
+      : {}),
+    ...(hasPolicy && run.policy!.warnings.length > 0
+      ? {
+          policyWarnings: capTruncatedStrings(
+            run.policy!.warnings,
+            PRIOR_REVIEW_POLICY_LIST_MAX,
+            PRIOR_REVIEW_ERROR_MAX,
+          ),
+        }
+      : {}),
+    ...(hasParseError
+      ? {
+          planParseError: truncateForPriorReview(
+            run.planParseError!,
+            PRIOR_REVIEW_ERROR_MAX,
+          ),
+        }
+      : {}),
+    ...(hasRunError
+      ? {
+          error: truncateForPriorReview(run.error!, PRIOR_REVIEW_ERROR_MAX),
+        }
+      : {}),
+    actions,
   };
+}
+
+function capTruncatedStrings(
+  values: string[],
+  maxItems: number,
+  maxLength: number,
+): string[] {
+  return values
+    .slice(0, maxItems)
+    .map((value) => truncateForPriorReview(value, maxLength));
+}
+
+/** Hard-cap strings for agent task payload (no log-style suffix). */
+function truncateForPriorReview(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return text.slice(0, maxLength);
 }
 
 /** Normalize OpenAI SDK / test mocks into body + optional HTTP headers. */

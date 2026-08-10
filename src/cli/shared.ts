@@ -152,7 +152,11 @@ export function printPortfolioSnapshot(
     }
   }
 
-  console.log("\nWhy incomplete (caveats)");
+  console.log(
+    snapshot.complete
+      ? "\nCaveats (soft warnings only when complete)"
+      : "\nWhy incomplete (caveats)",
+  );
   if (snapshot.caveats.length === 0) {
     console.log("- none");
   } else {

@@ -267,6 +267,80 @@ describe("PortfolioPolicy", () => {
     );
   });
 
+  it("warns on stale position sourceTimestamp without blocking a complete snapshot", () => {
+    const candidate = opportunity({
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+    });
+    const result = policy.validate(
+      portfolioSnapshot({
+        complete: true,
+        caveats: [
+          "Position compx:supplied:3607871733 source data exceeds 24 hours",
+        ],
+      }),
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [
+          { ...liquid, weightPct: 60 },
+          {
+            key: "opportunity:tinyman:pool:1",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: candidate.assetIds ?? [],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [openAction()],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.warnings.join("\n")).toMatch(
+      /Position compx:supplied:3607871733 source data exceeds 24 hours/,
+    );
+  });
+
+  it("warns on stale opportunity sourceTimestamp without blocking open actions", () => {
+    const staleTimestamp = new Date(
+      Date.now() - 48 * 3_600_000,
+    ).toISOString();
+    const candidate = opportunity({
+      sourceTimestamp: staleTimestamp,
+      fetchedAt: new Date().toISOString(),
+    });
+    const result = policy.validate(
+      portfolioSnapshot(),
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [
+          { ...liquid, weightPct: 60 },
+          {
+            key: "opportunity:tinyman:pool:1",
+            protocol: "tinyman",
+            opportunityId: candidate.opportunityId,
+            assetIds: candidate.assetIds ?? [],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [openAction()],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.warnings.join("\n")).toMatch(
+      /Action open-1 opportunity data is stale \(4[0-9]\.\d+h\)/,
+    );
+  });
+
   it("allows incomplete snapshots when blockIncompleteSnapshot is false", () => {
     const verifyLikePolicy = new PortfolioPolicy({
       ...policyConfig,
