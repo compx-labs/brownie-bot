@@ -192,7 +192,9 @@ describe("SpacesAccountingStore", () => {
       pnlAvailable: true,
       navDeltaUsd: "2.00",
       netExternalCashflowUsd: "0",
-      defiByProtocol: [{ protocol: "folks", valueUsd: "5.00", positionCount: 1 }],
+      defiByProtocol: [
+        { protocol: "folks", valueUsd: "5.00", positionCount: 1 },
+      ],
       defiValueUsd: "5.00",
       walletAsaValueUsd: "5.00",
       algoBalance: "1",
@@ -385,7 +387,8 @@ describe("LocalFilesystemAccountingStore", () => {
       });
       expect(key).toBe("brownie/public/pnl.json");
       const text = await readFile(join(rootDir, key), "utf8");
-      expect(JSON.parse(text).navUsd).toBe("10.00");
+      const parsed: unknown = JSON.parse(text);
+      expect(parsed).toEqual(expect.objectContaining({ navUsd: "10.00" }));
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

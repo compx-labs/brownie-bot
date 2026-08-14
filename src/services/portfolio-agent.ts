@@ -497,7 +497,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     const initialInput = JSON.stringify({
       task: "Produce today's portfolio plan from host-researched opportunities.",
       managedWallet: this.options.walletAddress,
-      inferenceProvider: "zerosignal",
+      inferenceProvider: "zerosignal", // pragma: allowlist secret
       aiMode: "lite",
       hostGuidance: this.options.hostGuidance,
       portfolioSnapshot: compactSnapshotForModel(snapshot),
@@ -579,7 +579,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     const initialInput = JSON.stringify({
       task: "Research and produce today's portfolio plan.",
       managedWallet: this.options.walletAddress,
-      inferenceProvider: "zerosignal",
+      inferenceProvider: "zerosignal", // pragma: allowlist secret
       aiMode: "full",
       hostGuidance: this.options.hostGuidance,
       portfolioSnapshot: compactSnapshotForModel(snapshot),
@@ -868,7 +868,11 @@ export function createPortfolioAgent(
 
 /** Force `stream: true` on every zs-proxy Responses request. */
 export function withStreamTrue(request: unknown): Record<string, unknown> {
-  if (request !== null && typeof request === "object" && !Array.isArray(request)) {
+  if (
+    request !== null &&
+    typeof request === "object" &&
+    !Array.isArray(request)
+  ) {
     return { ...(request as Record<string, unknown>), stream: true };
   }
   return { stream: true, input: request };

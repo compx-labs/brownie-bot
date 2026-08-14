@@ -60,8 +60,7 @@ export interface BuildHealthReportInput {
 
 export function buildHealthReport(input: BuildHealthReportInput): HealthReport {
   const now = input.now ?? new Date();
-  const staleReviewHours =
-    input.staleReviewHours ?? DEFAULT_STALE_REVIEW_HOURS;
+  const staleReviewHours = input.staleReviewHours ?? DEFAULT_STALE_REVIEW_HOURS;
   const staleAccountingHours =
     input.staleAccountingHours ?? DEFAULT_STALE_ACCOUNTING_HOURS;
   const paused = input.paused ?? false;

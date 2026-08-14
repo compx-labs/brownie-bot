@@ -81,7 +81,11 @@ export class UnwindPendingStore {
 
   constructor(private readonly ttlMs = UNWIND_PENDING_TTL_MS) {}
 
-  set(key: string, plan: UnwindWavePlan, now = Date.now()): UnwindPendingPreview {
+  set(
+    key: string,
+    plan: UnwindWavePlan,
+    now = Date.now(),
+  ): UnwindPendingPreview {
     const entry: UnwindPendingPreview = {
       fingerprint: plan.fingerprint,
       summary: plan.summary,
@@ -222,10 +226,7 @@ function actionFingerprint(action: PortfolioAction): string {
 }
 
 export function fingerprintActions(actions: PortfolioAction[]): string {
-  return actions
-    .map(actionFingerprint)
-    .sort()
-    .join("\n");
+  return actions.map(actionFingerprint).sort().join("\n");
 }
 
 function folksXalgoUnstakeShape(): OpportunityExecutionShape {
@@ -261,7 +262,8 @@ function mythRedeemShape(
     action: "redeem",
     variant: "lst",
     title: "Myth Finance dualSTAKE redeem LST",
-    summary: "Burn dualSTAKE LST to redeem ALGO and paired ASA from Myth Finance",
+    summary:
+      "Burn dualSTAKE LST to redeem ALGO and paired ASA from Myth Finance",
     order: 1,
     requiredInputs: ["userAddress", "amount", "appId"],
     requiredAssetIds: [receiptAssetId],
@@ -291,9 +293,7 @@ export function enrichOpportunitiesForLstUnstake(
         continue;
       }
       const donor =
-        next.find((opportunity) =>
-          /folks/i.test(opportunity.protocol),
-        ) ??
+        next.find((opportunity) => /folks/i.test(opportunity.protocol)) ??
         ({
           protocol: "folks-finance",
           opportunityType: "staking",
@@ -370,7 +370,8 @@ function resolveLstUnstake(
       continue;
     }
     const unstake = opportunity.executionShapes.find((shape) => {
-      const key = `${shape.action}:${shape.variant}:${shape.shapeKey}`.toLowerCase();
+      const key =
+        `${shape.action}:${shape.variant}:${shape.shapeKey}`.toLowerCase();
       return /unstake|redeem|burn/.test(key);
     });
     if (unstake) {
@@ -393,7 +394,8 @@ function knownLstReceiptAssetIds(
       continue;
     }
     const hasUnstake = opportunity.executionShapes.some((shape) => {
-      const key = `${shape.action}:${shape.variant}:${shape.shapeKey}`.toLowerCase();
+      const key =
+        `${shape.action}:${shape.variant}:${shape.shapeKey}`.toLowerCase();
       return /unstake|redeem|burn/.test(key);
     });
     if (!hasUnstake && !/folks|myth/i.test(opportunity.protocol)) {
@@ -600,7 +602,8 @@ export function buildUnwindPlan(
     currentAllocations: [liquid],
     targetAllocations: [{ ...liquid, weightPct: 100 }],
     actions,
-    holdDecisions: actions.length === 0 ? ["Already flat / nothing to unwind"] : [],
+    holdDecisions:
+      actions.length === 0 ? ["Already flat / nothing to unwind"] : [],
     currentAnnualizedReturnPct: 0,
     targetAnnualizedReturnPct: 0,
     estimatedOneTimeCostsUsd: 0,
@@ -672,9 +675,7 @@ export function formatUnwindDigest(result: UnwindRunResult): string {
       if (outcome.status === "confirmed" && outcome.transactionId) {
         lines.push(`  ✓ ${outcome.actionId} · ${outcome.transactionId}`);
       } else if (outcome.status === "failed") {
-        lines.push(
-          `  ✗ ${outcome.actionId}: ${outcome.error ?? "failed"}`,
-        );
+        lines.push(`  ✗ ${outcome.actionId}: ${outcome.error ?? "failed"}`);
       }
     }
   }
@@ -819,7 +820,9 @@ export class DeterministicUnwindService {
               wave,
               plan: wavePlan,
               policyApproved: false,
-              policyViolations: ["Stuck: same action fingerprint as prior wave"],
+              policyViolations: [
+                "Stuck: same action fingerprint as prior wave",
+              ],
               executions: [],
             });
             return {

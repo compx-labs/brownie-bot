@@ -33,20 +33,20 @@ describe("position token reprice", () => {
     expect(positionNeedsTokenReprice(position({ usdValue: 34 }))).toBe(false);
     expect(positionNeedsTokenReprice(position({ amount: "0" }))).toBe(false);
     expect(
-      positionNeedsTokenReprice(position({ assetId: null, assetSymbol: "USDC" })),
+      positionNeedsTokenReprice(
+        position({ assetId: null, assetSymbol: "USDC" }),
+      ),
     ).toBe(true);
     expect(
-      positionNeedsTokenReprice(
-        position({ assetId: null, assetSymbol: null }),
-      ),
+      positionNeedsTokenReprice(position({ assetId: null, assetSymbol: null })),
     ).toBe(true);
   });
 
   it("treats Canix microscopic Folks usdValue as unpriced", () => {
     // Live Canix bug: amount ~34 USDC but usdValue ~3.4e-9
-    expect(
-      positionNeedsTokenReprice(position({ usdValue: 3.39986e-9 })),
-    ).toBe(true);
+    expect(positionNeedsTokenReprice(position({ usdValue: 3.39986e-9 }))).toBe(
+      true,
+    );
     const { positions, notes } = repricePositionsFromTokenPrices(
       [position({ usdValue: 3.39986e-9 })],
       [],

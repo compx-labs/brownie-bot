@@ -79,7 +79,9 @@ export class OperatorPauseStore {
     return this.getState();
   }
 
-  async pause(source: OperatorPauseSource = "telegram"): Promise<OperatorPauseState> {
+  async pause(
+    source: OperatorPauseSource = "telegram",
+  ): Promise<OperatorPauseState> {
     this.paused = true;
     this.updatedAt = new Date().toISOString();
     this.source = source;
@@ -105,7 +107,11 @@ export class OperatorPauseStore {
     };
     try {
       await mkdir(dirname(this.filePath), { recursive: true });
-      await writeFile(this.filePath, `${JSON.stringify(body, null, 2)}\n`, "utf8");
+      await writeFile(
+        this.filePath,
+        `${JSON.stringify(body, null, 2)}\n`,
+        "utf8",
+      );
     } catch (error) {
       console.error(
         `[operator-pause] Failed to persist ${this.filePath}: ${errorMessage(error)}`,

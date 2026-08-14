@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  sanitizeErrorMessage,
-  sanitizeErrorText,
-} from "../src/util/errors.js";
+import { sanitizeErrorMessage, sanitizeErrorText } from "../src/util/errors.js";
 
 const html504 = `504 <!DOCTYPE html>
 <html>

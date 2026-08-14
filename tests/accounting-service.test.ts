@@ -498,7 +498,9 @@ describe("AccountingService", () => {
     expect(run.status).toBe("completed");
     expect(store.publicPnls).toHaveLength(0);
     expect(
-      run.summary?.notes.some((note) => note.includes("Public PnL write failed")),
+      run.summary?.notes.some((note) =>
+        note.includes("Public PnL write failed"),
+      ),
     ).toBe(true);
     expect(notifier.sendAccounting).toHaveBeenCalledOnce();
   });
@@ -518,7 +520,9 @@ describe("toPublicPnl", () => {
       pnlAvailable: true,
       navDeltaUsd: "2.00",
       netExternalCashflowUsd: "0",
-      defiByProtocol: [{ protocol: "folks", valueUsd: "5.00", positionCount: 1 }],
+      defiByProtocol: [
+        { protocol: "folks", valueUsd: "5.00", positionCount: 1 },
+      ],
       defiValueUsd: "5.00",
       walletAsaValueUsd: "5.00",
       unpricedAssetIds: [99],
@@ -528,7 +532,8 @@ describe("toPublicPnl", () => {
       checksum: "abc",
     });
 
-    expect(publicPnl).toEqual({
+    const { windows, ...rest } = publicPnl;
+    expect(rest).toEqual({
       schemaVersion: 2,
       walletAddress: "WALLET",
       asOf: "2026-07-16T08:00:00.000Z",
@@ -538,16 +543,18 @@ describe("toPublicPnl", () => {
       pnlAvailable: true,
       navDeltaUsd: "2.00",
       netExternalCashflowUsd: "0",
-      defiByProtocol: [{ protocol: "folks", valueUsd: "5.00", positionCount: 1 }],
+      defiByProtocol: [
+        { protocol: "folks", valueUsd: "5.00", positionCount: 1 },
+      ],
       defiValueUsd: "5.00",
       walletAsaValueUsd: "5.00",
       algoBalance: "1",
-      windows: {
-        "7d": expect.objectContaining({ id: "7d", available: false }),
-        "30d": expect.objectContaining({ id: "30d", available: false }),
-        all: expect.objectContaining({ id: "all", available: false }),
-      },
       navSeries: [],
+    });
+    expect(windows).toMatchObject({
+      "7d": { id: "7d", available: false },
+      "30d": { id: "30d", available: false },
+      all: { id: "all", available: false },
     });
     expect(publicPnl).not.toHaveProperty("notes");
     expect(publicPnl).not.toHaveProperty("checksum");

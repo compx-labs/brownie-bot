@@ -164,7 +164,7 @@ export function readConfirmedRound(
     return undefined;
   }
   try {
-    return BigInt(raw as number | bigint | string);
+    return BigInt(raw);
   } catch {
     return undefined;
   }
@@ -188,8 +188,7 @@ export class CashflowTxResolver {
     this.walletAddress = options.walletAddress;
     this.indexer =
       options.indexer ?? new algosdk.Indexer("", options.indexerUrl, "");
-    this.algod =
-      options.algod ?? new algosdk.Algodv2("", options.algodUrl, "");
+    this.algod = options.algod ?? new algosdk.Algodv2("", options.algodUrl, "");
     this.assetCache.set(ALGO_ASSET_ID, {
       decimals: ALGO_DECIMALS,
       symbol: "ALGO",
@@ -207,9 +206,7 @@ export class CashflowTxResolver {
 
     let response: IndexerLookupResponse;
     try {
-      response = (await this.indexer
-        .lookupTransactionByID(txid)
-        .do()) as IndexerLookupResponse;
+      response = await this.indexer.lookupTransactionByID(txid).do();
     } catch (error) {
       throw new CashflowTxError(
         `Could not look up transaction ${txid}: ${errorMessage(error)}`,
@@ -282,14 +279,20 @@ function readTxType(tx: IndexerTransactionLike): string | undefined {
 
 function readRoundTime(tx: IndexerTransactionLike): number | undefined {
   const value = tx.roundTime ?? tx["round-time"];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function normalizeAssetId(raw: number | string | bigint | undefined): number {
   if (typeof raw === "number" && Number.isInteger(raw) && raw >= 0) {
     return raw;
   }
-  if (typeof raw === "bigint" && raw >= 0n && raw <= BigInt(Number.MAX_SAFE_INTEGER)) {
+  if (
+    typeof raw === "bigint" &&
+    raw >= 0n &&
+    raw <= BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
     return Number(raw);
   }
   if (typeof raw === "string" && /^[0-9]+$/.test(raw)) {

@@ -19,10 +19,7 @@ import {
 } from "./health.js";
 import type { OperatorPauseStore } from "./operator-pause.js";
 import { RunCoordinatorBusyError } from "./run-coordinator.js";
-import {
-  TelegramBotClient,
-  type TelegramUpdate,
-} from "./telegram-bot.js";
+import { TelegramBotClient, type TelegramUpdate } from "./telegram-bot.js";
 import {
   RunInProgressError,
   type TreasuryReviewService,
@@ -135,20 +132,30 @@ export function createOperatorCommandHandlers(
     help: () => Promise.resolve(HELP_TEXT),
     start: () => Promise.resolve(HELP_TEXT),
     status: () =>
-      Promise.resolve(formatStatusReply(buildHealthReport(deps.getHealthInput()))),
-    run: async (ctx) => {
+      Promise.resolve(
+        formatStatusReply(buildHealthReport(deps.getHealthInput())),
+      ),
+    run: (ctx) => {
       if (deps.getHealthInput().busy) {
-        throw new Error("A run is already in progress. Try again shortly.");
+        return Promise.reject(
+          new Error("A run is already in progress. Try again shortly."),
+        );
       }
       void runReviewInBackground(deps, ctx);
-      return "Treasury review starting… Digest will follow when it finishes.";
+      return Promise.resolve(
+        "Treasury review starting… Digest will follow when it finishes.",
+      );
     },
-    accounting: async (ctx) => {
+    accounting: (ctx) => {
       if (deps.getHealthInput().busy) {
-        throw new Error("A run is already in progress. Try again shortly.");
+        return Promise.reject(
+          new Error("A run is already in progress. Try again shortly."),
+        );
       }
       void runAccountingInBackground(deps, ctx);
-      return "Accounting snapshot starting… Digest will follow when it finishes.";
+      return Promise.resolve(
+        "Accounting snapshot starting… Digest will follow when it finishes.",
+      );
     },
     deposit: async (ctx) =>
       recordCashflowCommand(
@@ -251,7 +258,9 @@ async function handleUnwindCommand(
     const body = formatUnwindPreview(plan);
     return notes.length > 0 ? `${body}\n\n${notes.join("\n")}` : body;
   } catch (error) {
-    throw new Error(sanitizeErrorMessage(error, { maxLength: 350 }));
+    throw new Error(sanitizeErrorMessage(error, { maxLength: 350 }), {
+      cause: error,
+    });
   }
 }
 
@@ -344,7 +353,7 @@ async function recordCashflowCommand(
       } · tx ${shortTxid(txid)}`;
     }
     if (error instanceof CashflowTxError) {
-      throw new Error(error.message);
+      throw new Error(error.message, { cause: error });
     }
     if (
       error instanceof Error &&
@@ -352,6 +361,7 @@ async function recordCashflowCommand(
     ) {
       throw new Error(
         `A different cashflow is already stored for tx ${shortTxid(txid)}`,
+        { cause: error },
       );
     }
     throw error;
@@ -514,7 +524,10 @@ export class TelegramCommandLoop {
       await reply(messageText);
     } catch (error) {
       const text = sanitizeErrorMessage(error, { maxLength: 400 });
-      this.logger.error({ err: text, command: command.name }, "telegram command failed");
+      this.logger.error(
+        { err: text, command: command.name },
+        "telegram command failed",
+      );
       try {
         await this.client.sendText(
           chatId,

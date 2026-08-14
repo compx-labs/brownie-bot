@@ -75,7 +75,7 @@ zs-proxy):
 
 ```dotenv
 OPENAI_BASE_URL="http://127.0.0.1:8080/v1"
-OPEN_AI_API_KEY="zerosignal"
+OPEN_AI_API_KEY="zerosignal" # pragma: allowlist secret
 OPENAI_MODEL="glm-5.2"
 OPENAI_REASONING_EFFORT="medium"
 AI_MODE=full
@@ -92,7 +92,7 @@ mode.
 `OPEN_AI_API_KEY` is a non-empty placeholder for the OpenAI SDK; zs-proxy ignores
 it. The model receives discovered Canix402 data and quote-generation tools but
 cannot access the mnemonic, payment signature, local signing, or Algod
-submission. The host injects `BOT_WALLET`, `inferenceProvider: "zerosignal"`, and
+submission. The host injects `BOT_WALLET`, `inferenceProvider: "zerosignal"`, and <!-- pragma: allowlist secret -->
 planning guidance (position / protocol caps, liquid reserve, TVL and freshness
 floors). Concentration and reserve limits are soft notes in the plan report.
 With signing disabled, dry runs always surface the plan and do not call
@@ -387,19 +387,19 @@ When Telegram is configured, the **long-lived server** (`npm start` / Docker
 default `dist/index.js`) also long-polls for operator slash commands from
 `TELEGRAM_CHAT_ID` only:
 
-| Command       | Behavior                                                      |
-| ------------- | ------------------------------------------------------------- |
-| `/help`       | List commands                                                 |
-| `/status`     | Health / busy / paused / signing / last-run ages              |
-| `/run`        | Force a treasury review (acks immediately; digest follows)    |
-| `/accounting` | Force an accounting snapshot (acks immediately; digest follows) |
-| `/deposit <txid>` | Record external funding from a pay/axfer transaction      |
-| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction |
-| `/unwind`     | Preview host close-all (positions + LST receipts); then `/unwind confirm` |
-| `/unwind confirm` | Execute pending unwind (multi-wave until flat or stuck) |
-| `/unwind cancel` | Discard pending unwind preview |
-| `/pause`      | Hold trading; reviews continue as plan-only                   |
-| `/resume`     | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`) |
+| Command            | Behavior                                                                  |
+| ------------------ | ------------------------------------------------------------------------- |
+| `/help`            | List commands                                                             |
+| `/status`          | Health / busy / paused / signing / last-run ages                          |
+| `/run`             | Force a treasury review (acks immediately; digest follows)                |
+| `/accounting`      | Force an accounting snapshot (acks immediately; digest follows)           |
+| `/deposit <txid>`  | Record external funding from a pay/axfer transaction                      |
+| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction                   |
+| `/unwind`          | Preview host close-all (positions + LST receipts); then `/unwind confirm` |
+| `/unwind confirm`  | Execute pending unwind (multi-wave until flat or stuck)                   |
+| `/unwind cancel`   | Discard pending unwind preview                                            |
+| `/pause`           | Hold trading; reviews continue as plan-only                               |
+| `/resume`          | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`)      |
 
 Pause is a durable runtime kill-switch (wallet-scoped JSON under
 `ACCOUNTING_DATA_DIR`). It does not change the env signing flag; `/resume`

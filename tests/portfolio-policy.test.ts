@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { PortfolioAction } from "../src/domain.js";
-import { PortfolioPolicy, normalizePortfolioPlan, syncSwapAuthorizedSpend } from "../src/services/portfolio-policy.js";
+import {
+  PortfolioPolicy,
+  normalizePortfolioPlan,
+  syncSwapAuthorizedSpend,
+} from "../src/services/portfolio-policy.js";
 import {
   enterShape,
   opportunity,
@@ -306,9 +310,7 @@ describe("PortfolioPolicy", () => {
   });
 
   it("warns on stale opportunity sourceTimestamp without blocking open actions", () => {
-    const staleTimestamp = new Date(
-      Date.now() - 48 * 3_600_000,
-    ).toISOString();
+    const staleTimestamp = new Date(Date.now() - 48 * 3_600_000).toISOString();
     const candidate = opportunity({
       sourceTimestamp: staleTimestamp,
       fetchedAt: new Date().toISOString(),
@@ -1054,9 +1056,7 @@ describe("PortfolioPolicy", () => {
               assetId: 31_566_704,
               assetAmount: "30000000",
             },
-            authorizedSpends: [
-              { assetId: 31_566_704, amountRaw: "30000000" },
-            ],
+            authorizedSpends: [{ assetId: 31_566_704, amountRaw: "30000000" }],
             dependencies: [
               "mainnet:folks-finance:v2:setup:depositEscrow",
               "mainnet:folks-finance:v2:setup:optEscrowAsset",
@@ -1609,8 +1609,7 @@ describe("syncSwapAuthorizedSpend", () => {
 });
 
 describe("claim-all zero amount normalization", () => {
-  const claimShape =
-    "mainnet:tinyman:staking-v1:farm:claimRewards";
+  const claimShape = "mainnet:tinyman:staking-v1:farm:claimRewards";
   const rewardPositionId =
     "tinyman:reward:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ:123456:31566704";
 

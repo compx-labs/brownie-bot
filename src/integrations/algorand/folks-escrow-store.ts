@@ -24,7 +24,9 @@ export interface FolksEscrowStore {
     walletAddress: string,
     poolAppId: number,
   ): Promise<FolksEscrowRecord | undefined>;
-  save(record: Omit<FolksEscrowRecord, "updatedAt">): Promise<FolksEscrowRecord>;
+  save(
+    record: Omit<FolksEscrowRecord, "updatedAt">,
+  ): Promise<FolksEscrowRecord>;
 }
 
 export class LocalFolksEscrowStore implements FolksEscrowStore {
@@ -35,7 +37,10 @@ export class LocalFolksEscrowStore implements FolksEscrowStore {
     poolAppId: number,
   ): Promise<FolksEscrowRecord | undefined> {
     try {
-      const raw = await readFile(this.filePath(walletAddress, poolAppId), "utf8");
+      const raw = await readFile(
+        this.filePath(walletAddress, poolAppId),
+        "utf8",
+      );
       return escrowRecordSchema.parse(JSON.parse(raw));
     } catch (error) {
       if (isErrnoNotFound(error)) {
@@ -104,7 +109,9 @@ export class SpacesFolksEscrowStore implements FolksEscrowStore {
     walletAddress: string,
     poolAppId: number,
   ): Promise<FolksEscrowRecord | undefined> {
-    const payload = await this.getJson(this.objectKey(walletAddress, poolAppId));
+    const payload = await this.getJson(
+      this.objectKey(walletAddress, poolAppId),
+    );
     if (payload === undefined) {
       return undefined;
     }
@@ -203,9 +210,9 @@ function trimSlashes(value: string): string {
 function isErrnoNotFound(error: unknown): boolean {
   return Boolean(
     error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: string }).code === "ENOENT",
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: string }).code === "ENOENT",
   );
 }
 

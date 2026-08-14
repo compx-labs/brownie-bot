@@ -224,11 +224,13 @@ describe("TreasuryReviewService", () => {
 
   it("sanitizes HTML gateway timeouts from the portfolio agent", async () => {
     const agent: PortfolioAgent = {
-      run: vi.fn().mockRejectedValue(
-        new Error(
-          `504 <!DOCTYPE html><html><title>504 Gateway Timeout</title><h3>We could not establish a connection to nauvoo.belt.algo.xyz</h3></html>`,
+      run: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            `504 <!DOCTYPE html><html><title>504 Gateway Timeout</title><h3>We could not establish a connection to nauvoo.belt.algo.xyz</h3></html>`,
+          ),
         ),
-      ),
     };
     const { instance } = service(agent);
 
@@ -596,16 +598,18 @@ describe("TreasuryReviewService", () => {
         toolCalls: [],
       }),
     };
-    const executeAction = vi.fn().mockImplementation((action: PortfolioAction) =>
-      Promise.resolve({
-        outcome: {
-          actionId: action.id,
-          status: "confirmed",
-          transactionId: `TX-${action.id}`,
-        },
-        payments: [],
-      }),
-    );
+    const executeAction = vi
+      .fn()
+      .mockImplementation((action: PortfolioAction) =>
+        Promise.resolve({
+          outcome: {
+            actionId: action.id,
+            status: "confirmed",
+            transactionId: `TX-${action.id}`,
+          },
+          payments: [],
+        }),
+      );
     const deps = dependencies(agent);
     const instance = new TreasuryReviewService(
       deps.agent,
@@ -694,7 +698,8 @@ describe("TreasuryReviewService", () => {
       status: "partially-executed" as const,
       mode: "autonomous" as const,
       signingEnabled: true,
-      walletAddress: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      walletAddress:
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
       plan: portfolioPlan({
         actions: [
           {

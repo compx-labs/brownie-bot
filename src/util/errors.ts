@@ -86,7 +86,8 @@ function classifyHtmlOrGatewayFailure(
 ): string | null {
   const htmlCandidate = body || fullText;
   const isHtml = looksLikeHtml(htmlCandidate);
-  const gatewayPhrase = extractGatewayPhrase(htmlCandidate) ?? extractGatewayPhrase(fullText);
+  const gatewayPhrase =
+    extractGatewayPhrase(htmlCandidate) ?? extractGatewayPhrase(fullText);
   if (!isHtml && !gatewayPhrase && status === undefined) {
     return null;
   }
@@ -127,7 +128,7 @@ function classifyHtmlOrGatewayFailure(
 function resolveProvider(text: string, origin: string | null): string {
   if (
     origin?.endsWith(".belt.algo.xyz") ||
-    /\bzerosignal\b|\bzs-proxy\b|\/v1\/responses\b/i.test(text)
+    /\bzerosignal\b|\bzs-proxy\b|\/v1\/responses\b/i.test(text) // pragma: allowlist secret
   ) {
     return "ZeroSignal";
   }

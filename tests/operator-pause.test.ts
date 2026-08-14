@@ -14,7 +14,9 @@ describe("OperatorPauseStore", () => {
     vi.restoreAllMocks();
   });
 
-  async function createStore(prefix = "brownie-bot"): Promise<OperatorPauseStore> {
+  async function createStore(
+    prefix = "brownie-bot",
+  ): Promise<OperatorPauseStore> {
     rootDir = await mkdtemp(join(tmpdir(), "operator-pause-"));
     return new OperatorPauseStore({
       rootDir,
