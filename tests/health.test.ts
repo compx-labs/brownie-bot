@@ -120,6 +120,33 @@ describe("buildHealthReport", () => {
       "ZeroSignal proxy unreachable: HTTP 503",
     );
   });
+
+  it("passes through daily spend used and remaining", () => {
+    const report = buildHealthReport({
+      ...base,
+      latestReview: review(),
+      latestAccounting: accounting(),
+      spend: {
+        dayUtc: "2026-08-14",
+        timezone: "UTC",
+        canix: {
+          usedUsdc: "0.12",
+          capUsdc: "5",
+          remainingUsdc: "4.88",
+          uncapped: false,
+        },
+        zs: {
+          usedUsdc: "0",
+          capUsdc: null,
+          remainingUsdc: null,
+          uncapped: true,
+        },
+      },
+    });
+    expect(report.status).toBe("ok");
+    expect(report.spend?.canix.remainingUsdc).toBe("4.88");
+    expect(report.spend?.zs.uncapped).toBe(true);
+  });
 });
 
 describe("dependency URL helpers", () => {

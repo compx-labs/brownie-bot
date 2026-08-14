@@ -59,6 +59,7 @@ Execution-time (not `PortfolioPolicy`, but related operator limits):
 | `MAX_SLIPPAGE_BPS` | `100` | Passed into quote inputs / swap paths |
 | `MAX_PRICE_IMPACT_PCT` | `3` | Hard fail at execution for Haystack quotes above impact (waived when swap `toAssetId` is in `PREFERRED_HOLD_ASSETS`) |
 | `MAX_DAILY_X402_BASE_UNITS` | `5000000` | x402 spend budget (payments), not portfolio concentration |
+| `MAX_DAILY_ZS_USDC` | `5` | Display-only zs-proxy daily cap on `/status` and `/health` (match `daily_cap_usdc`; `0` = uncapped). Not enforced by the bot. |
 
 ---
 

@@ -50,4 +50,12 @@ describe("inference-cost", () => {
     expect(summarizeInferenceCosts([])).toBeUndefined();
     expect(formatInferenceCostLine(undefined)).toBeUndefined();
   });
+
+  it("returns undefined when the amount header is invalid", () => {
+    expect(
+      parseInferenceCostFromHeaders(
+        new Headers({ "X-Zs-Inference-Amount": "not-a-number" }),
+      ),
+    ).toBeUndefined();
+  });
 });

@@ -125,6 +125,12 @@ const configSchema = z
       .int()
       .positive()
       .default(5_000_000),
+    /**
+     * Display-only zs-proxy daily cap in USDC (matches zs-proxy
+     * `spend.daily_cap_usdc` / `PROXY_SPEND_DAILY_CAP_USDC` by default).
+     * `0` = show "uncapped". The bot does not enforce this cap.
+     */
+    MAX_DAILY_ZS_USDC: z.coerce.number().nonnegative().default(5),
     MIN_PROJECTED_NET_IMPROVEMENT_USD: z.coerce
       .number()
       .nonnegative()

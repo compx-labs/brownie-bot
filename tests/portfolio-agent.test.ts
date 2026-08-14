@@ -82,7 +82,14 @@ function toolSchema(name: string) {
 
 function setup(
   responses: unknown[],
-  options?: { signingEnabled?: boolean; aiMode?: "full" | "lite" },
+  options?: {
+    signingEnabled?: boolean;
+    aiMode?: "full" | "lite";
+    onInferenceCharge?: (charge: {
+      amountUsdc: string;
+      headers: Record<string, string>;
+    }) => void | Promise<void>;
+  },
 ) {
   const create = vi.fn();
   responses.forEach((response) => create.mockResolvedValueOnce(response));
@@ -129,6 +136,7 @@ function setup(
         preferredHoldAssets: [],
       },
       signingEnabled: options?.signingEnabled ?? false,
+      onInferenceCharge: options?.onInferenceCharge,
     }),
     create,
     callManagedTool,
@@ -280,6 +288,51 @@ describe("OpenAiPortfolioAgent", () => {
         },
       ],
     });
+  });
+
+  it("records inference charges when X-Zs-Inference-Amount is present", async () => {
+    const onInferenceCharge = vi.fn();
+    const { agent } = setup(
+      [
+        {
+          data: {
+            id: "response-1",
+            output: [],
+            output_text: JSON.stringify(portfolioPlan()),
+          },
+          headers: { "X-Zs-Inference-Amount": "0.0042" },
+        },
+      ],
+      { aiMode: "lite", onInferenceCharge },
+    );
+
+    await agent.run();
+    expect(onInferenceCharge).toHaveBeenCalledOnce();
+    expect(onInferenceCharge).toHaveBeenCalledWith({
+      amountUsdc: "0.0042",
+      headers: { "x-zs-inference-amount": "0.0042" },
+    });
+  });
+
+  it("does not invent an inference price when cost headers are missing", async () => {
+    const onInferenceCharge = vi.fn();
+    const { agent } = setup(
+      [
+        {
+          data: {
+            id: "response-1",
+            output: [],
+            output_text: JSON.stringify(portfolioPlan()),
+          },
+          headers: { "x-zs-other": "meta" },
+        },
+      ],
+      { aiMode: "lite", onInferenceCharge },
+    );
+
+    const result = await agent.run();
+    expect(onInferenceCharge).not.toHaveBeenCalled();
+    expect(result.inferenceCost).toBeUndefined();
   });
 
   it("appends operator preferences to lite instructions when provided", async () => {
@@ -888,7 +941,9 @@ describe("OpenAiPortfolioAgent", () => {
     }
 
     await expect(finalResponseFromStream(events())).resolves.toEqual(completed);
-    await expect(finalResponseFromStream(completed)).resolves.toEqual(completed);
+    await expect(finalResponseFromStream(completed)).resolves.toEqual(
+      completed,
+    );
     await expect(
       finalResponseFromStream(
         (async function* () {
@@ -1462,6 +1517,8 @@ describe("buildPriorReviewContext", () => {
     expect(PORTFOLIO_AGENT_PROMPT_LITE).toContain(
       "policyApproved/violations/warnings",
     );
-    expect(PORTFOLIO_AGENT_PROMPT_LITE).toContain("replan sizes against today's snapshot");
+    expect(PORTFOLIO_AGENT_PROMPT_LITE).toContain(
+      "replan sizes against today's snapshot",
+    );
   });
 });

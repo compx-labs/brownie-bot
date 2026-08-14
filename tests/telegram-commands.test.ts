@@ -127,7 +127,9 @@ describe("createCommandDispatcher", () => {
       help: () => Promise.resolve("help-ok"),
     });
     await expect(
-      dispatch(commandCtx({ command: { name: "help", args: "", raw: "/help" } })),
+      dispatch(
+        commandCtx({ command: { name: "help", args: "", raw: "/help" } }),
+      ),
     ).resolves.toBe("help-ok");
 
     const unknown = await dispatch(
@@ -143,7 +145,9 @@ describe("createOperatorCommandHandlers", () => {
     const handlers = createOperatorCommandHandlers(baseHandlerDeps());
 
     await expect(
-      handlers.help!(commandCtx({ command: { name: "help", args: "", raw: "/help" } })),
+      handlers.help!(
+        commandCtx({ command: { name: "help", args: "", raw: "/help" } }),
+      ),
     ).resolves.toContain("/unwind");
 
     const status = await handlers.status!(
@@ -154,12 +158,16 @@ describe("createOperatorCommandHandlers", () => {
     expect(status).toContain("Signing: disabled");
 
     await expect(
-      handlers.run!(commandCtx({ command: { name: "run", args: "", raw: "/run" } })),
+      handlers.run!(
+        commandCtx({ command: { name: "run", args: "", raw: "/run" } }),
+      ),
     ).rejects.toThrow(/already in progress/i);
 
     await expect(
       handlers.accounting!(
-        commandCtx({ command: { name: "accounting", args: "", raw: "/accounting" } }),
+        commandCtx({
+          command: { name: "accounting", args: "", raw: "/accounting" },
+        }),
       ),
     ).rejects.toThrow(/already in progress/i);
   });
@@ -182,7 +190,9 @@ describe("createOperatorCommandHandlers", () => {
     );
 
     await expect(
-      handlers.run!(commandCtx({ command: { name: "run", args: "", raw: "/run" } })),
+      handlers.run!(
+        commandCtx({ command: { name: "run", args: "", raw: "/run" } }),
+      ),
     ).rejects.toThrow(/already in progress/i);
     expect(run).not.toHaveBeenCalled();
   });
@@ -570,9 +580,8 @@ describe("createOperatorCommandHandlers", () => {
   });
 
   it("acks already-recorded cashflows without failing", async () => {
-    const { CashflowAlreadyRecordedError } = await import(
-      "../src/services/accounting.js"
-    );
+    const { CashflowAlreadyRecordedError } =
+      await import("../src/services/accounting.js");
     const handlers = createOperatorCommandHandlers(
       baseHandlerDeps({
         accountingService: {
@@ -634,6 +643,47 @@ describe("formatStatusReply", () => {
     expect(text).toContain("Latest accounting: none");
     expect(text).toContain("Warnings:");
   });
+
+  it("includes daily Canix and inference remaining lines", () => {
+    const report: HealthReport = {
+      status: "ok",
+      mode: "autonomous",
+      signingEnabled: false,
+      paused: false,
+      walletConfigured: true,
+      telegramConfigured: true,
+      accountingEnabled: true,
+      accountingStorage: "local",
+      folksEscrowStorage: "local",
+      busy: false,
+      latestReview: null,
+      latestAccounting: null,
+      warnings: [],
+      spend: {
+        dayUtc: "2026-08-14",
+        timezone: "UTC",
+        canix: {
+          usedUsdc: "0.12",
+          capUsdc: "5",
+          remainingUsdc: "4.88",
+          uncapped: false,
+        },
+        zs: {
+          usedUsdc: "0.0042",
+          capUsdc: "5",
+          remainingUsdc: "4.9958",
+          uncapped: false,
+        },
+      },
+    };
+    const text = formatStatusReply(report);
+    expect(text).toContain(
+      "Canix x402 today (UTC): $0.12 used, $4.88 remaining",
+    );
+    expect(text).toContain(
+      "ZS today (UTC): $0.0042 used, $4.9958 remaining",
+    );
+  });
 });
 
 describe("TelegramBotClient", () => {
@@ -669,8 +719,7 @@ describe("TelegramBotClient", () => {
 
     await client.sendText("42", "hello");
     const secondCall = fetchImpl.mock.calls[1]?.[1] as
-      | { body?: string }
-      | undefined;
+      { body?: string } | undefined;
     const sendBody = JSON.parse(String(secondCall?.body ?? "{}")) as Record<
       string,
       unknown
@@ -707,7 +756,11 @@ describe("TelegramCommandLoop", () => {
 
     await loop.handleUpdate({
       update_id: 2,
-      message: { message_id: 2, text: "not a command", chat: { id: "allowed" } },
+      message: {
+        message_id: 2,
+        text: "not a command",
+        chat: { id: "allowed" },
+      },
     });
     expect(dispatch).not.toHaveBeenCalled();
   });
@@ -817,8 +870,7 @@ describe("TelegramCommandLoop", () => {
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     const firstCall = dispatch.mock.calls[0]?.[0] as
-      | { command: { name: string } }
-      | undefined;
+      { command: { name: string } } | undefined;
     expect(firstCall?.command.name).toBe("help");
     expect(getUpdates.mock.calls[0]?.[0]).toMatchObject({ timeout: 0 });
   });
