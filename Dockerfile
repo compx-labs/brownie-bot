@@ -16,7 +16,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
-ARG ZS_PROXY_VERSION=0.14.2
+ARG ZS_PROXY_VERSION=0.15.1
 # TARGETARCH is set by BuildKit; fall back to uname for classic docker build.
 ARG TARGETARCH
 RUN set -eux; \
