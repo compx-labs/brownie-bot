@@ -1,7 +1,7 @@
 import algosdk from "algosdk";
 import { describe, expect, it, vi } from "vitest";
 
-import type { PortfolioAction } from "../src/domain.js";
+import type { ExecutionOutcome, PortfolioAction } from "../src/domain.js";
 import {
   AlgorandExecutionService,
   applyUniqueTransactionNotes,
@@ -616,7 +616,7 @@ describe("AlgorandExecutionService multi-quote", () => {
             actionId: string,
             encoded: string[],
             extra?: Map<string, Uint8Array>,
-          ) => Promise<{ outcome: { actionId: string; status: string } }>;
+          ) => Promise<{ outcome: ExecutionOutcome }>;
         },
         "signAndSubmitEncoded",
       )
@@ -776,7 +776,7 @@ describe("AlgorandExecutionService multi-quote", () => {
             actionId: string,
             encoded: string[],
             extra?: Map<string, Uint8Array>,
-          ) => Promise<{ outcome: { actionId: string; status: string } }>;
+          ) => Promise<{ outcome: ExecutionOutcome }>;
         },
         "signAndSubmitEncoded",
       )
@@ -942,7 +942,7 @@ describe("AlgorandExecutionService multi-quote", () => {
           actionId: string,
           encoded: string[],
           extra?: Map<string, Uint8Array>,
-        ) => Promise<{ outcome: { actionId: string; status: string } }>;
+        ) => Promise<{ outcome: ExecutionOutcome }>;
       },
       "signAndSubmitEncoded",
     ).mockResolvedValue({
@@ -1154,7 +1154,7 @@ describe("clampActionAmountToSpendable", () => {
         signAndSubmitEncoded: (
           actionId: string,
           encoded: string[],
-        ) => Promise<{ outcome: { actionId: string; status: string } }>;
+        ) => Promise<{ outcome: ExecutionOutcome }>;
       },
       "signAndSubmitEncoded",
     ).mockResolvedValue({
@@ -1353,7 +1353,7 @@ describe("Haystack swap price impact", () => {
         signAndSubmit: (
           actionId: string,
           members: unknown[],
-        ) => Promise<{ outcome: { actionId: string; status: string } }>;
+        ) => Promise<{ outcome: ExecutionOutcome }>;
       },
       "signAndSubmit",
     ).mockResolvedValue({
