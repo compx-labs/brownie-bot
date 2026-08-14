@@ -388,19 +388,19 @@ When Telegram is configured, the **long-lived server** (`npm start` / Docker
 default `dist/index.js`) also long-polls for operator slash commands from
 `TELEGRAM_CHAT_ID` only:
 
-| Command            | Behavior                                                                                        |
-| ------------------ | ----------------------------------------------------------------------------------------------- |
-| `/help`            | List commands                                                                                   |
-| `/status`          | Health / busy / paused / signing / last-run ages / daily Canix x402 + ZS used+remaining         |
-| `/run`             | Force a treasury review (acks immediately; digest follows)                                      |
-| `/accounting`      | Force an accounting snapshot (acks immediately; digest follows)                                 |
-| `/deposit <txid>`  | Record external funding from a pay/axfer transaction                                            |
-| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction                                         |
-| `/unwind`          | Preview host close-all (positions + LST receipts); then `/unwind confirm`                       |
-| `/unwind confirm`  | Execute pending unwind (multi-wave until flat or stuck)                                         |
-| `/unwind cancel`   | Discard pending unwind preview                                                                  |
-| `/pause`           | Hold trading; reviews continue as plan-only                                                     |
-| `/resume`          | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`)                            |
+| Command            | Behavior                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------- |
+| `/help`            | List commands                                                                           |
+| `/status`          | Health / busy / paused / signing / last-run ages / daily Canix x402 + ZS used+remaining |
+| `/run`             | Force a treasury review (acks immediately; digest follows)                              |
+| `/accounting`      | Force an accounting snapshot (acks immediately; digest follows)                         |
+| `/deposit <txid>`  | Record external funding from a pay/axfer transaction                                    |
+| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction                                 |
+| `/unwind`          | Preview host close-all (positions + LST receipts); then `/unwind confirm`               |
+| `/unwind confirm`  | Execute pending unwind (multi-wave until flat or stuck)                                 |
+| `/unwind cancel`   | Discard pending unwind preview                                                          |
+| `/pause`           | Hold trading; reviews continue as plan-only                                             |
+| `/resume`          | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`)                    |
 
 Pause is a durable runtime kill-switch (wallet-scoped JSON under
 `ACCOUNTING_DATA_DIR`). It does not change the env signing flag; `/resume`

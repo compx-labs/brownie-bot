@@ -15,9 +15,9 @@ describe("InceptionReviewService.commitReview", () => {
       putInceptionReview: vi.fn(),
     };
     const accounting = {
-      recordCashflow: vi.fn(async (input) => {
+      recordCashflow: vi.fn((input: unknown) => {
         cashflows.push(input);
-        return input;
+        return Promise.resolve(input);
       }),
     };
     const service = new InceptionReviewService(

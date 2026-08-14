@@ -132,7 +132,11 @@ export async function enrichOpportunitiesWithHeldPositions(
 
   for (const [protocol, wanted] of missingByProtocol) {
     let offset = 0;
-    for (let page = 0; page < HELD_PROTOCOL_MAX_PAGES && wanted.size > 0; page++) {
+    for (
+      let page = 0;
+      page < HELD_PROTOCOL_MAX_PAGES && wanted.size > 0;
+      page++
+    ) {
       const result = await canix.callManagedTool(
         "canix_get_protocol_opportunities",
         {

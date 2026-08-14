@@ -5,8 +5,7 @@ import { SpacesFolksEscrowStore } from "../src/integrations/algorand/folks-escro
 
 describe("SpacesFolksEscrowStore", () => {
   it("reads and writes escrow records under the wallet prefix", async () => {
-    const wallet =
-      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+    const wallet = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
     const escrowAddress = algosdk.generateAccount().addr.toString();
     const sends: Array<{ Key?: string; Body?: string }> = [];
     const client = {

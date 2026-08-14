@@ -28,21 +28,21 @@ function mockPauseStore(): OperatorPauseStore {
       source: null,
     }),
     hydrate: vi.fn(),
-    pause: vi.fn(async () => {
+    pause: vi.fn(() => {
       paused = true;
-      return {
+      return Promise.resolve({
         paused: true,
         updatedAt: "2026-07-30T00:00:00.000Z",
         source: "telegram" as const,
-      };
+      });
     }),
-    resume: vi.fn(async () => {
+    resume: vi.fn(() => {
       paused = false;
-      return {
+      return Promise.resolve({
         paused: false,
         updatedAt: "2026-07-30T00:00:00.000Z",
         source: "telegram" as const,
-      };
+      });
     }),
   } as unknown as OperatorPauseStore;
 }
@@ -680,9 +680,7 @@ describe("formatStatusReply", () => {
     expect(text).toContain(
       "Canix x402 today (UTC): $0.12 used, $4.88 remaining",
     );
-    expect(text).toContain(
-      "ZS today (UTC): $0.0042 used, $4.9958 remaining",
-    );
+    expect(text).toContain("ZS today (UTC): $0.0042 used, $4.9958 remaining");
   });
 });
 
@@ -790,7 +788,7 @@ describe("TelegramCommandLoop", () => {
     expect(dispatch).toHaveBeenCalledWith({
       chatId: "9",
       command: { name: "status", args: "", raw: "/status@Bot" },
-      reply: expect.any(Function),
+      reply: expect.any(Function) as (text: string) => Promise<void>,
     });
     expect(sendText).toHaveBeenCalledWith("9", "status-ok");
   });

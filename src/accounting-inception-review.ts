@@ -115,7 +115,9 @@ try {
   if (args.commit) {
     let review;
     if (args.reviewPath) {
-      const raw = JSON.parse(await readFile(args.reviewPath, "utf8")) as unknown;
+      const raw = JSON.parse(
+        await readFile(args.reviewPath, "utf8"),
+      ) as unknown;
       review = inceptionReviewSchema.parse(raw);
     } else {
       review = await store.getInceptionReview(config.BOT_WALLET);

@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { Canix402Client } from "../src/integrations/canix402/client.js";
 import type { PortfolioReader } from "../src/integrations/algorand/portfolio.js";
 import { portfolioPlanSchema } from "../src/domain.js";
-import type { ReviewRun } from "../src/domain.js";
 import {
   OpenAiPortfolioAgent,
   MAX_OPPORTUNITY_TOOL_LIMIT,
@@ -935,6 +934,7 @@ describe("OpenAiPortfolioAgent", () => {
       output_text: "done",
     };
     async function* events() {
+      await Promise.resolve();
       yield { type: "response.created", response: { id: "resp-1" } };
       yield { type: "response.output_text.delta", delta: "do" };
       yield { type: "response.completed", response: completed };
@@ -947,6 +947,7 @@ describe("OpenAiPortfolioAgent", () => {
     await expect(
       finalResponseFromStream(
         (async function* () {
+          await Promise.resolve();
           yield {
             type: "response.failed",
             response: { error: { message: "operator down" } },
@@ -1349,7 +1350,7 @@ describe("buildPriorReviewContext", () => {
       buildPriorReviewContext({
         ...baseRun,
         status: "no-op",
-      } as ReviewRun),
+      }),
     ).toBeUndefined();
   });
 
@@ -1398,7 +1399,7 @@ describe("buildPriorReviewContext", () => {
         },
       },
       executions: [],
-    } as ReviewRun);
+    });
 
     expect(context).toMatchObject({
       id: "run-1",
@@ -1473,7 +1474,7 @@ describe("buildPriorReviewContext", () => {
           error: DEFERRED_DEPENDENT_ACTION_ERROR,
         },
       ],
-    } as ReviewRun);
+    });
 
     expect(context?.actions).toEqual([
       {
@@ -1502,7 +1503,7 @@ describe("buildPriorReviewContext", () => {
       ...baseRun,
       status: "reported",
       planParseError: "invalid portfolio_plan JSON",
-    } as ReviewRun);
+    });
 
     expect(context).toEqual({
       id: "run-1",

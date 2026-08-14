@@ -498,7 +498,9 @@ describe("AccountingService", () => {
     expect(run.status).toBe("completed");
     expect(store.publicPnls).toHaveLength(0);
     expect(
-      run.summary?.notes.some((note) => note.includes("Public PnL write failed")),
+      run.summary?.notes.some((note) =>
+        note.includes("Public PnL write failed"),
+      ),
     ).toBe(true);
     expect(notifier.sendAccounting).toHaveBeenCalledOnce();
   });
@@ -518,7 +520,9 @@ describe("toPublicPnl", () => {
       pnlAvailable: true,
       navDeltaUsd: "2.00",
       netExternalCashflowUsd: "0",
-      defiByProtocol: [{ protocol: "folks", valueUsd: "5.00", positionCount: 1 }],
+      defiByProtocol: [
+        { protocol: "folks", valueUsd: "5.00", positionCount: 1 },
+      ],
       defiValueUsd: "5.00",
       walletAsaValueUsd: "5.00",
       unpricedAssetIds: [99],
@@ -538,14 +542,25 @@ describe("toPublicPnl", () => {
       pnlAvailable: true,
       navDeltaUsd: "2.00",
       netExternalCashflowUsd: "0",
-      defiByProtocol: [{ protocol: "folks", valueUsd: "5.00", positionCount: 1 }],
+      defiByProtocol: [
+        { protocol: "folks", valueUsd: "5.00", positionCount: 1 },
+      ],
       defiValueUsd: "5.00",
       walletAsaValueUsd: "5.00",
       algoBalance: "1",
       windows: {
-        "7d": expect.objectContaining({ id: "7d", available: false }),
-        "30d": expect.objectContaining({ id: "30d", available: false }),
-        all: expect.objectContaining({ id: "all", available: false }),
+        "7d": expect.objectContaining({
+          id: "7d",
+          available: false,
+        }) as PublicPnl["windows"]["7d"],
+        "30d": expect.objectContaining({
+          id: "30d",
+          available: false,
+        }) as PublicPnl["windows"]["30d"],
+        all: expect.objectContaining({
+          id: "all",
+          available: false,
+        }) as PublicPnl["windows"]["all"],
       },
       navSeries: [],
     });

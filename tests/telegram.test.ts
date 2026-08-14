@@ -365,9 +365,7 @@ describe("describeReviewExecutionGate", () => {
             turnoverPct: 0,
           },
         },
-        executions: [
-          { actionId: "a1", status: "validated-dry-run" },
-        ],
+        executions: [{ actionId: "a1", status: "validated-dry-run" }],
         opportunities: [],
       }),
     ).toMatchObject({

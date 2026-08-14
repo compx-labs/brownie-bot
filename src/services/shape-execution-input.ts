@@ -36,7 +36,11 @@ export function inferExitRequiredInputs(exitShapeKey: string): string[] {
   if (key.includes("folks") && key.includes("repay")) {
     return ["escrowAddress", "repayAmount", "loanAppId", "poolAppId"];
   }
-  if (key.includes("folks") && key.includes("collateral") && key.includes("reduce")) {
+  if (
+    key.includes("folks") &&
+    key.includes("collateral") &&
+    key.includes("reduce")
+  ) {
     return [
       "escrowAddress",
       "amount",
@@ -81,7 +85,10 @@ export function inferEnterRequiredInputs(enterShapeKey: string): string[] {
   if (key.includes("reti") && key.includes("stake")) {
     return ["userAddress", "validatorId", "amount"];
   }
-  if (key.includes("folks") && (key.includes("deposit") || key.includes("supply"))) {
+  if (
+    key.includes("folks") &&
+    (key.includes("deposit") || key.includes("supply"))
+  ) {
     return ["amount", "amountDenomination", "poolAppId"];
   }
   if (key.includes("folks") && key.includes("borrow")) {
@@ -93,7 +100,11 @@ export function inferEnterRequiredInputs(enterShapeKey: string): string[] {
   if (key.includes("folks") && key.includes("addcollateral")) {
     return ["escrowAddress", "loanAppId", "poolAppId"];
   }
-  if (key.includes("folks") && key.includes("collateral") && key.includes("sync")) {
+  if (
+    key.includes("folks") &&
+    key.includes("collateral") &&
+    key.includes("sync")
+  ) {
     return ["escrowAddress", "loanAppId", "poolAppId"];
   }
   if (key.includes("myth") && (key.includes("stake") || key.includes("mint"))) {
@@ -117,7 +128,11 @@ export function inferEnterRequiredInputs(enterShapeKey: string): string[] {
       "maxSlippageBps",
     ];
   }
-  if (key.includes("deposit") || key.includes("stake") || key.includes("supply")) {
+  if (
+    key.includes("deposit") ||
+    key.includes("stake") ||
+    key.includes("supply")
+  ) {
     return ["amount", "assetId"];
   }
   return ["amount"];
@@ -195,7 +210,11 @@ export function firstAsaGateAssetId(
       continue;
     }
     const assetId = (gate as { assetId?: unknown }).assetId;
-    if (typeof assetId === "number" && Number.isInteger(assetId) && assetId >= 0) {
+    if (
+      typeof assetId === "number" &&
+      Number.isInteger(assetId) &&
+      assetId >= 0
+    ) {
       return assetId;
     }
   }
@@ -269,11 +288,7 @@ export function resolveShapeForAction(
   if (!shapeKey) {
     return undefined;
   }
-  const opportunity = findOpportunityForAction(
-    action,
-    opportunities,
-    snapshot,
-  );
+  const opportunity = findOpportunityForAction(action, opportunities, snapshot);
   const position = findPositionForAction(action, snapshot);
   const borrowedHints = borrowInputHints(opportunity);
   const rewardHints = parseTinymanRewardPositionHints(position);
@@ -326,7 +341,10 @@ export function resolveShapeForAction(
     return {
       shapeKey,
       protocol:
-        action.protocol ?? opportunity?.protocol ?? position.protocol ?? "unknown",
+        action.protocol ??
+        opportunity?.protocol ??
+        position.protocol ??
+        "unknown",
       protocolVersion: segments[2] ?? "v1",
       action: segments[3] ?? action.type,
       variant: segments[4] ?? "default",
@@ -355,8 +373,7 @@ function amountsByAssetFromAction(
   for (const spend of action.authorizedSpends) {
     amounts.set(spend.assetId, spend.amountRaw);
   }
-  const exitAmount =
-    action.amountRaw ?? position?.amountRaw ?? undefined;
+  const exitAmount = action.amountRaw ?? position?.amountRaw ?? undefined;
   const assetId = action.fromAssetId ?? position?.assetId ?? null;
   if (exitAmount && assetId !== null && !amounts.has(assetId)) {
     amounts.set(assetId, exitAmount);
@@ -383,8 +400,7 @@ export function completeExecutionInput(options: {
     ...(action.executionInput ?? {}),
   };
   const amountsByAsset = amountsByAssetFromAction(action, position);
-  const exitAmountRaw =
-    action.amountRaw ?? position?.amountRaw ?? undefined;
+  const exitAmountRaw = action.amountRaw ?? position?.amountRaw ?? undefined;
   const algoAmount = amountsByAsset.get(ALGO_ASSET_ID);
   const usdcAmount = amountsByAsset.get(USDC_ASSET_ID);
   const primaryAmount =
@@ -502,7 +518,10 @@ export function completeExecutionInput(options: {
         continue;
       }
     }
-    if (lower === "amountdenomination" && isFolksWithdrawShape(shape.shapeKey)) {
+    if (
+      lower === "amountdenomination" &&
+      isFolksWithdrawShape(shape.shapeKey)
+    ) {
       input[key] = "asset";
       continue;
     }
@@ -511,10 +530,7 @@ export function completeExecutionInput(options: {
         typeof input.depositAssetId === "number"
           ? input.depositAssetId
           : resolveDepositAssetId({ action, input, amountsByAsset });
-      if (
-        depositAssetId !== undefined &&
-        amountsByAsset.has(depositAssetId)
-      ) {
+      if (depositAssetId !== undefined && amountsByAsset.has(depositAssetId)) {
         input[key] = amountsByAsset.get(depositAssetId);
         continue;
       }
@@ -661,8 +677,7 @@ export function completeActionExecutionInput(
   snapshot?: PortfolioSnapshot,
 ): PortfolioAction {
   const position = findPositionForAction(action, snapshot);
-  const opportunityId =
-    action.opportunityId ?? position?.opportunityId ?? null;
+  const opportunityId = action.opportunityId ?? position?.opportunityId ?? null;
   const withOpportunity =
     opportunityId !== action.opportunityId
       ? { ...action, opportunityId }
@@ -672,11 +687,7 @@ export function completeActionExecutionInput(
     // No shape yet — only clear explicit zeros so policy does not hard-block.
     return clearZeroClaimAmount(withOpportunity);
   }
-  const shape = resolveShapeForAction(
-    withOpportunity,
-    opportunities,
-    snapshot,
-  );
+  const shape = resolveShapeForAction(withOpportunity, opportunities, snapshot);
   if (!shape) {
     return clearZeroClaimAmount(withOpportunity);
   }
@@ -715,8 +726,7 @@ export function completeActionExecutionInput(
     }
   }
 
-  const fromAssetId =
-    withOpportunity.fromAssetId ?? position?.assetId ?? null;
+  const fromAssetId = withOpportunity.fromAssetId ?? position?.assetId ?? null;
   const unchanged =
     withOpportunity.executionInput !== null &&
     withOpportunity.opportunityId === opportunityId &&

@@ -185,15 +185,16 @@ export async function runLlmSmoke(
         });
       }
 
-      conversationItems = [...conversationItems, ...response.output, ...outputs];
+      conversationItems = [
+        ...conversationItems,
+        ...response.output,
+        ...outputs,
+      ];
       response = await createSmokeResponse(openai, {
         model: config.OPENAI_MODEL,
         instructions:
           "You are a connectivity smoke test. Use only the provided tool, then answer briefly.",
-        input: [
-          { role: "user", content: initialInput },
-          ...conversationItems,
-        ],
+        input: [{ role: "user", content: initialInput }, ...conversationItems],
         store: false,
         tools,
         tool_choice: "auto",

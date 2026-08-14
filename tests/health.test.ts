@@ -116,9 +116,7 @@ describe("buildHealthReport", () => {
     });
     expect(report.status).toBe("degraded");
     expect(report.deps?.zsProxy.ok).toBe(false);
-    expect(report.warnings).toContain(
-      "ZeroSignal proxy unreachable: HTTP 503",
-    );
+    expect(report.warnings).toContain("ZeroSignal proxy unreachable: HTTP 503"); // pragma: allowlist secret
   });
 
   it("passes through daily spend used and remaining", () => {
