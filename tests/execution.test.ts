@@ -1,7 +1,7 @@
 import algosdk from "algosdk";
 import { describe, expect, it, vi } from "vitest";
 
-import type { PortfolioAction } from "../src/domain.js";
+import type { ExecutionOutcome, PortfolioAction } from "../src/domain.js";
 import {
   AlgorandExecutionService,
   applyUniqueTransactionNotes,
@@ -1353,7 +1353,7 @@ describe("Haystack swap price impact", () => {
         signAndSubmit: (
           actionId: string,
           members: unknown[],
-        ) => Promise<{ outcome: { actionId: string; status: string } }>;
+        ) => Promise<{ outcome: ExecutionOutcome }>;
       },
       "signAndSubmit",
     ).mockResolvedValue({
