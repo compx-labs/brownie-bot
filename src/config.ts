@@ -97,7 +97,7 @@ const optionalEnvSchema = z.object({
   /** Indexer for cashflow tx lookup (`/deposit` `/withdraw`). */
   X402_INDEXER_URL: z.url().default("https://mainnet-idx.algonode.cloud"),
 
-  /** OpenAI-compatible base URL. Default is host-local ZeroSignal zs-proxy. */ // pragma: allowlist secret
+  /** OpenAI-compatible base URL. Default is host-local zs-proxy. */
   OPENAI_BASE_URL: z.preprocess(
     (value) => (value === "" ? undefined : value),
     z.url().default("http://127.0.0.1:8080/v1"), // pragma: allowlist secret
@@ -175,7 +175,7 @@ export const OPTIONAL_ENV_KEYS = Object.keys(optionalEnvSchema.shape) as Array<
 
 /**
  * Docker entrypoint-only (not validated by `loadConfig`). Required when the
- * image uses the file keyring (`ZEROSIGNAL_KEYRING_BACKEND=file`). // pragma: allowlist secret
+ * image uses the file keyring.
  */
 export const DOCKER_REQUIRED_ENV_KEYS = [
   "ZEROSIGNAL_KEYSTORE_PASSPHRASE", // pragma: allowlist secret

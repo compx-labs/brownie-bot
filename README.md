@@ -152,16 +152,15 @@ tree. See also [Ops troubleshooting](#ops-troubleshooting).
 | Key               | Role                                                                              |
 | ----------------- | --------------------------------------------------------------------------------- |
 | `BOT_WALLET`      | Treasury address for Canix personalization (must match the mnemonic when signing) |
-| `WALLET_MNEMONIC` | 25-word signer; pays Canix x402 and ZeroSignal. Never logged or sent to MCP       | <!-- pragma: allowlist secret -->
+| `WALLET_MNEMONIC` | 25-word signer; pays Canix x402 and inference. Never logged or sent to MCP        |
 
 ### Required for Docker
 
 Not validated by `loadConfig`. The image entrypoint needs this for the file
 keyring. Local Node + host `zs-proxy` can omit it.
 
-| Key                              | Role                                           |
-| -------------------------------- | ---------------------------------------------- |
-| `ZEROSIGNAL_KEYSTORE_PASSPHRASE` | Encrypts the in-container zs-proxy wallet file | <!-- pragma: allowlist secret -->
+Required Docker env: `ZEROSIGNAL_KEYSTORE_PASSPHRASE`. <!-- pragma: allowlist secret -->
+Encrypts the in-container zs-proxy wallet file.
 
 ### Optional
 
@@ -618,8 +617,8 @@ Telegram/Spaces) are called out at startup — see
 
 ### zs-proxy down
 
-Reviews and `/run` fail with ZeroSignal connection, timeout, or classified <!-- pragma: allowlist secret -->
-502/504 HTML (`ZeroSignal gateway timeout`). `GET /health?deps=1` shows <!-- pragma: allowlist secret -->
+Reviews and `/run` fail with zs-proxy connection, timeout, or classified
+502/504 HTML (`gateway timeout`). `GET /health?deps=1` shows
 `deps.zsProxy.ok: false`.
 
 - **Local Node:** start `zs-proxy proxy start` on the host, then
@@ -627,8 +626,9 @@ Reviews and `/run` fail with ZeroSignal connection, timeout, or classified <!-- 
   same `WALLET_MNEMONIC` and run `zs-proxy fund` so the prepaid MBR pool is
   deposited.
 - **Docker:** check container logs for `zs-proxy did not become healthy`,
-  missing `ZEROSIGNAL_KEYSTORE_PASSPHRASE`, or `payer_not_opted_in`. The <!-- pragma: allowlist secret -->
-  entrypoint imports the mnemonic and runs `zs-proxy fund` at boot.
+  missing `ZEROSIGNAL_KEYSTORE_PASSPHRASE` <!-- pragma: allowlist secret -->,
+  or `payer_not_opted_in`. The entrypoint imports the mnemonic and runs
+  `zs-proxy fund` at boot.
 - **502/504 via `*.belt.algo.xyz`:** privacy relays. Keep `zs.privacy: false`
   (or unset `PROXY_ZS_PRIVACY`) for multi-turn reviews. Brownie already uses
   `store: false` and `stream: true`.
@@ -661,8 +661,9 @@ indexer for `/deposit` `/withdraw`). Public AlgoNode can rate-limit or stall.
 
 Startup (and CLI commands) fail immediately with a one-line
 `Missing required env WALLET_MNEMONIC` (and/or `BOT_WALLET`) pointing at
-`.env.example`. Docker also requires `ZEROSIGNAL_KEYSTORE_PASSPHRASE` before <!-- pragma: allowlist secret -->
-the Node process starts.
+`.env.example`. Docker also requires
+`ZEROSIGNAL_KEYSTORE_PASSPHRASE`. <!-- pragma: allowlist secret -->
+The Node process starts after the entrypoint has that passphrase.
 
 - Copy `.env.example` → `.env` and set both wallet keys. Do not paste the
   mnemonic into chat, issues, or logs.
