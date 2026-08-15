@@ -235,6 +235,11 @@ export interface PortfolioAgentOptions {
   walletAddress: string;
   hostGuidance: PortfolioHostGuidance;
   signingEnabled: boolean;
+  /**
+   * Visibility hook for zs-proxy `X-Zs-*` charges. Missing/invalid headers
+   * never call this (no invented price).
+   */
+  onInferenceCharge?: (charge: InferenceCostCharge) => void | Promise<void>;
 }
 
 const PORTFOLIO_AGENT_PROMPT_SHARED = `You are Brownie, an autonomous Algorand treasury portfolio manager (once per day).
@@ -514,7 +519,11 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       reasoning: { effort: this.options.reasoningEffort },
       text: { format: planFormat },
     });
-    recordInferenceCharge(inferenceCharges, headers);
+    await recordInferenceCharge(
+      inferenceCharges,
+      headers,
+      this.options.onInferenceCharge,
+    );
     const response = normalizeAgentResponse(data);
 
     if (
@@ -597,7 +606,11 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       tool_choice: "auto",
       text: { format: planFormat },
     });
-    recordInferenceCharge(inferenceCharges, first.headers);
+    await recordInferenceCharge(
+      inferenceCharges,
+      first.headers,
+      this.options.onInferenceCharge,
+    );
     let response = normalizeAgentResponse(first.data);
 
     let calls = 0;
@@ -779,7 +792,11 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
         tool_choice: "auto" as const,
         text: { format: planFormat },
       });
-      recordInferenceCharge(inferenceCharges, next.headers);
+      await recordInferenceCharge(
+        inferenceCharges,
+        next.headers,
+        this.options.onInferenceCharge,
+      );
       response = normalizeAgentResponse(next.data);
     }
   }
@@ -821,7 +838,11 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
         tools: [],
         text: { format: planFormat },
       });
-      recordInferenceCharge(context.inferenceCharges, repaired.headers);
+      await recordInferenceCharge(
+        context.inferenceCharges,
+        repaired.headers,
+        this.options.onInferenceCharge,
+      );
       const repairedResponse = normalizeAgentResponse(repaired.data);
       try {
         return { ok: true, plan: parsePlan(repairedResponse.output_text) };
@@ -868,7 +889,11 @@ export function createPortfolioAgent(
 
 /** Force `stream: true` on every zs-proxy Responses request. */
 export function withStreamTrue(request: unknown): Record<string, unknown> {
-  if (request !== null && typeof request === "object" && !Array.isArray(request)) {
+  if (
+    request !== null &&
+    typeof request === "object" &&
+    !Array.isArray(request)
+  ) {
     return { ...(request as Record<string, unknown>), stream: true };
   }
   return { stream: true, input: request };
@@ -1140,14 +1165,17 @@ export async function createAgentResponse(
   return { data: await finalResponseFromStream(result) };
 }
 
-function recordInferenceCharge(
+async function recordInferenceCharge(
   charges: InferenceCostCharge[],
   headers: Headers | undefined,
-): void {
+  onCharge?: (charge: InferenceCostCharge) => void | Promise<void>,
+): Promise<void> {
   const charge = parseInferenceCostFromHeaders(headers);
-  if (charge) {
-    charges.push(charge);
+  if (!charge) {
+    return;
   }
+  charges.push(charge);
+  await onCharge?.(charge);
 }
 
 function headersFromRecord(record: Record<string, string>): Headers {

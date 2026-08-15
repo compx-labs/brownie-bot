@@ -21,8 +21,7 @@ import {
   position,
 } from "./fixtures.js";
 
-const POOL =
-  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+const POOL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
 const TINY_ASSET = 31_566_704;
 const REWARD_POSITION_ID = `tinyman:reward:${POOL}:123456:${TINY_ASSET}`;
 const UNCOMMIT_SHAPE = "mainnet:tinyman:staking-v1:farm:uncommit";
@@ -259,7 +258,7 @@ describe("DeterministicUnwindService.run", () => {
     };
     const coordinator = new RunCoordinator();
     const service = new DeterministicUnwindService({
-      portfolioReader: emptyReader as never,
+      portfolioReader: emptyReader,
       canix: canix as never,
       walletAddress: "ADDR",
       executor: executor as never,
@@ -287,7 +286,7 @@ describe("DeterministicUnwindService.run", () => {
     const stuckService = new DeterministicUnwindService({
       portfolioReader: {
         read: vi.fn().mockResolvedValue({ snapshot: held, payments: [] }),
-      } as never,
+      },
       canix: {
         getPersonalizedOpportunities: vi.fn().mockResolvedValue({
           opportunities: [folksOpportunity()],
@@ -327,7 +326,7 @@ describe("DeterministicUnwindService.run", () => {
       }),
     };
     const service = new DeterministicUnwindService({
-      portfolioReader: reader as never,
+      portfolioReader: reader,
       canix: {
         getPersonalizedOpportunities: vi.fn().mockResolvedValue({
           opportunities: [folksOpportunity()],
@@ -350,7 +349,7 @@ describe("DeterministicUnwindService.run", () => {
 
   it("refuses when paused or signing disabled", async () => {
     const service = new DeterministicUnwindService({
-      portfolioReader: { read: vi.fn() } as never,
+      portfolioReader: { read: vi.fn() },
       canix: {} as never,
       walletAddress: "ADDR",
       executor: { executeAction: vi.fn() } as never,
@@ -361,7 +360,7 @@ describe("DeterministicUnwindService.run", () => {
     await expect(service.run("fail")).rejects.toThrow(/Signing is disabled/);
 
     const paused = new DeterministicUnwindService({
-      portfolioReader: { read: vi.fn() } as never,
+      portfolioReader: { read: vi.fn() },
       canix: {} as never,
       walletAddress: "ADDR",
       executor: { executeAction: vi.fn() } as never,

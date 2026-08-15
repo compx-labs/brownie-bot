@@ -77,8 +77,10 @@ export class InceptionReviewService {
     const txs = await this.listAccountTransactions(minRound);
     const groupHasAppl = buildGroupApplSet(txs);
 
-    const draftRows: Omit<InceptionReviewRow, "amountUsd" | "symbol" | "decimals" | "amountLabel">[] =
-      [];
+    const draftRows: Omit<
+      InceptionReviewRow,
+      "amountUsd" | "symbol" | "decimals" | "amountLabel"
+    >[] = [];
 
     for (const tx of txs) {
       const txid = tx.id;
@@ -90,7 +92,8 @@ export class InceptionReviewService {
         continue;
       }
       const txType = readTxType(tx);
-      const groupId = typeof tx.group === "string" && tx.group.length > 0 ? tx.group : null;
+      const groupId =
+        typeof tx.group === "string" && tx.group.length > 0 ? tx.group : null;
 
       if (txType !== "pay" && txType !== "axfer") {
         continue;
@@ -123,7 +126,9 @@ export class InceptionReviewService {
           flagReason = "Self-transfer";
         } else {
           classification =
-            direction === "deposit" ? "external_deposit" : "external_withdrawal";
+            direction === "deposit"
+              ? "external_deposit"
+              : "external_withdrawal";
         }
 
         draftRows.push({
@@ -289,9 +294,7 @@ export class InceptionReviewService {
     }
 
     const navUsd =
-      input.inceptionNavUsd ??
-      input.review.proposedInceptionNavUsd ??
-      null;
+      input.inceptionNavUsd ?? input.review.proposedInceptionNavUsd ?? null;
     if (navUsd === null) {
       throw new Error(
         "No inception NAV available; pass --inception-nav <usd> or ensure account balances at minRound can be priced",
@@ -370,7 +373,9 @@ export class InceptionReviewService {
       const algoPrice = priceByAsset.get(ALGO_ASSET_ID)?.priceUsd;
       if (algoPrice) {
         total = total.plus(
-          money(algoRaw).div(money(10).pow(ALGO_DECIMALS)).times(money(algoPrice)),
+          money(algoRaw)
+            .div(money(10).pow(ALGO_DECIMALS))
+            .times(money(algoPrice)),
         );
         pricedAny = true;
       }
@@ -441,7 +446,7 @@ export class InceptionReviewService {
       const meta = { decimals, symbol };
       this.assetCache.set(assetId, meta);
       return meta;
-    } catch (error) {
+    } catch {
       const fallback = { decimals: 0, symbol: `ASA ${assetId}` };
       this.assetCache.set(assetId, fallback);
       return fallback;
@@ -470,7 +475,7 @@ function hasInnerAppl(tx: IndexerTx): boolean {
     if (readTxType(inner) === "appl") {
       return true;
     }
-    if (hasInnerAppl(inner as IndexerTx)) {
+    if (hasInnerAppl(inner)) {
       return true;
     }
   }
@@ -483,7 +488,9 @@ function readTxType(tx: IndexerTransactionLike): string | undefined {
 
 function readRoundTime(tx: IndexerTransactionLike): number | undefined {
   const value = tx.roundTime ?? tx["round-time"];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function occurredAtFromRoundTime(roundTimeSeconds: number | undefined): string {

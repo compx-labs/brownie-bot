@@ -250,7 +250,11 @@ for that endpoint). Live Canix402 prices are at or below these. USDC has
 **6 decimals**: `1_000_000` base units = **1 USDC**.
 
 The same wallet also pays ZeroSignal per message through zs-proxy — set proxy
-`spend` caps separately from Brownie's `MAX_DAILY_X402_BASE_UNITS`.
+`spend` caps separately from Brownie's `MAX_DAILY_X402_BASE_UNITS`. Telegram
+`/status` and `GET /health` show today’s UTC used + remaining for both (or
+`uncapped`). Align display-only `MAX_DAILY_ZS_USDC` (default `5`) with the
+proxy `daily_cap_usdc`; set `0` to show uncapped. Missing zs-proxy cost
+headers are skipped.
 
 ### Canix402 x402 ceilings
 
@@ -299,6 +303,7 @@ CLI one-shots (each spends real USDC; no LLM):
 | **ALGO fees**            | Tiny network fees for each x402 payment txn; zs-proxy prepaid ticket pool (~ALGO); larger when signing/submitting portfolio txs |
 | **ZeroSignal**           | Pay-per-message from the shared mnemonic via zs-proxy; use proxy `daily_cap_usdc` / `per_request_cap_usdc`                      |
 | **Daily Canix x402 cap** | Default `MAX_DAILY_X402_BASE_UNITS=5000000` (5 USDC/day); raise if needed                                                       |
+| **Daily ZS display cap** | Default `MAX_DAILY_ZS_USDC=5` (visibility on `/status`; `0` = uncapped). Match proxy `daily_cap_usdc`.                          |
 | **Telegram / Spaces**    | Optional; Spaces only if you configure it                                                                                       |
 
 Canix ceilings and the Canix API origin are **code invariants** in

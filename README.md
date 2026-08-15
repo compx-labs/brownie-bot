@@ -321,7 +321,8 @@ overall; only `public/pnl.json` is world-readable via object ACL.
 ## HTTP API
 
 - `GET /health` — operator health: config readiness, busy flag, latest
-  review/accounting age and status (from in-memory / hydrated state). Does
+  review/accounting age and status (from in-memory / hydrated state), plus
+  UTC daily Canix x402 and zs-proxy used/remaining (`spend`). Does
   not contact deps by default. Append `?deps=1` to also probe zs-proxy
   `/healthz`, Algod `/health`, and free `canix_health` (short timeouts; may
   mark `status` as `degraded` with `warnings` when something is down or
@@ -387,23 +388,32 @@ When Telegram is configured, the **long-lived server** (`npm start` / Docker
 default `dist/index.js`) also long-polls for operator slash commands from
 `TELEGRAM_CHAT_ID` only:
 
-| Command       | Behavior                                                      |
-| ------------- | ------------------------------------------------------------- |
-| `/help`       | List commands                                                 |
-| `/status`     | Health / busy / paused / signing / last-run ages              |
-| `/run`        | Force a treasury review (acks immediately; digest follows)    |
-| `/accounting` | Force an accounting snapshot (acks immediately; digest follows) |
-| `/deposit <txid>` | Record external funding from a pay/axfer transaction      |
-| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction |
-| `/unwind`     | Preview host close-all (positions + LST receipts); then `/unwind confirm` |
-| `/unwind confirm` | Execute pending unwind (multi-wave until flat or stuck) |
-| `/unwind cancel` | Discard pending unwind preview |
-| `/pause`      | Hold trading; reviews continue as plan-only                   |
-| `/resume`     | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`) |
+| Command            | Behavior                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------- |
+| `/help`            | List commands                                                                           |
+| `/status`          | Health / busy / paused / signing / last-run ages / daily Canix x402 + ZS used+remaining |
+| `/run`             | Force a treasury review (acks immediately; digest follows)                              |
+| `/accounting`      | Force an accounting snapshot (acks immediately; digest follows)                         |
+| `/deposit <txid>`  | Record external funding from a pay/axfer transaction                                    |
+| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction                                 |
+| `/unwind`          | Preview host close-all (positions + LST receipts); then `/unwind confirm`               |
+| `/unwind confirm`  | Execute pending unwind (multi-wave until flat or stuck)                                 |
+| `/unwind cancel`   | Discard pending unwind preview                                                          |
+| `/pause`           | Hold trading; reviews continue as plan-only                                             |
+| `/resume`          | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`)                    |
 
 Pause is a durable runtime kill-switch (wallet-scoped JSON under
 `ACCOUNTING_DATA_DIR`). It does not change the env signing flag; `/resume`
 only restores trading when signing is already enabled.
+
+Daily Canix x402 and zs-proxy spend counters persist next to pause state
+(`wallets/<addr>/daily-spend.json`). `/status` and `/health` show today’s
+UTC used + remaining (or `uncapped`). Canix remaining uses
+`MAX_DAILY_X402_BASE_UNITS` (the existing payment cap). ZS remaining
+uses display-only `MAX_DAILY_ZS_USDC` (default `5`, matching zs-proxy
+`spend.daily_cap_usdc`; `0` = uncapped). Missing `X-Zs-Inference-Amount`
+headers are skipped rather than inventing a price. This is visibility only:
+it does not add new trading gates.
 
 `/unwind` is host-built (no LLM): one next exit/claim step per position per
 wave (claim → farm uncommit → close), plus known LST receipt unstakes (e.g.

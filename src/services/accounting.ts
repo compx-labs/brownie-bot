@@ -39,7 +39,11 @@ import {
   collectRepriceAssetIds,
   repricePositionsFromTokenPrices,
 } from "./position-pricing.js";
-import { buildPnlWindows, buildWeeklyNavSeries, unavailableWindow } from "./pnl-windows.js";
+import {
+  buildPnlWindows,
+  buildWeeklyNavSeries,
+  unavailableWindow,
+} from "./pnl-windows.js";
 import { sanitizeErrorMessage } from "../util/errors.js";
 
 const ALGO_ASSET_ID = 0;
@@ -213,8 +217,7 @@ export class AccountingService {
     );
     const amountUsd = formatUsd(tokenAmount.times(money(price.priceUsd)));
     const amountLabel = `${formatBaseUnits(transfer.amountRaw, transfer.decimals)} ${transfer.symbol}`;
-    const partyLabel =
-      input.type === "external_deposit" ? "from" : "to";
+    const partyLabel = input.type === "external_deposit" ? "from" : "to";
     const notes = `${amountLabel} (asset ${transfer.assetId}) ${partyLabel} ${transfer.counterparty}`;
 
     const cashflow = await this.recordCashflow({
@@ -285,18 +288,19 @@ export class AccountingService {
     const previousTotal = moneyOrNull(previous?.latestTotalValueUsd);
     const navDeltaUsd = subtractMoney(totalValueUsd, previousTotal);
 
-    let cashflows: AccountingCashflow[] = [];
     let netExternalCashflowUsd: Money | null = null;
     let pnlUsd = navDeltaUsd;
     if (previous && navDeltaUsd !== null && totalValueUsd !== null) {
-      cashflows = await this.store.listCashflows(
+      const cashflows = await this.store.listCashflows(
         this.options.walletAddress,
         cashflowWindowFrom(previous.asOf),
         cashflowWindowTo(asOf),
       );
       const adjustment = computeCashflowAdjustment(cashflows);
       netExternalCashflowUsd = adjustment.netExternalCashflowUsd;
-      pnlUsd = navDeltaUsd.minus(adjustment.depositsUsd).plus(adjustment.withdrawalsUsd);
+      pnlUsd = navDeltaUsd
+        .minus(adjustment.depositsUsd)
+        .plus(adjustment.withdrawalsUsd);
       if (cashflows.length > 0) {
         notes.push(
           `P&L adjusted for ${adjustment.depositCount} deposit(s) (−$${formatUsd(adjustment.depositsUsd)}) and ${adjustment.withdrawalCount} withdrawal(s) (+$${formatUsd(adjustment.withdrawalsUsd)})`,

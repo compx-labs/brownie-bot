@@ -350,9 +350,7 @@ export function formatTelegramReportRich(run: ReviewRun): string {
   if (run.policy && !run.policy.approved && run.policy.violations.length > 0) {
     sections.push("", "### Policy blocked");
     for (const violation of run.policy.violations.slice(0, 5)) {
-      sections.push(
-        `- ${escapeRichMarkdown(truncate(violation, 240))}`,
-      );
+      sections.push(`- ${escapeRichMarkdown(truncate(violation, 240))}`);
     }
     if (run.policy.violations.length > 5) {
       sections.push(
@@ -379,9 +377,7 @@ export function formatTelegramReportRich(run: ReviewRun): string {
         `Structured plan parse note: ${escapeRichMarkdown(truncate(run.planParseError, 300))}`,
       );
     }
-    sections.push(
-      `> ${escapeRichMarkdown(truncate(run.planRawText, 1500))}`,
-    );
+    sections.push(`> ${escapeRichMarkdown(truncate(run.planRawText, 1500))}`);
   }
 
   const actionRows = buildActionRows(run);
@@ -962,9 +958,7 @@ function formatAccountingPnlHtmlLines(
   ];
   const funding = formatNetExternalFundingLabel(summary.netExternalCashflowUsd);
   if (funding) {
-    lines.push(
-      `External funding (window): <b>${escapeHtml(funding)}</b>`,
-    );
+    lines.push(`External funding (window): <b>${escapeHtml(funding)}</b>`);
   }
   return lines;
 }

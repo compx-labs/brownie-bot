@@ -1,4 +1,5 @@
 import type { AccountingRun, ReviewRun } from "../domain.js";
+import type { DailySpendReport } from "./daily-spend.js";
 import { sanitizeErrorMessage, sanitizeErrorText } from "../util/errors.js";
 
 const DEFAULT_STALE_REVIEW_HOURS = 36;
@@ -35,6 +36,8 @@ export interface HealthReport {
   busy: boolean;
   latestReview: HealthRunSummary | null;
   latestAccounting: HealthRunSummary | null;
+  /** UTC daily Canix x402 + zs-proxy used/remaining (visibility only). */
+  spend?: DailySpendReport;
   deps?: {
     zsProxy: HealthDependencyCheck;
     algod: HealthDependencyCheck;
@@ -52,6 +55,7 @@ export interface BuildHealthReportInput {
   busy: boolean;
   latestReview?: ReviewRun;
   latestAccounting?: AccountingRun;
+  spend?: DailySpendReport;
   deps?: HealthReport["deps"];
   now?: Date;
   staleReviewHours?: number;
@@ -60,8 +64,7 @@ export interface BuildHealthReportInput {
 
 export function buildHealthReport(input: BuildHealthReportInput): HealthReport {
   const now = input.now ?? new Date();
-  const staleReviewHours =
-    input.staleReviewHours ?? DEFAULT_STALE_REVIEW_HOURS;
+  const staleReviewHours = input.staleReviewHours ?? DEFAULT_STALE_REVIEW_HOURS;
   const staleAccountingHours =
     input.staleAccountingHours ?? DEFAULT_STALE_ACCOUNTING_HOURS;
   const paused = input.paused ?? false;
@@ -149,6 +152,7 @@ export function buildHealthReport(input: BuildHealthReportInput): HealthReport {
     busy: input.busy,
     latestReview,
     latestAccounting,
+    ...(input.spend ? { spend: input.spend } : {}),
     ...(input.deps ? { deps: input.deps } : {}),
     warnings,
   };

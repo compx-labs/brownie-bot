@@ -12,16 +12,18 @@ import {
   parseTinymanRewardPositionHints,
   resolveShapeForAction,
 } from "../src/services/shape-execution-input.js";
-import { enterShape, opportunity, portfolioSnapshot, position } from "./fixtures.js";
+import {
+  enterShape,
+  opportunity,
+  portfolioSnapshot,
+  position,
+} from "./fixtures.js";
 
-const POOL =
-  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+const POOL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
 const TINY_ASSET = 31_566_704;
 const REWARD_POSITION_ID = `tinyman:reward:${POOL}:123456:${TINY_ASSET}`;
 
-function rewardPosition(
-  overrides: Parameters<typeof position>[0] = {},
-) {
+function rewardPosition(overrides: Parameters<typeof position>[0] = {}) {
   return position({
     protocol: "tinyman",
     positionType: "reward",
@@ -225,8 +227,7 @@ describe("Tinyman single-asset deposit completion", () => {
         fromAssetId: USDC_ASSET_ID,
         toAssetId: null,
         targetWeightPct: 10,
-        executionShapeKey:
-          "mainnet:tinyman:v2:addLiquidityAndFarm:singleAsset",
+        executionShapeKey: "mainnet:tinyman:v2:addLiquidityAndFarm:singleAsset",
         executionInput: {
           depositAssetId: null,
           assetAId: USDC_ASSET_ID,
@@ -336,8 +337,7 @@ describe("Tinyman single-asset deposit completion", () => {
         fromAssetId: null,
         toAssetId: null,
         targetWeightPct: 35,
-        executionShapeKey:
-          "mainnet:tinyman:v2:removeLiquidity:singleAssetOut",
+        executionShapeKey: "mainnet:tinyman:v2:removeLiquidity:singleAssetOut",
         executionInput: {
           assetAId: USDC_ASSET_ID,
           assetBId: 0,
@@ -387,8 +387,7 @@ describe("Tinyman single-asset deposit completion", () => {
         fromAssetId: null,
         toAssetId: 0,
         targetWeightPct: null,
-        executionShapeKey:
-          "mainnet:tinyman:v2:removeLiquidity:singleAssetOut",
+        executionShapeKey: "mainnet:tinyman:v2:removeLiquidity:singleAssetOut",
         executionInput: null,
         authorizedSpends: [],
         rationale: "Exit to ALGO.",

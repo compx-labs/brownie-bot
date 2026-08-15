@@ -71,6 +71,7 @@ import {
   UnwindPendingStore,
 } from "./services/deterministic-unwind.js";
 import { OperatorPauseStore } from "./services/operator-pause.js";
+import { DailySpendStore } from "./services/daily-spend.js";
 
 export interface AppContext {
   app: FastifyInstance;
@@ -122,9 +123,21 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     );
   }
   const caller = new McpSdkToolCaller(new URL(config.CANIX402_MCP_URL));
+  const dailySpendStore = new DailySpendStore({
+    rootDir: config.ACCOUNTING_DATA_DIR,
+    walletAddress: config.BOT_WALLET,
+    prefix: config.DO_SPACES_PREFIX,
+    canixCapBaseUnits: BigInt(config.MAX_DAILY_X402_BASE_UNITS),
+    zsCapUsdc: config.MAX_DAILY_ZS_USDC,
+  });
+  await dailySpendStore.hydrate();
   const paymentBuilder = new AlgorandPaymentBuilder(wallet, {
     algodUrl: config.X402_ALGOD_URL,
     maxDailyBaseUnits: BigInt(config.MAX_DAILY_X402_BASE_UNITS),
+    x402DailySpend: {
+      usedBaseUnits: (now) => dailySpendStore.usedCanixBaseUnits(now),
+      record: (amount, now) => dailySpendStore.recordCanix(amount, now),
+    },
   });
   const canix = new Canix402Client(caller, paymentBuilder);
   const portfolioReader = new AlgorandPortfolioReader(
@@ -154,6 +167,8 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
       walletAddress: config.BOT_WALLET,
       hostGuidance,
       signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
+      onInferenceCharge: (charge) =>
+        dailySpendStore.recordZsUsdc(charge.amountUsdc),
     },
     config.OPENAI_BASE_URL,
   );
@@ -320,6 +335,7 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
       busy: coordinator.isBusy,
       latestReview: state.latest,
       latestAccounting: accountingState.latest,
+      spend: dailySpendStore.getReport(),
       deps,
     });
   });
@@ -494,6 +510,7 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
         busy: coordinator.isBusy,
         latestReview: state.latest,
         latestAccounting: accountingState.latest,
+        spend: dailySpendStore.getReport(),
       }),
     });
     telegramCommandLoop = new TelegramCommandLoop({

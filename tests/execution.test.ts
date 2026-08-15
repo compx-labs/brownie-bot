@@ -1,7 +1,7 @@
 import algosdk from "algosdk";
 import { describe, expect, it, vi } from "vitest";
 
-import type { PortfolioAction } from "../src/domain.js";
+import type { ExecutionOutcome, PortfolioAction } from "../src/domain.js";
 import {
   AlgorandExecutionService,
   applyUniqueTransactionNotes,
@@ -703,9 +703,9 @@ describe("AlgorandExecutionService multi-quote", () => {
               transactions: [],
               metadata: {
                 escrowAddress,
-                escrowPrivateKeyBase64: Buffer.from(
-                  escrowAccount.sk,
-                ).toString("base64"),
+                escrowPrivateKeyBase64: Buffer.from(escrowAccount.sk).toString(
+                  "base64",
+                ),
                 depositsAppId: 971_353_536,
               },
             },
@@ -1040,9 +1040,7 @@ describe("clampActionAmountToSpendable", () => {
         ...action(),
         fromAssetId: 0,
         executionInput: { assetId: 3_160_000_000, amount: "3849222168" },
-        authorizedSpends: [
-          { assetId: 3_160_000_000, amountRaw: "3849222168" },
-        ],
+        authorizedSpends: [{ assetId: 3_160_000_000, amountRaw: "3849222168" }],
       }),
     ).toBe(3_160_000_000);
   });
@@ -1265,7 +1263,10 @@ describe("Haystack swap price impact", () => {
     };
   }
 
-  function swapMocks(callManagedTool: ReturnType<typeof vi.fn>, impact: number) {
+  function swapMocks(
+    callManagedTool: ReturnType<typeof vi.fn>,
+    impact: number,
+  ) {
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
     callManagedTool
       .mockResolvedValueOnce(quotePayload(impact))
@@ -1353,7 +1354,7 @@ describe("Haystack swap price impact", () => {
         signAndSubmit: (
           actionId: string,
           members: unknown[],
-        ) => Promise<{ outcome: { actionId: string; status: string } }>;
+        ) => Promise<{ outcome: ExecutionOutcome }>;
       },
       "signAndSubmit",
     ).mockResolvedValue({
@@ -1462,9 +1463,11 @@ describe("ASA opt-in helpers", () => {
       ),
     );
 
-    const withOptIn = prependAssetOptInTransactions(encoded, sender, [
-      1_134_696_561,
-    ]);
+    const withOptIn = prependAssetOptInTransactions(
+      encoded,
+      sender,
+      [1_134_696_561],
+    );
     expect(withOptIn).toHaveLength(3);
 
     const decoded = withOptIn.map((value) =>
@@ -1511,11 +1514,13 @@ describe("applyUniqueTransactionNotes", () => {
       appArgs: [],
       note,
     });
-    return algosdk.assignGroupID([payment, appCall]).map((transaction) =>
-      Buffer.from(algosdk.encodeUnsignedTransaction(transaction)).toString(
-        "base64",
-      ),
-    );
+    return algosdk
+      .assignGroupID([payment, appCall])
+      .map((transaction) =>
+        Buffer.from(algosdk.encodeUnsignedTransaction(transaction)).toString(
+          "base64",
+        ),
+      );
   }
 
   function decodeNote(encoded: string): string {
@@ -1532,13 +1537,11 @@ describe("applyUniqueTransactionNotes", () => {
     const first = applyUniqueTransactionNotes(encoded, "compx-lending-enter");
     const second = applyUniqueTransactionNotes(encoded, "compx-lending-enter");
 
-    const firstIds = first.map(
-      (value) =>
-        algosdk.decodeUnsignedTransaction(Buffer.from(value, "base64")).txID(),
+    const firstIds = first.map((value) =>
+      algosdk.decodeUnsignedTransaction(Buffer.from(value, "base64")).txID(),
     );
-    const secondIds = second.map(
-      (value) =>
-        algosdk.decodeUnsignedTransaction(Buffer.from(value, "base64")).txID(),
+    const secondIds = second.map((value) =>
+      algosdk.decodeUnsignedTransaction(Buffer.from(value, "base64")).txID(),
     );
     expect(firstIds).not.toEqual(secondIds);
     expect(new Set(firstIds).size).toBe(firstIds.length);

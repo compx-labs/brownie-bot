@@ -280,13 +280,7 @@ export class PortfolioPolicy {
     const positions = new Map(
       snapshot.positions.map((position) => [position.positionId, position]),
     );
-    this.validateOpportunityActions(
-      plan,
-      opportunities,
-      hard,
-      soft,
-      positions,
-    );
+    this.validateOpportunityActions(plan, opportunities, hard, soft, positions);
     if (this.config.signingEnabled) {
       return {
         approved: hard.length === 0,
@@ -636,9 +630,7 @@ function validateExitOrManageShape(
   }
 }
 
-function isSingleAssetEnterShape(
-  shape: OpportunityExecutionShape,
-): boolean {
+function isSingleAssetEnterShape(shape: OpportunityExecutionShape): boolean {
   const key = shape.shapeKey.toLowerCase();
   const variant = shape.variant.toLowerCase();
   return key.includes("singleasset") || variant.includes("singleasset");

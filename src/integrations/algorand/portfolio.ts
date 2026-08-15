@@ -40,9 +40,7 @@ export class AlgorandPortfolioReader implements PortfolioReader {
     const liquidAssetIds = accountState.balances.map(
       (balance) => balance.assetId,
     );
-    const priceAssetIds = [
-      ...new Set([...repriceAssetIds, ...liquidAssetIds]),
-    ];
+    const priceAssetIds = [...new Set([...repriceAssetIds, ...liquidAssetIds])];
     const prices =
       priceAssetIds.length === 0
         ? []
@@ -51,10 +49,7 @@ export class AlgorandPortfolioReader implements PortfolioReader {
       positions.data,
       prices,
     );
-    const liquidBalances = priceLiquidBalances(
-      accountState.balances,
-      prices,
-    );
+    const liquidBalances = priceLiquidBalances(accountState.balances, prices);
     const totals = recomputeWalletPositionTotals(pricedPositions);
     const hardCaveats: string[] = [];
     const softCaveats: string[] = [];
@@ -84,7 +79,9 @@ export class AlgorandPortfolioReader implements PortfolioReader {
       }
     }
     if (Object.values(totals).some((value) => value === null)) {
-      hardCaveats.push("At least one aggregate position valuation is incomplete");
+      hardCaveats.push(
+        "At least one aggregate position valuation is incomplete",
+      );
     }
     const caveats = [...hardCaveats, ...softCaveats];
     return {

@@ -159,7 +159,9 @@ function resolveUnitUsdPrice(
     return {
       assetId:
         knownAssetIdForSymbol(position.assetSymbol) ??
-        (isUnitUsdAssetId(position.assetId) ? position.assetId! : USDC_ASSET_ID),
+        (isUnitUsdAssetId(position.assetId)
+          ? position.assetId!
+          : USDC_ASSET_ID),
       priceUsd: "1",
       source: "unit-usd-peg",
     };
@@ -301,7 +303,9 @@ export function recomputeWalletPositionTotals(
       ? null
       : Number(
           formatUsd(
-            money(suppliedUsd).minus(money(borrowedUsd)).plus(money(rewardsUsd)),
+            money(suppliedUsd)
+              .minus(money(borrowedUsd))
+              .plus(money(rewardsUsd)),
           ),
         );
 

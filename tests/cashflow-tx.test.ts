@@ -83,22 +83,18 @@ describe("parseCashflowTransfer", () => {
     ).toThrow(/zero/i);
 
     expect(() =>
-      parseCashflowTransfer(
-        { "tx-type": "appl", sender: OTHER },
-        "TXAPP",
-      ),
+      parseCashflowTransfer({ "tx-type": "appl", sender: OTHER }, "TXAPP"),
     ).toThrow(/Unsupported transaction type/);
   });
 });
 
 describe("readConfirmedRound", () => {
   it("reads camelCase bigint confirmedRound from algosdk", async () => {
-    const { readConfirmedRound } = await import(
-      "../src/integrations/algorand/cashflow-tx.js"
+    const { readConfirmedRound } =
+      await import("../src/integrations/algorand/cashflow-tx.js");
+    expect(readConfirmedRound({ confirmedRound: 63_617_907n })).toBe(
+      63_617_907n,
     );
-    expect(
-      readConfirmedRound({ confirmedRound: 63_617_907n }),
-    ).toBe(63_617_907n);
     expect(readConfirmedRound({ "confirmed-round": 12 })).toBe(12n);
     expect(readConfirmedRound({})).toBeUndefined();
   });
@@ -141,24 +137,26 @@ describe("assertCashflowDirection", () => {
 describe("CashflowTxResolver", () => {
   it("resolves a confirmed axfer deposit with asset metadata", async () => {
     const lookupTransactionByID = vi.fn().mockReturnValue({
-      do: async () => ({
-        transaction: {
-          txType: "axfer",
-          sender: OTHER,
-          confirmedRound: 12_345n,
-          roundTime: 1_700_000_000,
-          assetTransferTransaction: {
-            amount: "2500000",
-            receiver: WALLET,
-            assetId: "31566704",
+      do: () =>
+        Promise.resolve({
+          transaction: {
+            txType: "axfer",
+            sender: OTHER,
+            confirmedRound: 12_345n,
+            roundTime: 1_700_000_000,
+            assetTransferTransaction: {
+              amount: "2500000",
+              receiver: WALLET,
+              assetId: "31566704",
+            },
           },
-        },
-      }),
+        }),
     });
     const getAssetByID = vi.fn().mockReturnValue({
-      do: async () => ({
-        params: { decimals: 6, unitName: "USDC" },
-      }),
+      do: () =>
+        Promise.resolve({
+          params: { decimals: 6, unitName: "USDC" },
+        }),
     });
 
     const resolver = new CashflowTxResolver({
@@ -187,14 +185,15 @@ describe("CashflowTxResolver", () => {
       walletAddress: WALLET,
       indexer: {
         lookupTransactionByID: vi.fn().mockReturnValue({
-          do: async () => ({
-            transaction: {
-              "tx-type": "pay",
-              sender: OTHER,
-              "confirmed-round": 0,
-              "payment-transaction": { amount: 1, receiver: WALLET },
-            },
-          }),
+          do: () =>
+            Promise.resolve({
+              transaction: {
+                "tx-type": "pay",
+                sender: OTHER,
+                "confirmed-round": 0,
+                "payment-transaction": { amount: 1, receiver: WALLET },
+              },
+            }),
         }),
       },
       algod: {
