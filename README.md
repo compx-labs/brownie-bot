@@ -139,6 +139,63 @@ x402 cap applies (default `MAX_DAILY_X402_BASE_UNITS`, 5 USDC). The bot validate
 every live requirement against these limits before signing. Facilitator
 fee-payer groups are supported.
 
+## Environment variables
+
+Copy [`.env.example`](./.env.example) to `.env`. The Zod schema is split into
+**required** keys (no default; process will not start) and **optional** keys
+(defaults, or omitted features such as Telegram). A missing required key fails
+with a **one-line** message that names the key and points here — not a raw Zod
+tree. See also [Ops troubleshooting](#ops-troubleshooting).
+
+### Required
+
+| Key               | Role                                                                              |
+| ----------------- | --------------------------------------------------------------------------------- |
+| `BOT_WALLET`      | Treasury address for Canix personalization (must match the mnemonic when signing) |
+| `WALLET_MNEMONIC` | 25-word signer; pays Canix x402 and ZeroSignal. Never logged or sent to MCP       | <!-- pragma: allowlist secret -->
+
+### Required for Docker
+
+Not validated by `loadConfig`. The image entrypoint needs this for the file
+keyring. Local Node + host `zs-proxy` can omit it.
+
+| Key                              | Role                                           |
+| -------------------------------- | ---------------------------------------------- |
+| `ZEROSIGNAL_KEYSTORE_PASSPHRASE` | Encrypts the in-container zs-proxy wallet file | <!-- pragma: allowlist secret -->
+
+### Optional
+
+Omit these to take defaults (or to leave Telegram / Spaces disabled). Keys
+match `.env.example`; schema defaults live in `src/config.ts`.
+
+**Runtime:** `NODE_ENV`, `HOST` (`0.0.0.0`), `PORT` (`3000`),
+`RUN_CRON` (`false`), `CRON_SCHEDULE`, `CRON_TIMEZONE` (`UTC`),
+`MANUAL_TRIGGER_TOKEN` (unset; HTTP force-run disabled unless ≥16 chars),
+`CANIX402_MCP_URL`, `X402_ALGOD_URL`, `X402_INDEXER_URL`,
+`ACCOUNTING_CRON_SCHEDULE`, `ACCOUNTING_CRON_TIMEZONE` (`UTC`),
+`ACCOUNTING_DATA_DIR` (`data/accounting`), `FOLKS_ESCROW_DATA_DIR`
+(`data/folks-escrows`).
+
+**Inference / zs-proxy:** `OPENAI_BASE_URL` (host-local zs-proxy `/v1`),
+`OPEN_AI_API_KEY` (SDK placeholder; zs-proxy ignores it), `OPENAI_MODEL`
+(`glm-5.2`),
+`OPENAI_REASONING_EFFORT` (`medium`), `AI_MODE` (`full`), `AI_MAX_TOOL_CALLS`
+(`16`).
+
+**Policy** (see [POLICY.md](./POLICY.md); this ticket does not change them):
+`ENABLE_TRANSACTION_SIGNING` (`false`), `MAX_POSITION_PCT` (`35`),
+`MAX_PROTOCOL_PCT` (`50`), `MIN_LIQUID_RESERVE_PCT` (`10`), `MIN_TVL_USD`
+(`6000`), `MAX_SOURCE_AGE_HOURS` (`24`), `MAX_SLIPPAGE_BPS` (`100`),
+`MAX_PRICE_IMPACT_PCT` (`3`), `MAX_DAILY_X402_BASE_UNITS` (`5000000`),
+`MAX_DAILY_ZS_USDC` (`5`; `0` = uncapped display),
+`MIN_PROJECTED_NET_IMPROVEMENT_USD` (`1`), `PREFERRED_HOLD_ASSETS` (empty).
+
+**Telegram** (both or neither): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+
+**DigitalOcean Spaces** (all four or none; region/prefix have defaults):
+`DO_SPACES_ENDPOINT`, `DO_SPACES_BUCKET`, `DO_SPACES_KEY`, `DO_SPACES_SECRET`,
+`DO_SPACES_REGION` (`nyc3`), `DO_SPACES_PREFIX` (`brownie-bot`).
+
 ## Canix402 CLI tests
 
 These commands make real mainnet USDC payments from `WALLET_MNEMONIC`. The
@@ -550,3 +607,81 @@ treasury assets.
 
 For local non-Docker runs, install zs-proxy on the host instead — see
 [QUICKSTART.md](./QUICKSTART.md).
+
+## Ops troubleshooting
+
+Operator-facing failures after boot. Config mistakes (missing mnemonic, partial
+Telegram/Spaces) are called out at startup — see
+[Environment variables](#environment-variables). Probe live deps with
+`curl -s 'localhost:3000/health?deps=1'` (short timeouts; HTTP 200 with
+`status: degraded` when something is down).
+
+### zs-proxy down
+
+Reviews and `/run` fail with ZeroSignal connection, timeout, or classified <!-- pragma: allowlist secret -->
+502/504 HTML (`ZeroSignal gateway timeout`). `GET /health?deps=1` shows <!-- pragma: allowlist secret -->
+`deps.zsProxy.ok: false`.
+
+- **Local Node:** start `zs-proxy proxy start` on the host, then
+  `curl -sf http://127.0.0.1:8080/healthz` and `GET /v1/models`. Import the
+  same `WALLET_MNEMONIC` and run `zs-proxy fund` so the prepaid MBR pool is
+  deposited.
+- **Docker:** check container logs for `zs-proxy did not become healthy`,
+  missing `ZEROSIGNAL_KEYSTORE_PASSPHRASE`, or `payer_not_opted_in`. The <!-- pragma: allowlist secret -->
+  entrypoint imports the mnemonic and runs `zs-proxy fund` at boot.
+- **502/504 via `*.belt.algo.xyz`:** privacy relays. Keep `zs.privacy: false`
+  (or unset `PROXY_ZS_PRIVACY`) for multi-turn reviews. Brownie already uses
+  `store: false` and `stream: true`.
+
+### Canix 402 / 5xx
+
+A `PAYMENT_REQUIRED` (HTTP 402) on the first MCP call is **expected** — the
+bot signs a USDC x402 payment and retries. A second 402 usually means the
+signature is stale, the amount/network/payTo did not match, or the mnemonic
+account lacks USDC ASA `31566704` / ALGO fees.
+
+- **5xx / 504:** Canix or an edge gateway timed out. The client retries **once**
+  on 504. `?deps=1` probes free `canix_health`. Persistent 5xx is upstream;
+  wait and retry. HTML 502/504 bodies are sanitized in Telegram and logs.
+- **Daily cap:** `x402 daily spend would exceed …` — wait for the next UTC
+  day or raise `MAX_DAILY_X402_BASE_UNITS` (default 5 USDC). Visibility is on
+  `/status` and `/health` (`spend`).
+
+### Algod timeout
+
+x402 construction, group submit, and cashflow tx lookup need Algod (and the
+indexer for `/deposit` `/withdraw`). Public AlgoNode can rate-limit or stall.
+
+- `?deps=1` → `deps.algod.ok: false` or `Algod unreachable`.
+- Override `X402_ALGOD_URL` (and `X402_INDEXER_URL`) with a provider that
+  allows your IP. Timeouts during a review fail that run; they do not crash
+  the HTTP process.
+
+### Missing mnemonic
+
+Startup (and CLI commands) fail immediately with a one-line
+`Missing required env WALLET_MNEMONIC` (and/or `BOT_WALLET`) pointing at
+`.env.example`. Docker also requires `ZEROSIGNAL_KEYSTORE_PASSPHRASE` before <!-- pragma: allowlist secret -->
+the Node process starts.
+
+- Copy `.env.example` → `.env` and set both wallet keys. Do not paste the
+  mnemonic into chat, issues, or logs.
+- Empty `WALLET_MNEMONIC=` is treated as missing (required, min length 1).
+- `ENABLE_TRANSACTION_SIGNING=true` additionally requires `BOT_WALLET` to
+  match the address derived from the mnemonic.
+
+### Telegram long-poll
+
+Slash commands (`/help` `/status` `/run` …) only run on the **long-lived**
+server (`npm start` / `npm run dev` / Docker default). `run-once`, `smoke`,
+and `accounting-once` do not poll.
+
+- Set **both** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (partial pair fails
+  config). Commands from any other chat are ignored (ACL).
+- `getUpdates` failures log `telegram getUpdates failed; backing off` and
+  retry after 3s. Check token validity, outbound HTTPS to `api.telegram.org`,
+  and that **no webhook** is set on the bot (webhooks and long-poll cannot
+  share a token).
+- On boot, pending updates are drained so a redeploy does not replay stale
+  `/run`s. If commands never arrive, confirm you are messaging the chat whose
+  id is `TELEGRAM_CHAT_ID` (group ids are negative).

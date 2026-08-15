@@ -2,6 +2,15 @@ import "dotenv/config";
 
 import { z } from "zod";
 
+import { parseEnv } from "./util/env-error.js";
+
+export {
+  ConfigError,
+  ENV_DOCS_POINTER,
+  formatEnvZodError,
+  parseEnv,
+} from "./util/env-error.js";
+
 const booleanFromString = z
   .enum(["true", "false"])
   .default("false")
@@ -67,95 +76,113 @@ export function parsePreferredHoldAssets(
   return entries;
 }
 
-const configSchema = z
-  .object({
-    NODE_ENV: z
-      .enum(["development", "test", "production"])
-      .default("development"),
-    HOST: z.string().default("0.0.0.0"),
-    PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
-    RUN_CRON: booleanFromString,
-    CRON_SCHEDULE: z.string().min(1).default("0 9 * * *"),
-    CRON_TIMEZONE: z.string().min(1).default("UTC"),
-    MANUAL_TRIGGER_TOKEN: optionalString(16),
+const requiredEnvSchema = z.object({
+  BOT_WALLET: z.string().min(1),
+  WALLET_MNEMONIC: z.string().min(1),
+});
 
-    CANIX402_MCP_URL: z.url().default("https://canix402-mcp.compx.io/mcp"),
-    BOT_WALLET: z.string().min(1),
-    WALLET_MNEMONIC: z.string().min(1),
-    X402_ALGOD_URL: z.url().default("https://mainnet-api.algonode.cloud"),
-    /** Indexer for cashflow tx lookup (`/deposit` `/withdraw`). */
-    X402_INDEXER_URL: z.url().default("https://mainnet-idx.algonode.cloud"),
+const optionalEnvSchema = z.object({
+  NODE_ENV: z
+    .enum(["development", "test", "production"]) // pragma: allowlist secret
+    .default("development"), // pragma: allowlist secret
+  HOST: z.string().default("0.0.0.0"),
+  PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
+  RUN_CRON: booleanFromString,
+  CRON_SCHEDULE: z.string().min(1).default("0 9 * * *"), // pragma: allowlist secret
+  CRON_TIMEZONE: z.string().min(1).default("UTC"),
+  MANUAL_TRIGGER_TOKEN: optionalString(16),
 
-    /** OpenAI-compatible base URL. Default is host-local ZeroSignal zs-proxy. */
-    OPENAI_BASE_URL: z.preprocess(
-      (value) => (value === "" ? undefined : value),
-      z.url().default("http://127.0.0.1:8080/v1"),
-    ),
-    /**
-     * Placeholder for the OpenAI SDK (requires a non-empty string).
-     * zs-proxy ignores the key; admission is the on-chain wallet seal.
-     */
-    OPEN_AI_API_KEY: z.preprocess(
-      (value) => (value === "" ? undefined : value),
-      z.string().min(1).default("zerosignal"),
-    ),
-    OPENAI_MODEL: z.preprocess(
-      (value) => (value === "" ? undefined : value),
-      z.string().min(1).default("glm-5.2"),
-    ),
-    OPENAI_REASONING_EFFORT: z
-      .enum(["low", "medium", "high"])
-      .default("medium"),
-    /**
-     * `full` — LLM drives Canix research via a multi-turn tool loop.
-     * `lite` — host prefetches research; LLM decides once with tools disabled.
-     */
-    AI_MODE: z.enum(["full", "lite"]).default("full"),
-    AI_MAX_TOOL_CALLS: z.coerce.number().int().min(3).max(50).default(16),
-    ENABLE_TRANSACTION_SIGNING: booleanFromString,
-    MAX_POSITION_PCT: z.coerce.number().positive().max(100).default(35),
-    MAX_PROTOCOL_PCT: z.coerce.number().positive().max(100).default(50),
-    MIN_LIQUID_RESERVE_PCT: z.coerce.number().min(0).max(100).default(10),
-    MIN_TVL_USD: z.coerce.number().nonnegative().default(6_000),
-    MAX_SOURCE_AGE_HOURS: z.coerce.number().positive().default(24),
-    MAX_SLIPPAGE_BPS: z.coerce.number().int().min(0).max(10_000).default(100),
-    MAX_PRICE_IMPACT_PCT: z.coerce.number().min(0).max(100).default(3),
-    MAX_DAILY_X402_BASE_UNITS: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(5_000_000),
-    /**
-     * Display-only zs-proxy daily cap in USDC (matches zs-proxy
-     * `spend.daily_cap_usdc` / `PROXY_SPEND_DAILY_CAP_USDC` by default).
-     * `0` = show "uncapped". The bot does not enforce this cap.
-     */
-    MAX_DAILY_ZS_USDC: z.coerce.number().nonnegative().default(5),
-    MIN_PROJECTED_NET_IMPROVEMENT_USD: z.coerce
-      .number()
-      .nonnegative()
-      .default(1),
-    /**
-     * Soft operator steer: comma-separated `assetId:targetPortfolioPct` pairs.
-     * Example: `246516580:15` (hold ~15% GOLD$). Empty = no preferred holds.
-     */
-    PREFERRED_HOLD_ASSETS: optionalString(),
-    TELEGRAM_BOT_TOKEN: optionalString(),
-    TELEGRAM_CHAT_ID: optionalString(),
+  CANIX402_MCP_URL: z.url().default("https://canix402-mcp.compx.io/mcp"),
+  X402_ALGOD_URL: z.url().default("https://mainnet-api.algonode.cloud"),
+  /** Indexer for cashflow tx lookup (`/deposit` `/withdraw`). */
+  X402_INDEXER_URL: z.url().default("https://mainnet-idx.algonode.cloud"),
 
-    ACCOUNTING_CRON_SCHEDULE: z.string().min(1).default("0 8 * * *"),
-    ACCOUNTING_CRON_TIMEZONE: z.string().min(1).default("UTC"),
-    /** Local JSON root when DigitalOcean Spaces is not configured. */
-    ACCOUNTING_DATA_DIR: z.string().min(1).default("data/accounting"),
-    /** Persisted Folks deposit escrow address + signing key (mode 0600 files). */
-    FOLKS_ESCROW_DATA_DIR: z.string().min(1).default("data/folks-escrows"),
-    DO_SPACES_ENDPOINT: optionalUrl,
-    DO_SPACES_REGION: z.string().min(1).default("nyc3"),
-    DO_SPACES_BUCKET: optionalString(),
-    DO_SPACES_KEY: optionalString(),
-    DO_SPACES_SECRET: optionalString(),
-    DO_SPACES_PREFIX: z.string().min(1).default("brownie-bot"),
-  })
+  /** OpenAI-compatible base URL. Default is host-local ZeroSignal zs-proxy. */ // pragma: allowlist secret
+  OPENAI_BASE_URL: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.url().default("http://127.0.0.1:8080/v1"), // pragma: allowlist secret
+  ),
+  /**
+   * Placeholder for the OpenAI SDK (requires a non-empty string).
+   * zs-proxy ignores the key; admission is the on-chain wallet seal.
+   */
+  OPEN_AI_API_KEY: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().min(1).default("zerosignal"), // pragma: allowlist secret
+  ),
+  OPENAI_MODEL: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().min(1).default("glm-5.2"),
+  ),
+  OPENAI_REASONING_EFFORT: z.enum(["low", "medium", "high"]).default("medium"),
+  /**
+   * `full` — LLM drives Canix research via a multi-turn tool loop.
+   * `lite` — host prefetches research; LLM decides once with tools disabled.
+   */
+  AI_MODE: z.enum(["full", "lite"]).default("full"),
+  AI_MAX_TOOL_CALLS: z.coerce.number().int().min(3).max(50).default(16),
+  ENABLE_TRANSACTION_SIGNING: booleanFromString,
+  MAX_POSITION_PCT: z.coerce.number().positive().max(100).default(35),
+  MAX_PROTOCOL_PCT: z.coerce.number().positive().max(100).default(50),
+  MIN_LIQUID_RESERVE_PCT: z.coerce.number().min(0).max(100).default(10),
+  MIN_TVL_USD: z.coerce.number().nonnegative().default(6_000),
+  MAX_SOURCE_AGE_HOURS: z.coerce.number().positive().default(24),
+  MAX_SLIPPAGE_BPS: z.coerce.number().int().min(0).max(10_000).default(100),
+  MAX_PRICE_IMPACT_PCT: z.coerce.number().min(0).max(100).default(3),
+  MAX_DAILY_X402_BASE_UNITS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(5_000_000),
+  /**
+   * Display-only zs-proxy daily cap in USDC (matches zs-proxy
+   * `spend.daily_cap_usdc` / `PROXY_SPEND_DAILY_CAP_USDC` by default).
+   * `0` = show "uncapped". The bot does not enforce this cap.
+   */
+  MAX_DAILY_ZS_USDC: z.coerce.number().nonnegative().default(5),
+  MIN_PROJECTED_NET_IMPROVEMENT_USD: z.coerce.number().nonnegative().default(1),
+  /**
+   * Soft operator steer: comma-separated `assetId:targetPortfolioPct` pairs.
+   * Example: `246516580:15` (hold ~15% GOLD$). Empty = no preferred holds.
+   */
+  PREFERRED_HOLD_ASSETS: optionalString(),
+  TELEGRAM_BOT_TOKEN: optionalString(),
+  TELEGRAM_CHAT_ID: optionalString(),
+
+  ACCOUNTING_CRON_SCHEDULE: z.string().min(1).default("0 8 * * *"), // pragma: allowlist secret
+  ACCOUNTING_CRON_TIMEZONE: z.string().min(1).default("UTC"),
+  /** Local JSON root when DigitalOcean Spaces is not configured. */
+  ACCOUNTING_DATA_DIR: z.string().min(1).default("data/accounting"),
+  /** Persisted Folks deposit escrow address + signing key (mode 0600 files). */
+  FOLKS_ESCROW_DATA_DIR: z.string().min(1).default("data/folks-escrows"),
+  DO_SPACES_ENDPOINT: optionalUrl,
+  DO_SPACES_REGION: z.string().min(1).default("nyc3"),
+  DO_SPACES_BUCKET: optionalString(),
+  DO_SPACES_KEY: optionalString(),
+  DO_SPACES_SECRET: optionalString(),
+  DO_SPACES_PREFIX: z.string().min(1).default("brownie-bot"),
+});
+
+/** App env keys with no default — process will not start without them. */
+export const REQUIRED_ENV_KEYS = Object.keys(requiredEnvSchema.shape) as Array<
+  keyof typeof requiredEnvSchema.shape
+>;
+
+/** App env keys that have defaults or may be omitted. */
+export const OPTIONAL_ENV_KEYS = Object.keys(optionalEnvSchema.shape) as Array<
+  keyof typeof optionalEnvSchema.shape
+>;
+
+/**
+ * Docker entrypoint-only (not validated by `loadConfig`). Required when the
+ * image uses the file keyring (`ZEROSIGNAL_KEYRING_BACKEND=file`). // pragma: allowlist secret
+ */
+export const DOCKER_REQUIRED_ENV_KEYS = [
+  "ZEROSIGNAL_KEYSTORE_PASSPHRASE", // pragma: allowlist secret
+] as const;
+
+const configSchema = requiredEnvSchema
+  .extend(optionalEnvSchema.shape)
   .superRefine((value, context) => {
     const telegramCount = [
       value.TELEGRAM_BOT_TOKEN,
@@ -165,7 +192,7 @@ const configSchema = z
       context.addIssue({
         code: "custom",
         message:
-          "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must both be set or both omitted",
+          "Optional env TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must both be set or both omitted",
       });
     }
 
@@ -179,7 +206,7 @@ const configSchema = z
       context.addIssue({
         code: "custom",
         message:
-          "DO_SPACES_ENDPOINT, DO_SPACES_BUCKET, DO_SPACES_KEY, and DO_SPACES_SECRET must all be set or all omitted",
+          "Optional env DO_SPACES_ENDPOINT, DO_SPACES_BUCKET, DO_SPACES_KEY, and DO_SPACES_SECRET must all be set or all omitted",
       });
     }
 
@@ -199,7 +226,7 @@ const configSchema = z
 export type AppConfig = ReturnType<typeof loadConfig>;
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
-  const parsed = configSchema.parse(environment);
+  const parsed = parseEnv(configSchema, environment, REQUIRED_ENV_KEYS);
   return {
     ...parsed,
     preferredHoldAssets: parsePreferredHoldAssets(parsed.PREFERRED_HOLD_ASSETS),
