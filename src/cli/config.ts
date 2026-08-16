@@ -4,6 +4,7 @@ import algosdk from "algosdk";
 import { z } from "zod";
 
 import { walletFromMnemonic } from "../integrations/canix402/wallet.js";
+import { parseEnv } from "../util/env-error.js";
 
 const baseCliConfigSchema = z.object({
   CANIX402_MCP_URL: z.url().default("https://canix402-mcp.compx.io/mcp"),
@@ -25,26 +26,30 @@ const testWalletSchema = z
 export function loadGeneralCliConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  return baseCliConfigSchema.parse(environment);
+  return parseEnv(baseCliConfigSchema, environment, ["WALLET_MNEMONIC"]);
 }
 
 export function loadPersonalizedCliConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  return baseCliConfigSchema
-    .extend({ BOT_WALLET: botWalletSchema })
-    .parse(environment);
+  return parseEnv(
+    baseCliConfigSchema.extend({ BOT_WALLET: botWalletSchema }),
+    environment,
+    ["WALLET_MNEMONIC", "BOT_WALLET"],
+  );
 }
 
 export function loadWalletScanCliConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  return baseCliConfigSchema
-    .extend({
+  return parseEnv(
+    baseCliConfigSchema.extend({
       BOT_WALLET: botWalletSchema,
       MAX_SOURCE_AGE_HOURS: z.coerce.number().positive().default(24),
-    })
-    .parse(environment);
+    }),
+    environment,
+    ["WALLET_MNEMONIC", "BOT_WALLET"],
+  );
 }
 
 /**
@@ -54,8 +59,8 @@ export function loadWalletScanCliConfig(
 export function loadProtocolVerifyConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  const parsed = z
-    .object({
+  const parsed = parseEnv(
+    z.object({
       CANIX402_MCP_URL: z.url().default("https://canix402-mcp.compx.io/mcp"),
       X402_ALGOD_URL: z.url().default("https://mainnet-api.algonode.cloud"),
       TEST_WALLET: testWalletSchema,
@@ -80,8 +85,10 @@ export function loadProtocolVerifyConfig(
         .string()
         .min(1)
         .default("data/folks-escrows-verify"),
-    })
-    .parse(environment);
+    }),
+    environment,
+    ["TEST_WALLET", "TEST_MNEMONIC"],
+  );
 
   const wallet = walletFromMnemonic(parsed.TEST_MNEMONIC);
   if (wallet.address !== parsed.TEST_WALLET) {

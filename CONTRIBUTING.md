@@ -7,7 +7,8 @@ code. To **run** the bot as an operator, start with
 ## Ground rules
 
 - **Never commit secrets.** Keep `.env` / `.ENV` local. Use `.env.example` as
-  the template only.
+  the template only. Required vs optional keys are labeled there and in
+  [README.md — Environment variables](./README.md#environment-variables).
 - **Do not paste mnemonics, API keys, or payment signatures** into issues, PRs,
   logs, or screenshots.
 - **Default to dry-run.** Leave `ENABLE_TRANSACTION_SIGNING=false` unless you

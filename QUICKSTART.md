@@ -101,7 +101,8 @@ npm install
 cp .env.example .env
 ```
 
-Minimum `.env`:
+Minimum `.env` (the only **required** app keys; everything else has defaults —
+see [README.md — Environment variables](./README.md#environment-variables)):
 
 ```dotenv
 BOT_WALLET=your_treasury_address
@@ -150,7 +151,10 @@ curl -s 'localhost:3000/health?deps=1'
 
 Expect `status` (`ok` | `degraded`), `latestReview` age/status when a run
 exists, and `telegramConfigured` / `accountingStorage` to reflect what you set
-(`local` when Spaces is omitted).
+(`local` when Spaces is omitted). If a required env is missing, the process
+exits with a one-line `Missing required env …` message (not a Zod dump). For
+zs-proxy / Canix / Algod / Telegram failures after boot, see
+[README.md — Ops troubleshooting](./README.md#ops-troubleshooting).
 
 Cheap portfolio probe (pays the positions fee only; does not need the LLM):
 
