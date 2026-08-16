@@ -266,19 +266,31 @@ describe("loadConfig", () => {
     ).toThrow(/0–100/);
   });
 
-  it("names invalid optional env without dumping a Zod tree", () => {
-    const error = loadThrownError(() =>
-      loadConfig({
-        ...requiredEnvironment,
-        PORT: "nope",
-      }),
-    );
-    expect(error).toBeInstanceOf(ConfigError);
-    expect(error.message).toMatch(/^Optional env PORT is invalid/);
-    expect(error.message).toContain(ENV_DOCS_POINTER);
-    expect(error.message).not.toContain("\n");
-    expect(error.message).not.toMatch(/invalid_type/);
-  });
+  it.each([
+    { key: "PORT", value: "nope" },
+    { key: "PORT", value: "0" },
+    { key: "AI_MAX_TOOL_CALLS", value: "2" },
+    { key: "MAX_POSITION_PCT", value: "0" },
+    { key: "MANUAL_TRIGGER_TOKEN", value: "short" },
+  ])(
+    "names invalid optional env $key=$value without dumping a Zod tree",
+    ({ key, value }) => {
+      const error = loadThrownError(() =>
+        loadConfig({
+          ...requiredEnvironment,
+          [key]: value,
+        }),
+      );
+      expect(error).toBeInstanceOf(ConfigError);
+      expect(error.message).toMatch(
+        new RegExp(`^Optional env ${key} is invalid`),
+      );
+      expect(error.message).not.toMatch(/missing/i);
+      expect(error.message).toContain(ENV_DOCS_POINTER);
+      expect(error.message).not.toContain("\n");
+      expect(error.message).not.toMatch(/invalid_type|too_small|too_big/);
+    },
+  );
 });
 
 describe("CLI env errors", () => {

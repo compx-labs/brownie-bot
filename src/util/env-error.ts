@@ -28,7 +28,9 @@ function receivedValue(issue: ZodIssue): string | undefined {
 
 function isMissingValueIssue(issue: ZodIssue): boolean {
   if (issue.code === "too_small") {
-    return true;
+    // Empty strings (`min(1)`) are missing. Numeric bounds and longer
+    // min-length constraints (e.g. MANUAL_TRIGGER_TOKEN min 16) are invalid.
+    return issue.origin === "string" && issue.minimum === 1;
   }
   if (issue.code === "invalid_type") {
     const received = receivedValue(issue);
