@@ -34,18 +34,22 @@ wallet. When CompX (or other preferred holds from hostGuidance) is below target,
 do not shrink, split, or pace the buy solely because of expected price impact;
 size toward closing the gap with available surplus.
 
+Ensure part of our treasury is in COMPX/ALGO liquidity on Tinyman. The host
+searches `platform=tinyman&assetIds=1732165149` so this pool is visible even
+when it is outside Tinyman’s top-N list (`ZKAP7…:lp`).
+
 Preferred holds percentage of overall portfolio includes wallet holdings and LP
 (and lend) positions that include that token.
 
+DO NOT SELL COMPX (ASA **1732165149**).
+
 ## Preferred-asset opportunity discovery (MCP)
 
-Generic `canix_list_opportunities` / personalized top-N often omit thinner
-preferred-asset LP and lend rows. For **every preferred hold** (especially
-CompX), make a dedicated `canix_search_opportunities` call with
-`assetIds` set to that ASA id (e.g. `assetIds=1732165149` for CompX) so the
-catalog is filtered to opportunities that include that asset. Use those results
-when planning CompX/preferred LP, farm, and lending — do not conclude "no LP
-available" from a high-TVL-only list that never searched by asset id.
+The host already searches each preferred hold (and Tinyman COMPX/ALGO when CompX
+is preferred). Generic `canix_list_opportunities` / personalized top-N often
+omit thinner preferred-asset LP and lend rows — use host `preferredOpportunities`
+and dedicated `canix_search_opportunities` with `assetIds` (e.g. `1732165149`
+for CompX). Do not conclude "no LP available" from a high-TVL-only list.
 
 ## CompX lending / borrow
 
@@ -56,6 +60,16 @@ exposure, prefer collateralize CompX and borrow rather than sell/swap CompX —
 subject to health/LTV risk. Consider lending and borrowing opportunities, not
 only LP and spot holds. Low or 0% supply APY is fine when the goal is building
 CompX lending liquidity and enabling future borrow.
+
+Executable **debt** rows (`positionType: debt`) from CompX, Folks, and DorkFi
+are real liabilities. Repay from `compatibleExitShapeKeys`; do not treat
+`usdValue: null` as zero and do not invent size from wallet UNIT.
+
+## Claims
+
+When the claim desk is present, prefer `worthClaiming` rows (Tinyman farm,
+stALGO TINY, CompX staking, Pact farm, Haystack, Alpha Arcade). Réti is not on
+the desk. Host compiles selected claims in one quote request.
 
 ## Risk taste (edit for your ops)
 

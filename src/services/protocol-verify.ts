@@ -1388,7 +1388,39 @@ function registryDorkFiShape(
   };
 }
 
-/** Canix often omits DorkFi debt rows; synthesize from wallet UNIT for repay. */
+/** Canix emits `dorkfi:debt:{marketAppId}` from on-chain borrow principal. */
+export function isExecutableDorkFiDebt(
+  position: Position,
+  options: {
+    marketAppId?: number;
+    borrowOpportunityId?: string | null;
+  },
+): boolean {
+  if (
+    !/dorkfi/i.test(position.protocol) ||
+    position.positionType !== "debt" ||
+    BigInt(position.amountRaw) <= 0n
+  ) {
+    return false;
+  }
+  if (
+    options.marketAppId !== undefined &&
+    (position.positionId === `dorkfi:debt:${options.marketAppId}` ||
+      position.positionId.includes(`dorkfi:debt:${options.marketAppId}`) ||
+      position.inputHints?.marketAppId === options.marketAppId)
+  ) {
+    return true;
+  }
+  if (
+    options.borrowOpportunityId &&
+    position.opportunityId === options.borrowOpportunityId
+  ) {
+    return true;
+  }
+  return position.assetId === UNIT_ASSET_ID;
+}
+
+/** Fallback only when Canix omits `dorkfi:debt:{marketAppId}` — do not double-count wallet UNIT. */
 function synthesizeDorkFiUnitDebt(options: {
   amountRaw: string;
   borrowOpportunityId: string;
@@ -2713,8 +2745,8 @@ export async function runCompXCreditCase(
     debt.compatibleExitShapeKeys = [...debt.compatibleExitShapeKeys, repayKey];
   }
 
-  // Canix may under-report CompX debt (seen as amountRaw "9" after borrowing
-  // 10 COMPX). Prefer borrowed size / wallet COMPX so repay clears the loan.
+  // CompX amountRaw should now be micro-units; keep max(debt, borrowed) as a
+  // safety net if the row is still under-reported.
   const walletCompx = spendableRaw(snapshot, COMPX_ASSET_ID);
   let repayAmountRaw = BigInt(debt.amountRaw);
   if (repayAmountRaw < BigInt(borrowRaw)) {
@@ -3073,16 +3105,15 @@ export async function runDorkFiCreditCase(
     ),
   );
 
-  let debt = snapshot.positions.find(
-    (position) =>
-      /dorkfi/i.test(position.protocol) &&
-      position.positionType === "debt" &&
-      BigInt(position.amountRaw) > 0n &&
-      (position.opportunityId === pinned.borrowOpportunityId ||
-        position.assetId === UNIT_ASSET_ID),
+  let debt = snapshot.positions.find((position) =>
+    isExecutableDorkFiDebt(position, {
+      marketAppId: unitMarketAppId,
+      borrowOpportunityId: pinned.borrowOpportunityId,
+    }),
   );
 
   // Canix may omit DorkFi debt; resume when wallet holds UNIT against USDC supply.
+  // Prefer on-chain `dorkfi:debt:{marketAppId}` rows over wallet UNIT.
   if (!debt) {
     const walletUnitBefore = spendableRaw(snapshot, UNIT_ASSET_ID);
     const openSupply = findPositionForOpportunity(
@@ -3765,7 +3796,8 @@ export async function runFolksCreditCase(
         BigInt(position.amountRaw) > 0n,
     );
     if (!debt) {
-      // Canix may lag; proceed with synthetic debt using borrowed size.
+      // Canix now reads Folks debt via algod; synthesize only if the row is
+      // still missing after borrow.
       console.error(
         `[protocol-verify] ${pinned.caseId}: no Folks debt row yet; synthesizing repay from borrow amount`,
       );

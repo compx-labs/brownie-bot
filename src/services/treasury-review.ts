@@ -9,6 +9,7 @@ import type {
   PortfolioSnapshot,
   PolicyResult,
   ReviewRun,
+  WalletClaimable,
 } from "../domain.js";
 import type { ReviewRunStore } from "../integrations/storage/review-run-store.js";
 import { sanitizeErrorMessage } from "../util/errors.js";
@@ -38,9 +39,16 @@ export interface ReviewState {
 export interface ActionExecutor {
   executeAction(
     action: PortfolioAction,
-    context?: { opportunities?: Opportunity[] },
+    context?: { opportunities?: Opportunity[]; claimable?: WalletClaimable },
   ): Promise<{
     outcome: ExecutionOutcome;
+    payments: PaymentReceipt[];
+  }>;
+  executeClaimBatch?(
+    actions: PortfolioAction[],
+    context?: { opportunities?: Opportunity[]; claimable?: WalletClaimable },
+  ): Promise<{
+    outcomes: ExecutionOutcome[];
     payments: PaymentReceipt[];
   }>;
 }
@@ -161,9 +169,38 @@ export class TreasuryReviewService {
             );
           }
         } else if (policy.approved) {
-          for (const action of orderActions(agentResult.plan.actions)) {
+          const ordered = orderActions(agentResult.plan.actions);
+          const executionContext = {
+            opportunities: agentResult.opportunities,
+            claimable: agentResult.snapshot.claimable,
+          };
+          const batchedOutcomes = new Map<string, ExecutionOutcome>();
+          const foundationClaims = ordered.filter(
+            (action) =>
+              action.type === "claim" && action.dependencies.length === 0,
+          );
+          if (
+            this.executor.executeClaimBatch &&
+            foundationClaims.length > 0 &&
+            agentResult.snapshot.claimable
+          ) {
+            const batch = await this.executor.executeClaimBatch(
+              foundationClaims,
+              executionContext,
+            );
+            for (const outcome of batch.outcomes) {
+              batchedOutcomes.set(outcome.actionId, outcome);
+            }
+            agentResult.payments.push(...batch.payments);
+          }
+          for (const action of ordered) {
             if (action.type === "hold") {
               executions.push({ actionId: action.id, status: "skipped" });
+              continue;
+            }
+            const batched = batchedOutcomes.get(action.id);
+            if (batched) {
+              executions.push(batched);
               continue;
             }
             // Foundation wave only: dependents replan next review against fresh balances.
@@ -194,9 +231,10 @@ export class TreasuryReviewService {
               });
               continue;
             }
-            const execution = await this.executor.executeAction(action, {
-              opportunities: agentResult.opportunities,
-            });
+            const execution = await this.executor.executeAction(
+              action,
+              executionContext,
+            );
             executions.push(execution.outcome);
             agentResult.payments.push(...execution.payments);
           }

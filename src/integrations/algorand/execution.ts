@@ -9,6 +9,7 @@ import type {
   OpportunityExecutionShape,
   PaymentReceipt,
   PortfolioAction,
+  WalletClaimable,
 } from "../../domain.js";
 import type { Canix402Client } from "../canix402/client.js";
 import type { TreasuryWallet } from "../canix402/wallet.js";
@@ -23,6 +24,7 @@ import {
   selectEscrowShapesToRun,
   sortExecutionShapes,
 } from "./folks-execution.js";
+import { selectClaimQuoteRequests } from "../../services/claim-desk.js";
 
 export { FOLKS_GENERAL_LOAN_APP_ID } from "./folks-execution.js";
 
@@ -112,6 +114,7 @@ export interface ExecutionPolicy {
 
 export interface ExecuteActionContext {
   opportunities?: Opportunity[];
+  claimable?: WalletClaimable;
 }
 
 export class AlgorandExecutionService {
@@ -155,7 +158,11 @@ export class AlgorandExecutionService {
     try {
       return action.type === "swap"
         ? await this.executeSwap(action)
-        : await this.executeShape(action, context.opportunities ?? []);
+        : await this.executeShape(
+            action,
+            context.opportunities ?? [],
+            context.claimable,
+          );
     } catch (error) {
       return {
         outcome: {
@@ -168,9 +175,90 @@ export class AlgorandExecutionService {
     }
   }
 
+  async executeClaimBatch(
+    actions: PortfolioAction[],
+    context: ExecuteActionContext = {},
+  ): Promise<{
+    outcomes: ExecutionOutcome[];
+    payments: PaymentReceipt[];
+  }> {
+    if (actions.length === 0) {
+      return { outcomes: [], payments: [] };
+    }
+    if (!this.policy.signingEnabled) {
+      return {
+        outcomes: actions.map((action) => ({
+          actionId: action.id,
+          status: "validated-dry-run",
+        })),
+        payments: [],
+      };
+    }
+    const opportunities = context.opportunities ?? [];
+    const planned = selectClaimQuoteRequests(
+      actions,
+      context.claimable,
+      (action) =>
+        buildQuoteRequests(action, opportunities, this.policy.maxSlippageBps),
+    );
+    if (planned.length === 0) {
+      return {
+        outcomes: actions.map((action) => ({
+          actionId: action.id,
+          status: "failed",
+          error: "No claim quotes to compile",
+        })),
+        payments: [],
+      };
+    }
+    try {
+      const { batch, payments } = await this.requestQuotes(
+        actions.map((action) => action.id).join(","),
+        planned.map((item) => item.quote),
+      );
+      const outcomesByAction = new Map<string, ExecutionOutcome>();
+      for (const [index, quote] of batch.data.entries()) {
+        const actionId = planned[index]?.actionId ?? actions[0]!.id;
+        assertFresh(quote.expiresAt);
+        const submit = await this.signAndSubmitEncoded(
+          planned.length === 1 ? actionId : `${actionId}:${index}`,
+          quote.encodedTransactions,
+        );
+        const outcome: ExecutionOutcome = {
+          ...submit.outcome,
+          actionId,
+          toolName: "canix_get_execution_quote",
+        };
+        outcomesByAction.set(actionId, outcome);
+        if (outcome.status !== "confirmed") {
+          break;
+        }
+      }
+      const outcomes = actions.map(
+        (action) =>
+          outcomesByAction.get(action.id) ?? {
+            actionId: action.id,
+            status: "skipped" as const,
+            error: "Claim batch stopped before this action",
+          },
+      );
+      return { outcomes, payments };
+    } catch (error) {
+      return {
+        outcomes: actions.map((action) => ({
+          actionId: action.id,
+          status: "failed",
+          error: formatExecutionError(error),
+        })),
+        payments: [],
+      };
+    }
+  }
+
   private async executeShape(
     action: PortfolioAction,
     opportunities: Opportunity[],
+    claimable?: WalletClaimable,
   ): Promise<{
     outcome: ExecutionOutcome;
     payments: PaymentReceipt[];
@@ -191,7 +279,7 @@ export class AlgorandExecutionService {
     ) {
       return this.executeSequentialEscrowShapes(clamped, opportunity);
     }
-    return this.executeBatchedShapes(clamped, opportunities);
+    return this.executeBatchedShapes(clamped, opportunities, claimable);
   }
 
   /**
@@ -267,6 +355,7 @@ export class AlgorandExecutionService {
   private async executeBatchedShapes(
     action: PortfolioAction,
     opportunities: Opportunity[],
+    claimable?: WalletClaimable,
   ): Promise<{
     outcome: ExecutionOutcome;
     payments: PaymentReceipt[];
@@ -280,11 +369,20 @@ export class AlgorandExecutionService {
       ...action,
       executionInput: await this.enrichShapeExecutionInput(action, opportunity),
     };
-    const quotes = buildQuoteRequests(
-      enrichedAction,
-      opportunities,
-      this.policy.maxSlippageBps,
-    );
+    const deskQuotes =
+      enrichedAction.type === "claim"
+        ? selectClaimQuoteRequests([enrichedAction], claimable, () => []).map(
+            (item) => item.quote,
+          )
+        : [];
+    const quotes =
+      deskQuotes.length > 0
+        ? deskQuotes
+        : buildQuoteRequests(
+            enrichedAction,
+            opportunities,
+            this.policy.maxSlippageBps,
+          );
     const receiveAssetIds = collectPotentialReceiveAssetIds(
       enrichedAction,
       opportunity,
@@ -933,23 +1031,31 @@ export class AlgorandExecutionService {
           escrowAddresses: [...extraSigners.keys()],
         })
       : encodedTransactions;
-    // Canix quotes are deterministic within a validity window; unique notes
-    // keep retries/re-runs from colliding with already-confirmed txids.
-    const uniqueEncoded = applyUniqueTransactionNotes(
-      fundedEncoded,
-      actionId,
+    const decodedMembers = fundedEncoded.map((encoded) =>
+      decodeQuoteGroupMember(encoded),
     );
-    const signed = uniqueEncoded.map((encoded) => {
-      const transaction = algosdk.decodeUnsignedTransaction(
-        Buffer.from(encoded, "base64"),
-      );
-      const sender = transaction.sender.toString();
+    const hasProviderSigned = decodedMembers.some(
+      (member) => member.kind === "signed",
+    );
+    // Provider-cosigned groups (Tinyman Analytics farm claims) cannot be
+    // regrouped; skip uniqueness notes when any member is already signed.
+    const uniqueEncoded = hasProviderSigned
+      ? null
+      : applyUniqueTransactionNotes(fundedEncoded, actionId);
+    const toSign = uniqueEncoded
+      ? uniqueEncoded.map((encoded) => decodeQuoteGroupMember(encoded))
+      : decodedMembers;
+    const signed = toSign.map((member) => {
+      if (member.kind === "signed") {
+        return member.bytes;
+      }
+      const sender = member.transaction.sender.toString();
       if (sender === this.managedAddress) {
-        return signTransaction(transaction, this.wallet.secretKey);
+        return signTransaction(member.transaction, this.wallet.secretKey);
       }
       const escrowKey = extraSigners.get(sender);
       if (escrowKey) {
-        return signTransaction(transaction, escrowKey);
+        return signTransaction(member.transaction, escrowKey);
       }
       throw new Error(
         `No signer available for transaction sender ${sender} in ${actionId}`,
@@ -1862,6 +1968,21 @@ function formatExecutionError(error: unknown): string {
 function assertFresh(expiresAt: string): void {
   if (new Date(expiresAt).getTime() <= Date.now() + 2_000) {
     throw new Error("Execution quote is expired or too close to expiry");
+  }
+}
+
+function decodeQuoteGroupMember(encoded: string):
+  | { kind: "unsigned"; transaction: algosdk.Transaction }
+  | { kind: "signed"; bytes: Uint8Array } {
+  const bytes = Buffer.from(encoded, "base64");
+  try {
+    return {
+      kind: "unsigned",
+      transaction: algosdk.decodeUnsignedTransaction(bytes),
+    };
+  } catch {
+    algosdk.decodeSignedTransaction(bytes);
+    return { kind: "signed", bytes: new Uint8Array(bytes) };
   }
 }
 

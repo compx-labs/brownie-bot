@@ -13,6 +13,7 @@ import {
   DEFERRED_DEPENDENT_ACTION_ERROR,
   clampOpportunityToolArgs,
   coercePortfolioPlanValue,
+  compactOpportunitiesForModel,
   compactToolResultForModel,
   extractOutputText,
   extractStructuredPlanText,
@@ -23,7 +24,8 @@ import {
   withStreamTrue,
   type ResponsesClient,
 } from "../src/services/portfolio-agent.js";
-import { opportunity, portfolioPlan, portfolioSnapshot } from "./fixtures.js";
+import { opportunity, portfolioPlan, portfolioSnapshot, enterShape } from "./fixtures.js";
+import { TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID } from "../src/services/host-research.js";
 
 const managedWallet =
   "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
@@ -491,6 +493,39 @@ describe("OpenAiPortfolioAgent", () => {
     expect(compacted.data[0]?.opportunityId).toBe("tinyman:pool:0");
     expect(compacted.data[0]).not.toHaveProperty("executionShapes");
     expect(compacted.data[0]?.shapeKeys).toEqual(["shape:0"]);
+  });
+
+  it("pins preferred-hold opportunities ahead of high-TVL rows", () => {
+    const bulky = Array.from({ length: 12 }, (_, index) =>
+      opportunity({
+        opportunityId: `tinyman:pool:${index}`,
+        tvlUsd: 1_000_000 - index,
+        executionShapes: [
+          enterShape({
+            shapeKey: `shape:${index}`,
+            requiredInputs: [],
+            requiredAssetIds: [],
+          }),
+        ],
+      }),
+    );
+    bulky.push(
+      opportunity({
+        opportunityId: TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID,
+        assetIds: [1_732_165_149, 0],
+        tvlUsd: 40,
+        executionReady: true,
+      }),
+    );
+    const compacted = compactOpportunitiesForModel(bulky, {
+      minTvlUsd: 100_000,
+      maxRows: MAX_OPPORTUNITY_TOOL_LIMIT,
+      pinOpportunityIds: [TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID],
+    }) as { data: Array<{ opportunityId: string }> };
+
+    expect(compacted.data[0]?.opportunityId).toBe(
+      TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID,
+    );
   });
 
   it("selects only allowlisted research tools", () => {

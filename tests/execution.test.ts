@@ -98,6 +98,34 @@ describe("AlgorandExecutionService dry-run", () => {
     });
     expect(callManagedTool).not.toHaveBeenCalled();
   });
+
+  it("dry-runs claim batches without compiling quotes", async () => {
+    const { executor, callManagedTool } = dryRunService();
+    const claim: PortfolioAction = {
+      ...action(),
+      id: "claim-1",
+      type: "claim",
+      amountRaw: null,
+      authorizedSpends: [],
+      executionShapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+      executionInput: { userAddress: "ADDR" },
+    };
+    await expect(
+      executor.executeClaimBatch([claim], {
+        claimable: {
+          rows: [],
+          claimAllQuotes: [],
+          totals: { claimableUsd: null, worthClaimingUsd: null },
+          meta: {},
+          caveats: [],
+        },
+      }),
+    ).resolves.toMatchObject({
+      outcomes: [{ actionId: "claim-1", status: "validated-dry-run" }],
+      payments: [],
+    });
+    expect(callManagedTool).not.toHaveBeenCalled();
+  });
 });
 
 describe("buildQuoteRequests", () => {
@@ -567,6 +595,141 @@ describe("buildQuoteRequests", () => {
 });
 
 describe("AlgorandExecutionService multi-quote", () => {
+  it("compiles selected claim-desk quotes in one request", async () => {
+    const account = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const callManagedTool = vi.fn().mockResolvedValue({
+      data: {
+        data: [
+          {
+            shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            encodedTransactions: ["AAAA"],
+            warnings: [],
+            transactions: [],
+          },
+          {
+            shapeKey: "mainnet:haystack:v1:claim",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            encodedTransactions: ["BBBB"],
+            warnings: [],
+            transactions: [],
+          },
+        ],
+        meta: { executionSubmitted: false, quoteCount: 2 },
+      },
+      payment: {
+        amountBaseUnits: "100000",
+        assetId: "31566704",
+        network: "algorand:mainnet",
+      },
+    });
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
+    );
+    vi.spyOn(
+      executor as unknown as {
+        signAndSubmitEncoded: (
+          actionId: string,
+          encoded: string[],
+        ) => Promise<{
+          outcome: { actionId: string; status: string; transactionId?: string };
+        }>;
+      },
+      "signAndSubmitEncoded",
+    ).mockImplementation((actionId) =>
+      Promise.resolve({
+        outcome: {
+          actionId,
+          status: "confirmed",
+          transactionId: `tx-${actionId}`,
+        },
+      }),
+    );
+
+    const claims: PortfolioAction[] = [
+      {
+        ...action(),
+        id: "claim-farm",
+        type: "claim",
+        amountRaw: null,
+        authorizedSpends: [],
+        positionId: "tinyman:reward:1",
+        executionShapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+        executionInput: {},
+      },
+      {
+        ...action(),
+        id: "claim-hay",
+        type: "claim",
+        protocol: "haystack",
+        amountRaw: null,
+        authorizedSpends: [],
+        positionId: "haystack:reward:1",
+        executionShapeKey: "mainnet:haystack:v1:claim",
+        executionInput: {},
+      },
+    ];
+    const result = await executor.executeClaimBatch(claims, {
+      claimable: {
+        rows: [
+          {
+            positionId: "tinyman:reward:1",
+            quote: {
+              shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+              input: { poolId: "POOL" },
+            },
+          },
+          {
+            positionId: "haystack:reward:1",
+            quote: {
+              shapeKey: "mainnet:haystack:v1:claim",
+              input: { userAddress: managedAddress },
+            },
+          },
+        ],
+        claimAllQuotes: [],
+        totals: { claimableUsd: 1, worthClaimingUsd: 1 },
+        meta: {},
+        caveats: [],
+      },
+    });
+
+    expect(callManagedTool).toHaveBeenCalledTimes(1);
+    expect(callManagedTool).toHaveBeenCalledWith(
+      "canix_get_execution_quote",
+      {
+        quotes: [
+          {
+            shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+            input: { poolId: "POOL" },
+          },
+          {
+            shapeKey: "mainnet:haystack:v1:claim",
+            input: { userAddress: managedAddress },
+          },
+        ],
+      },
+      managedAddress,
+    );
+    expect(result.outcomes.map((outcome) => outcome.actionId)).toEqual([
+      "claim-farm",
+      "claim-hay",
+    ]);
+    expect(result.outcomes.every((outcome) => outcome.status === "confirmed")).toBe(
+      true,
+    );
+  });
+
   it("batches non-escrow multi-step quotes then submits in order", async () => {
     const account = algosdk.generateAccount();
     const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
