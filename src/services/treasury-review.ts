@@ -13,6 +13,7 @@ import type {
 } from "../domain.js";
 import type { ReviewRunStore } from "../integrations/storage/review-run-store.js";
 import { sanitizeErrorMessage } from "../util/errors.js";
+import { actionHasDeskClaimQuote } from "./claim-desk.js";
 import {
   buildPriorReviewContext,
   DEFERRED_DEPENDENT_ACTION_ERROR,
@@ -179,13 +180,16 @@ export class TreasuryReviewService {
             (action) =>
               action.type === "claim" && action.dependencies.length === 0,
           );
+          const deskClaims = foundationClaims.filter((action) =>
+            actionHasDeskClaimQuote(action, agentResult.snapshot.claimable),
+          );
           if (
             this.executor.executeClaimBatch &&
-            foundationClaims.length > 0 &&
+            deskClaims.length > 0 &&
             agentResult.snapshot.claimable
           ) {
             const batch = await this.executor.executeClaimBatch(
-              foundationClaims,
+              deskClaims,
               executionContext,
             );
             for (const outcome of batch.outcomes) {

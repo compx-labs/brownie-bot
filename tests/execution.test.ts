@@ -6,9 +6,11 @@ import {
   AlgorandExecutionService,
   applyUniqueTransactionNotes,
   buildQuoteRequests,
+  buildStandaloneAssetOptInTransactions,
   clampActionAmountToSpendable,
   collectPotentialReceiveAssetIds,
   collectReceiveAssetIdsFromQuoteMetadata,
+  encodedGroupHasSignedMember,
   isFolksEscrowBindingNote,
   isSkippablePrerequisiteQuoteError,
   prependAssetOptInTransactions,
@@ -725,9 +727,361 @@ describe("AlgorandExecutionService multi-quote", () => {
       "claim-farm",
       "claim-hay",
     ]);
-    expect(result.outcomes.every((outcome) => outcome.status === "confirmed")).toBe(
-      true,
+    expect(
+      result.outcomes.every((outcome) => outcome.status === "confirmed"),
+    ).toBe(true);
+  });
+
+  it("keeps a confirmed claim when a later quote throws", async () => {
+    const account = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const payment = {
+      amountBaseUnits: "100000",
+      assetId: "31566704",
+      network: "algorand:mainnet",
+    };
+    const callManagedTool = vi.fn().mockResolvedValue({
+      data: {
+        data: [
+          {
+            shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            encodedTransactions: ["AAAA"],
+            warnings: [],
+            transactions: [],
+          },
+          {
+            shapeKey: "mainnet:haystack:v1:claim",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            encodedTransactions: ["BBBB"],
+            warnings: [],
+            transactions: [],
+          },
+        ],
+        meta: { executionSubmitted: false, quoteCount: 2 },
+      },
+      payment,
+    });
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
     );
+    vi.spyOn(
+      executor as unknown as {
+        signAndSubmitEncoded: (
+          actionId: string,
+          encoded: string[],
+        ) => Promise<{
+          outcome: { actionId: string; status: string; transactionId?: string };
+        }>;
+      },
+      "signAndSubmitEncoded",
+    )
+      .mockResolvedValueOnce({
+        outcome: {
+          actionId: "claim-farm",
+          status: "confirmed",
+          transactionId: "tx-claim-farm",
+        },
+      })
+      .mockRejectedValueOnce(
+        new Error("Execution quote is expired or too close to expiry"),
+      );
+
+    const claims: PortfolioAction[] = [
+      {
+        ...action(),
+        id: "claim-farm",
+        type: "claim",
+        amountRaw: null,
+        authorizedSpends: [],
+        positionId: "tinyman:reward:1",
+        executionShapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+        executionInput: {},
+      },
+      {
+        ...action(),
+        id: "claim-hay",
+        type: "claim",
+        protocol: "haystack",
+        amountRaw: null,
+        authorizedSpends: [],
+        positionId: "haystack:reward:1",
+        executionShapeKey: "mainnet:haystack:v1:claim",
+        executionInput: {},
+      },
+    ];
+    const result = await executor.executeClaimBatch(claims, {
+      claimable: {
+        rows: [
+          {
+            positionId: "tinyman:reward:1",
+            quote: {
+              shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+              input: { poolId: "POOL" },
+            },
+          },
+          {
+            positionId: "haystack:reward:1",
+            quote: {
+              shapeKey: "mainnet:haystack:v1:claim",
+              input: { userAddress: managedAddress },
+            },
+          },
+        ],
+        claimAllQuotes: [],
+        totals: { claimableUsd: 1, worthClaimingUsd: 1 },
+        meta: {},
+        caveats: [],
+      },
+    });
+
+    expect(result.payments).toEqual([payment]);
+    expect(result.outcomes).toEqual([
+      {
+        actionId: "claim-farm",
+        status: "confirmed",
+        transactionId: "tx-claim-farm",
+        toolName: "canix_get_execution_quote",
+      },
+      {
+        actionId: "claim-hay",
+        status: "failed",
+        error: "Execution quote is expired or too close to expiry",
+      },
+    ]);
+  });
+
+  it("submits the group that matches each action shapeKey when Canix reorders", async () => {
+    const account = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const callManagedTool = vi.fn().mockResolvedValue({
+      data: {
+        data: [
+          {
+            shapeKey: "mainnet:haystack:v1:claim",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            encodedTransactions: ["HAY-GROUP"],
+            warnings: [],
+            transactions: [],
+          },
+          {
+            shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            encodedTransactions: ["TINY-GROUP"],
+            warnings: [],
+            transactions: [],
+          },
+        ],
+        meta: { executionSubmitted: false, quoteCount: 2 },
+      },
+    });
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
+    );
+    const signAndSubmitEncoded = vi
+      .spyOn(
+        executor as unknown as {
+          signAndSubmitEncoded: (
+            actionId: string,
+            encoded: string[],
+          ) => Promise<{
+            outcome: {
+              actionId: string;
+              status: string;
+              transactionId?: string;
+            };
+          }>;
+        },
+        "signAndSubmitEncoded",
+      )
+      .mockImplementation((actionId, encoded) =>
+        Promise.resolve({
+          outcome: {
+            actionId,
+            status: "confirmed",
+            transactionId: `tx-${encoded[0]}`,
+          },
+        }),
+      );
+
+    const result = await executor.executeClaimBatch(
+      [
+        {
+          ...action(),
+          id: "claim-farm",
+          type: "claim",
+          amountRaw: null,
+          authorizedSpends: [],
+          positionId: "tinyman:reward:1",
+          executionShapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+          executionInput: {},
+        },
+        {
+          ...action(),
+          id: "claim-hay",
+          type: "claim",
+          protocol: "haystack",
+          amountRaw: null,
+          authorizedSpends: [],
+          positionId: "haystack:reward:1",
+          executionShapeKey: "mainnet:haystack:v1:claim",
+          executionInput: {},
+        },
+      ],
+      {
+        claimable: {
+          rows: [
+            {
+              positionId: "tinyman:reward:1",
+              quote: {
+                shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+                input: { poolId: "POOL" },
+              },
+            },
+            {
+              positionId: "haystack:reward:1",
+              quote: {
+                shapeKey: "mainnet:haystack:v1:claim",
+                input: {},
+              },
+            },
+          ],
+          claimAllQuotes: [],
+          totals: { claimableUsd: 1, worthClaimingUsd: 1 },
+          meta: {},
+          caveats: [],
+        },
+      },
+    );
+
+    expect(signAndSubmitEncoded.mock.calls[0]?.[1]).toEqual(["TINY-GROUP"]);
+    expect(signAndSubmitEncoded.mock.calls[1]?.[1]).toEqual(["HAY-GROUP"]);
+    expect(result.outcomes.map((outcome) => outcome.transactionId)).toEqual([
+      "tx-TINY-GROUP",
+      "tx-HAY-GROUP",
+    ]);
+  });
+
+  it("does not compile unmatched Réti/Folks claims in the desk batch", async () => {
+    const account = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const callManagedTool = vi.fn().mockResolvedValue({
+      data: {
+        data: [
+          {
+            shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            encodedTransactions: ["TINY"],
+            warnings: [],
+            transactions: [],
+          },
+        ],
+        meta: { executionSubmitted: false, quoteCount: 1 },
+      },
+    });
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
+    );
+    vi.spyOn(
+      executor as unknown as {
+        signAndSubmitEncoded: (
+          actionId: string,
+          encoded: string[],
+        ) => Promise<{
+          outcome: { actionId: string; status: string };
+        }>;
+      },
+      "signAndSubmitEncoded",
+    ).mockResolvedValue({
+      outcome: { actionId: "claim-farm", status: "confirmed" },
+    });
+
+    const result = await executor.executeClaimBatch(
+      [
+        {
+          ...action(),
+          id: "claim-farm",
+          type: "claim",
+          amountRaw: null,
+          authorizedSpends: [],
+          positionId: "tinyman:reward:1",
+          executionShapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+          executionInput: {},
+        },
+        {
+          ...action(),
+          id: "claim-reti",
+          type: "claim",
+          protocol: "reti",
+          amountRaw: null,
+          authorizedSpends: [],
+          positionId: "reti:reward:1",
+          opportunityId: "reti:1",
+          executionShapeKey: "mainnet:reti:v1:claim",
+          executionInput: {},
+        },
+      ],
+      {
+        claimable: {
+          rows: [
+            {
+              positionId: "tinyman:reward:1",
+              quote: {
+                shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+                input: { poolId: "POOL" },
+              },
+            },
+          ],
+          claimAllQuotes: [],
+          totals: { claimableUsd: 1, worthClaimingUsd: 1 },
+          meta: {},
+          caveats: [],
+        },
+      },
+    );
+
+    expect(callManagedTool).toHaveBeenCalledWith(
+      "canix_get_execution_quote",
+      {
+        quotes: [
+          {
+            shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+            input: { poolId: "POOL" },
+          },
+        ],
+      },
+      managedAddress,
+    );
+    expect(result.outcomes.map((outcome) => outcome.actionId)).toEqual([
+      "claim-farm",
+    ]);
   });
 
   it("batches non-escrow multi-step quotes then submits in order", async () => {
@@ -1648,6 +2002,234 @@ describe("ASA opt-in helpers", () => {
     expect(groupId).toBeDefined();
     expect(decoded[1]?.group).toEqual(groupId);
     expect(decoded[2]?.group).toEqual(groupId);
+  });
+});
+
+describe("provider-signed claim groups", () => {
+  const suggestedParams = {
+    fee: 1_000n,
+    flatFee: true as const,
+    firstValid: 10n,
+    lastValid: 1_010n,
+    genesisHash: new Uint8Array(32),
+    genesisID: "testnet-v1.0",
+    minFee: 1_000n,
+  };
+
+  function encodeUnsignedPayment(sender: string): string {
+    const transaction = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+      sender,
+      receiver: sender,
+      amount: 0n,
+      suggestedParams,
+    });
+    return Buffer.from(algosdk.encodeUnsignedTransaction(transaction)).toString(
+      "base64",
+    );
+  }
+
+  function encodeSignedPayment(
+    account: ReturnType<typeof algosdk.generateAccount>,
+  ): string {
+    const transaction = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+      sender: account.addr.toString(),
+      receiver: account.addr.toString(),
+      amount: 0n,
+      suggestedParams,
+    });
+    return Buffer.from(transaction.signTxn(account.sk)).toString("base64");
+  }
+
+  it("detects mixed unsigned + provider-signed members", () => {
+    const user = algosdk.generateAccount();
+    const provider = algosdk.generateAccount();
+    const encoded = [
+      encodeUnsignedPayment(user.addr.toString()),
+      encodeSignedPayment(provider),
+    ];
+    expect(encodedGroupHasSignedMember(encoded)).toBe(true);
+    expect(encodedGroupHasSignedMember([encoded[0]!])).toBe(false);
+    expect(() =>
+      prependAssetOptInTransactions(
+        encoded,
+        user.addr.toString(),
+        [1_134_696_561],
+      ),
+    ).toThrow(/provider-signed/);
+  });
+
+  it("submits signed members as-is without uniqueness regroup", async () => {
+    const account = algosdk.generateAccount();
+    const provider = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const unsigned = encodeUnsignedPayment(managedAddress);
+    const signed = encodeSignedPayment(provider);
+    const signedBytes = new Uint8Array(Buffer.from(signed, "base64"));
+
+    const executor = new AlgorandExecutionService(
+      { callManagedTool: vi.fn() } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
+    );
+    const captured: Uint8Array[][] = [];
+    const algod = (executor as unknown as { algod: algosdk.Algodv2 }).algod;
+    vi.spyOn(algod, "sendRawTransaction").mockImplementation((txns) => {
+      captured.push([...(txns as Uint8Array[])]);
+      return {
+        do: () => Promise.resolve({ txid: "TX-SIGNED" }),
+      } as ReturnType<algosdk.Algodv2["sendRawTransaction"]>;
+    });
+    const waitSpy = vi
+      .spyOn(
+        executor as unknown as {
+          waitForSubmittedTransaction: (
+            txid: string,
+          ) => Promise<{ confirmedRound?: bigint | number }>;
+        },
+        "waitForSubmittedTransaction",
+      )
+      .mockResolvedValue({ confirmedRound: 11n });
+
+    await (
+      executor as unknown as {
+        signAndSubmitEncoded: (
+          actionId: string,
+          encoded: string[],
+        ) => Promise<{ outcome: ExecutionOutcome }>;
+      }
+    ).signAndSubmitEncoded("claim-analytics", [unsigned, signed]);
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.[1]).toEqual(signedBytes);
+    expect(() => algosdk.decodeUnsignedTransaction(captured[0]![1]!)).toThrow();
+    waitSpy.mockRestore();
+  });
+
+  it("opts in as a separate group before an unmodified signed claim group", async () => {
+    const account = algosdk.generateAccount();
+    const provider = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const unsigned = encodeUnsignedPayment(managedAddress);
+    const signed = encodeSignedPayment(provider);
+    const rewardAssetId = 1_002_590_888;
+    const callManagedTool = vi.fn().mockResolvedValue({
+      data: {
+        data: [
+          {
+            shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            encodedTransactions: [unsigned, signed],
+            warnings: [],
+            transactions: [],
+            metadata: { poolTokenId: rewardAssetId },
+          },
+        ],
+        meta: { executionSubmitted: false, quoteCount: 1 },
+      },
+    });
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
+    );
+    vi.spyOn(
+      executor as unknown as {
+        isAssetOptedIn: (address: string, assetId: number) => Promise<boolean>;
+      },
+      "isAssetOptedIn",
+    ).mockResolvedValue(false);
+    const signAndSubmitEncoded = vi
+      .spyOn(
+        executor as unknown as {
+          signAndSubmitEncoded: (
+            actionId: string,
+            encoded: string[],
+          ) => Promise<{
+            outcome: {
+              actionId: string;
+              status: string;
+              transactionId?: string;
+            };
+          }>;
+        },
+        "signAndSubmitEncoded",
+      )
+      .mockImplementation((actionId) =>
+        Promise.resolve({
+          outcome: {
+            actionId,
+            status: "confirmed",
+            transactionId: `tx-${actionId}`,
+          },
+        }),
+      );
+
+    const result = await executor.executeClaimBatch(
+      [
+        {
+          ...action(),
+          id: "claim-farm",
+          type: "claim",
+          amountRaw: null,
+          authorizedSpends: [],
+          positionId: "tinyman:reward:1",
+          executionShapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+          executionInput: {},
+        },
+      ],
+      {
+        claimable: {
+          rows: [
+            {
+              positionId: "tinyman:reward:1",
+              quote: {
+                shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+                input: { poolId: "POOL" },
+              },
+            },
+          ],
+          claimAllQuotes: [],
+          totals: { claimableUsd: 1, worthClaimingUsd: 1 },
+          meta: {},
+          caveats: [],
+        },
+      },
+    );
+
+    expect(signAndSubmitEncoded).toHaveBeenCalledTimes(2);
+    expect(signAndSubmitEncoded.mock.calls[0]?.[0]).toBe("claim-farm:optin");
+    const optInBlob = signAndSubmitEncoded.mock.calls[0]?.[1]?.[0];
+    expect(optInBlob).toEqual(expect.any(String));
+    const optInDecoded = algosdk.decodeUnsignedTransaction(
+      Buffer.from(optInBlob ?? "", "base64"),
+    );
+    expect(optInDecoded.type).toBe(algosdk.TransactionType.axfer);
+    expect(Number(optInDecoded.assetTransfer?.assetIndex)).toBe(rewardAssetId);
+    expect(signAndSubmitEncoded.mock.calls[1]?.[0]).toBe("claim-farm");
+    expect(signAndSubmitEncoded.mock.calls[1]?.[1]).toEqual([unsigned, signed]);
+    expect(result.outcomes[0]?.status).toBe("confirmed");
+
+    const standalone = buildStandaloneAssetOptInTransactions(
+      [unsigned, signed],
+      managedAddress,
+      [rewardAssetId],
+    );
+    expect(standalone).toHaveLength(1);
+    expect(encodedGroupHasSignedMember(standalone)).toBe(false);
   });
 });
 
