@@ -776,10 +776,7 @@ function inceptionReviewKey(prefix: string, walletAddress: string): string {
 
 /** Walk year/month buckets between two ISO timestamps and filter by asOf. */
 export async function listSnapshotsBetweenImpl(
-  listMonth: (
-    year: number,
-    month: number,
-  ) => Promise<AccountingSnapshot[]>,
+  listMonth: (year: number, month: number) => Promise<AccountingSnapshot[]>,
   fromInclusive: string,
   toInclusive: string,
 ): Promise<AccountingSnapshot[]> {

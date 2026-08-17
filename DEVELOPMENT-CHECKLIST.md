@@ -17,14 +17,14 @@ Keep this file updated when priorities change so work does not get lost across c
 - [x] **Cashflow-aware P&L** — `/deposit` `/withdraw` + txid inference; accounting P&L adjusts for recorded funding
 - [x] **Easier force-run (Telegram)** — `/run` `/accounting` ack immediately and finish in background so the command loop stays responsive
 - [x] **Deterministic DeFi unwind** — `/unwind` host-built close-all (positions + LST; multi-wave; confirm)
+- [x] **Spend visibility** — daily/remaining Canix x402 + zs-proxy caps on `/status` and `/health` (UTC day; persisted under `ACCOUNTING_DATA_DIR`)
+- [x] **Config empathy** — required vs optional env split, friendlier Zod errors, ops troubleshooting section in docs
 
 ## Next (recommended order)
 
-1. [ ] **Spend visibility** — daily/remaining Canix x402 + ZeroSignal caps beyond per-run lines.
-2. [ ] **Config empathy** — required vs optional env split, friendlier Zod errors, ops troubleshooting section in docs.
-3. [ ] **Dated review history** — optional follow-up to latest-only persistence (`reviews/<yyyy>/<mm>/<dd>/<runId>.json` + list API).
-4. [ ] **Health low-balance warnings** — optional follow-up when wallet ALGO/USDC checks are cheap enough to add to `?deps=1`.
-5. [ ] **HTTP/Docker force-run docs** — optional follow-up for `MANUAL_TRIGGER_TOKEN` and Docker `once` (Telegram `/run` already covers chat-side force-run).
+1. [ ] **Dated review history** — optional follow-up to latest-only persistence (`reviews/<yyyy>/<mm>/<dd>/<runId>.json` + list API).
+2. [ ] **Health low-balance warnings** — optional follow-up when wallet ALGO/USDC checks are cheap enough to add to `?deps=1`.
+3. [ ] **HTTP/Docker force-run docs** — optional follow-up for `MANUAL_TRIGGER_TOKEN` and Docker `once` (Telegram `/run` already covers chat-side force-run).
 
 ## Parking lot
 

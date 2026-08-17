@@ -54,11 +54,22 @@ const ENDPOINT_CEILINGS = new Map([
   ["/swaps/transactions", 5_000n],
 ]);
 
+/**
+ * Optional durable Canix x402 daily counter (UTC day).
+ * Visibility store; when provided, the existing daily cap uses the same total.
+ */
+export interface X402DailySpendTracker {
+  usedBaseUnits(now?: Date): bigint;
+  record(amountBaseUnits: bigint, now?: Date): Promise<void>;
+}
+
 export interface PaymentPolicy {
   algodUrl: string;
   maxDailyBaseUnits?: bigint;
   /** Test seam; production fetches fresh params from algod. */
   getSuggestedParams?: () => Promise<algosdk.SuggestedParams>;
+  /** When set, daily used is read/written here instead of process memory. */
+  x402DailySpend?: X402DailySpendTracker;
 }
 
 export interface BuiltPayment {
@@ -130,9 +141,10 @@ export class AlgorandPaymentBuilder implements PaymentBuilder {
         `x402 payment ${amount.toString()} exceeds the ${resourceUrl.pathname} endpoint ceiling`,
       );
     }
-    this.resetDailySpendIfNeeded();
+    const now = new Date();
+    const spentToday = this.currentSpent(now);
     const dailyLimit = this.policy.maxDailyBaseUnits ?? 500_000n;
-    if (this.spentToday + amount > dailyLimit) {
+    if (spentToday + amount > dailyLimit) {
       throw new Error(
         `x402 daily spend would exceed ${dailyLimit.toString()} base units`,
       );
@@ -207,7 +219,7 @@ export class AlgorandPaymentBuilder implements PaymentBuilder {
       paymentRequired: paymentRequest,
     };
 
-    this.spentToday += amount;
+    await this.addSpent(amount, now);
     return {
       paymentSignature: Buffer.from(JSON.stringify(envelope)).toString(
         "base64",
@@ -229,8 +241,25 @@ export class AlgorandPaymentBuilder implements PaymentBuilder {
     return algod.getTransactionParams().do();
   }
 
-  private resetDailySpendIfNeeded(): void {
-    const today = new Date().toISOString().slice(0, 10);
+  private currentSpent(now: Date): bigint {
+    if (this.policy.x402DailySpend) {
+      return this.policy.x402DailySpend.usedBaseUnits(now);
+    }
+    this.resetDailySpendIfNeeded(now);
+    return this.spentToday;
+  }
+
+  private async addSpent(amount: bigint, now: Date): Promise<void> {
+    if (this.policy.x402DailySpend) {
+      await this.policy.x402DailySpend.record(amount, now);
+      return;
+    }
+    this.resetDailySpendIfNeeded(now);
+    this.spentToday += amount;
+  }
+
+  private resetDailySpendIfNeeded(now: Date): void {
+    const today = now.toISOString().slice(0, 10);
     if (today !== this.spendDate) {
       this.spendDate = today;
       this.spentToday = 0n;

@@ -609,9 +609,7 @@ export const inceptionReviewRowSchema = z.object({
   /** When classification is flagged, why (e.g. appl in atomic group). */
   flagReason: z.string().optional(),
   /** Operator may promote a flagged row to external_* before commit. */
-  commitAs: z
-    .enum(["external_deposit", "external_withdrawal"])
-    .optional(),
+  commitAs: z.enum(["external_deposit", "external_withdrawal"]).optional(),
 });
 
 export type InceptionReviewRow = z.infer<typeof inceptionReviewRowSchema>;

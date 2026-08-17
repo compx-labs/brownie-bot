@@ -39,6 +39,21 @@ describe("backend routes", () => {
       latestReview: null,
       latestAccounting: null,
       warnings: ["No treasury review has completed yet"],
+      spend: {
+        timezone: "UTC",
+        canix: {
+          usedUsdc: "0",
+          capUsdc: "5",
+          remainingUsdc: "5",
+          uncapped: false,
+        },
+        zs: {
+          usedUsdc: "0",
+          capUsdc: "5",
+          remainingUsdc: "5",
+          uncapped: false,
+        },
+      },
     });
     expect(response.json()).not.toHaveProperty("deps");
   });

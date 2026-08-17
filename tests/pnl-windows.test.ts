@@ -21,10 +21,7 @@ function cashflow(
   };
 }
 
-function snapshot(
-  asOf: string,
-  totalValueUsd: string,
-): AccountingSnapshot {
+function snapshot(asOf: string, totalValueUsd: string): AccountingSnapshot {
   return {
     schemaVersion: 2,
     id: asOf,
@@ -91,7 +88,7 @@ describe("buildPnlWindows", () => {
       endNavUsd: money("200"),
       inception: undefined,
       snapshots: [snapshot("2026-08-05T12:00:00.000Z", "190")],
-      listCashflows: async () => [],
+      listCashflows: () => Promise.resolve([]),
     });
     expect(windows.all.available).toBe(false);
     expect(windows["7d"].available).toBe(false);
@@ -123,11 +120,13 @@ describe("buildPnlWindows", () => {
         snapshot("2026-07-30T12:00:00.000Z", "150"),
         snapshot("2026-08-01T12:00:00.000Z", "160"),
       ],
-      listCashflows: async (from, to) =>
-        cashflows.filter((item) => {
-          const t = new Date(item.occurredAt).getTime();
-          return t >= new Date(from).getTime() && t < new Date(to).getTime();
-        }),
+      listCashflows: (from, to) =>
+        Promise.resolve(
+          cashflows.filter((item) => {
+            const t = new Date(item.occurredAt).getTime();
+            return t >= new Date(from).getTime() && t < new Date(to).getTime();
+          }),
+        ),
     });
     expect(windows.all.available).toBe(true);
     expect(windows.all.pnlUsd).toBe("50.00");

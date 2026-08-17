@@ -71,10 +71,8 @@ export const RETI_STAKE_SHAPE = "mainnet:reti:v1:stake:algo";
 export const RETI_UNSTAKE_SHAPE = "mainnet:reti:v1:unstake:algo";
 /** Stable verify pin — ungated validator the TEST_WALLET can enter. */
 export const RETI_VERIFY_OPPORTUNITY_ID = "reti-staking-220";
-export const MYTH_MINT_SHAPE =
-  "mainnet:myth-finance:dualstake-v1:mint:lst";
-export const MYTH_REDEEM_SHAPE =
-  "mainnet:myth-finance:dualstake-v1:redeem:lst";
+export const MYTH_MINT_SHAPE = "mainnet:myth-finance:dualstake-v1:mint:lst";
+export const MYTH_REDEEM_SHAPE = "mainnet:myth-finance:dualstake-v1:redeem:lst";
 export const ALGO_DECIMALS = 6;
 export const USDC_DECIMALS = 6;
 export const COMPX_DECIMALS = 6;
@@ -264,7 +262,8 @@ export function isLstUnstakeShape(shape: OpportunityExecutionShape): boolean {
   if (isPrerequisiteShape(shape)) {
     return false;
   }
-  const key = `${shape.action}:${shape.variant}:${shape.shapeKey}`.toLowerCase();
+  const key =
+    `${shape.action}:${shape.variant}:${shape.shapeKey}`.toLowerCase();
   return /unstake|redeem|burn|claim/.test(key);
 }
 
@@ -319,8 +318,9 @@ function retiAcceptsStake(opportunity: Opportunity): boolean {
 
 function retiHasAsaGate(opportunity: Opportunity): boolean {
   return (
-    opportunity.entryRequirements?.gates?.some((gate) => gate.kind === "asa") ===
-    true
+    opportunity.entryRequirements?.gates?.some(
+      (gate) => gate.kind === "asa",
+    ) === true
   );
 }
 
@@ -524,9 +524,7 @@ function resolveDorkFiMarketAppId(
   shapeKey: string,
   fallback: number,
 ): number {
-  return (
-    resolveDorkFiHintId(opportunity, "marketAppId", shapeKey) ?? fallback
-  );
+  return resolveDorkFiHintId(opportunity, "marketAppId", shapeKey) ?? fallback;
 }
 
 function resolveFolksPoolAppId(opportunity: Opportunity): number | null {
@@ -614,8 +612,7 @@ export function matchProtocolVerifyCases(
 ): Partial<Record<ProtocolVerifyCaseId, PinnedProtocolCase>> {
   const ready = opportunities.filter(isExecutionReady);
   const matched: Partial<Record<ProtocolVerifyCaseId, PinnedProtocolCase>> = {};
-  const algoBudgetRaw =
-    options.algoBudgetRaw ?? toBaseUnits(1, ALGO_DECIMALS);
+  const algoBudgetRaw = options.algoBudgetRaw ?? toBaseUnits(1, ALGO_DECIMALS);
 
   const folksUsdc = ready.find(
     (opportunity) =>
@@ -675,7 +672,12 @@ export function matchProtocolVerifyCases(
         action: "setup",
         variant: "addCollateral",
         order: 11,
-        requiredInputs: ["userAddress", "escrowAddress", "loanAppId", "poolAppId"],
+        requiredInputs: [
+          "userAddress",
+          "escrowAddress",
+          "loanAppId",
+          "poolAppId",
+        ],
         requiredAssetIds: [] as number[],
         inputHints: {
           loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
@@ -687,7 +689,12 @@ export function matchProtocolVerifyCases(
         action: "collateral",
         variant: "sync",
         order: 12,
-        requiredInputs: ["userAddress", "escrowAddress", "loanAppId", "poolAppId"],
+        requiredInputs: [
+          "userAddress",
+          "escrowAddress",
+          "loanAppId",
+          "poolAppId",
+        ],
         requiredAssetIds: [] as number[],
         inputHints: {
           loanAppId: FOLKS_GENERAL_LOAN_APP_ID,
@@ -788,9 +795,7 @@ export function matchProtocolVerifyCases(
       protocolIncludes(opportunity, "folks") &&
       hasAlgoOnly(opportunity) &&
       opportunity.executionShapes.some(
-        (shape) =>
-          isCapitalEnterShape(shape) &&
-          /^stake$/i.test(shape.action),
+        (shape) => isCapitalEnterShape(shape) && /^stake$/i.test(shape.action),
       ),
   );
   if (folksStake) {
@@ -1087,8 +1092,7 @@ export function matchProtocolVerifyCases(
         borrowOpportunityId: dorkfiUnitMarket.opportunityId,
         borrowShapeKey: borrowShape?.shapeKey ?? DORKFI_BORROW_SHAPE,
         repayShapeKey: repayShape?.shapeKey ?? DORKFI_REPAY_SHAPE,
-        notes:
-          "DorkFi credit: deposit USDC → borrow UNIT → repay → withdraw",
+        notes: "DorkFi credit: deposit USDC → borrow UNIT → repay → withdraw",
       }),
       shapes,
     });
@@ -1133,8 +1137,7 @@ export function matchProtocolVerifyCases(
       opportunity.executionShapes.some(
         (shape) =>
           isCapitalEnterShape(shape) &&
-          (/stake/i.test(shape.action) ||
-            shape.shapeKey === RETI_STAKE_SHAPE),
+          (/stake/i.test(shape.action) || shape.shapeKey === RETI_STAKE_SHAPE),
       ),
   );
   // Prefer explicit verify pin (ungated validator 220); else any ungated fit.
@@ -1355,7 +1358,7 @@ function registryCompXShape(
     order: action === "deposit" ? 0 : action === "borrow" ? 1 : 2,
     requiredInputs,
     requiredAssetIds: [],
-    inputHints: inputHints as OpportunityExecutionShape["inputHints"],
+    inputHints: inputHints,
   };
 }
 
@@ -1384,7 +1387,7 @@ function registryDorkFiShape(
             : 3,
     requiredInputs,
     requiredAssetIds,
-    inputHints: inputHints as OpportunityExecutionShape["inputHints"],
+    inputHints: inputHints,
   };
 }
 
@@ -2002,11 +2005,9 @@ export async function runEnterExitCase(
     enterShapeKey,
     amountsByAsset: amounts,
   });
-  const enterPlan = validateAndNormalizePlan(
-    snapshot,
-    basePlan([enter]),
-    [opportunity],
-  );
+  const enterPlan = validateAndNormalizePlan(snapshot, basePlan([enter]), [
+    opportunity,
+  ]);
   await executeConfirmed(context, enterPlan.actions[0]!, [opportunity]);
 
   snapshot = await readSnapshot(context);
@@ -2021,10 +2022,7 @@ export async function runEnterExitCase(
     );
   }
 
-  const exitShapeKey = resolveVerifyExitShapeKey(
-    pinned,
-    position,
-  );
+  const exitShapeKey = resolveVerifyExitShapeKey(pinned, position);
   // Folks: withdraw the same underlying we just deposited (Canix live tests use
   // amountDenomination=asset). Position amountRaw can be fAsset and overshoot.
   const withdrawAmountRaw =
@@ -2038,11 +2036,9 @@ export async function runEnterExitCase(
     exitShapeKey,
     ...(withdrawAmountRaw !== undefined ? { withdrawAmountRaw } : {}),
   });
-  const exitPlan = validateAndNormalizePlan(
-    snapshot,
-    basePlan([exit]),
-    [opportunity],
-  );
+  const exitPlan = validateAndNormalizePlan(snapshot, basePlan([exit]), [
+    opportunity,
+  ]);
   await executeConfirmed(context, exitPlan.actions[0]!, [opportunity]);
 }
 
@@ -2128,11 +2124,8 @@ export async function runLstStakeCase(
   });
   await executeConfirmed(
     context,
-    validateAndNormalizePlan(
-      snapshot,
-      basePlan([enter]),
-      [enterOpportunity],
-    ).actions[0]!,
+    validateAndNormalizePlan(snapshot, basePlan([enter]), [enterOpportunity])
+      .actions[0]!,
     [enterOpportunity],
   );
 
@@ -2167,11 +2160,8 @@ export async function runLstStakeCase(
   });
   await executeConfirmed(
     context,
-    validateAndNormalizePlan(
-      snapshot,
-      basePlan([exit]),
-      [opportunity],
-    ).actions[0]!,
+    validateAndNormalizePlan(snapshot, basePlan([exit]), [opportunity])
+      .actions[0]!,
     [opportunity],
   );
 
@@ -2220,7 +2210,8 @@ async function ensureUnstakeShapeOnOpportunity(
           action: "unstake",
           variant: "immediate",
           title: "Folks Finance xALGO immediate unstake",
-          summary: "Burn xALGO to redeem ALGO from Folks Finance liquid staking",
+          summary:
+            "Burn xALGO to redeem ALGO from Folks Finance liquid staking",
           order: 1,
           requiredInputs: ["userAddress", "amount"],
           requiredAssetIds: [FOLKS_XALGO_ASSET_ID],
@@ -2323,11 +2314,7 @@ export async function runHaystackSwapCase(
   });
   await executeConfirmed(
     context,
-    validateAndNormalizePlan(
-      snapshot,
-      basePlan([forward]),
-      [],
-    ).actions[0]!,
+    validateAndNormalizePlan(snapshot, basePlan([forward]), []).actions[0]!,
     [],
   );
 
@@ -2347,11 +2334,7 @@ export async function runHaystackSwapCase(
   });
   await executeConfirmed(
     context,
-    validateAndNormalizePlan(
-      snapshot,
-      basePlan([back]),
-      [],
-    ).actions[0]!,
+    validateAndNormalizePlan(snapshot, basePlan([back]), []).actions[0]!,
     [],
   );
 }
@@ -2409,7 +2392,7 @@ export async function runCompXCreditCase(
   const x402FeeBufferRaw = 500_000n;
   const minUsdcForRun = BigInt(usdcRaw) + x402FeeBufferRaw;
 
-  let liquidUsdc = await readAlgodAssetSpendable(
+  const liquidUsdc = await readAlgodAssetSpendable(
     context.config.X402_ALGOD_URL,
     context.walletAddress,
     USDC_ASSET_ID,
@@ -2470,7 +2453,8 @@ export async function runCompXCreditCase(
     });
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(topUpSnapshot, basePlan([topUp]), []).actions[0]!,
+      validateAndNormalizePlan(topUpSnapshot, basePlan([topUp]), [])
+        .actions[0]!,
       [],
     );
   }
@@ -2608,8 +2592,8 @@ export async function runCompXCreditCase(
       ];
       const bootstrapWithdrawKey = withdrawKeys.includes(withdrawShapeKey)
         ? withdrawShapeKey
-        : withdrawKeys.find((key) => /withdraw/i.test(key)) ??
-          withdrawShapeKey;
+        : (withdrawKeys.find((key) => /withdraw/i.test(key)) ??
+          withdrawShapeKey);
       if (
         !stranded.compatibleExitShapeKeys.includes(bootstrapWithdrawKey) &&
         !stranded.compatibleManageShapeKeys.includes(bootstrapWithdrawKey)
@@ -2628,11 +2612,9 @@ export async function runCompXCreditCase(
       });
       await executeConfirmed(
         context,
-        validateAndNormalizePlan(
-          snapshot,
-          basePlan([bootstrap]),
-          [depositOpportunity],
-        ).actions[0]!,
+        validateAndNormalizePlan(snapshot, basePlan([bootstrap]), [
+          depositOpportunity,
+        ]).actions[0]!,
         [depositOpportunity],
       );
       snapshot = await readSnapshot(context);
@@ -2649,11 +2631,9 @@ export async function runCompXCreditCase(
     });
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(
-        snapshot,
-        basePlan([deposit]),
-        [depositOpportunity],
-      ).actions[0]!,
+      validateAndNormalizePlan(snapshot, basePlan([deposit]), [
+        depositOpportunity,
+      ]).actions[0]!,
       [depositOpportunity],
     );
 
@@ -2703,11 +2683,9 @@ export async function runCompXCreditCase(
     };
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(
-        snapshot,
-        basePlan([borrowAction]),
-        [borrowOnlyOpportunity],
-      ).actions[0]!,
+      validateAndNormalizePlan(snapshot, basePlan([borrowAction]), [
+        borrowOnlyOpportunity,
+      ]).actions[0]!,
       [borrowOnlyOpportunity],
     );
 
@@ -2737,7 +2715,7 @@ export async function runCompXCreditCase(
   ];
   const repayKey = repayExitKeys.includes(repayShapeKey)
     ? repayShapeKey
-    : repayExitKeys.find((key) => /repay/i.test(key)) ?? repayShapeKey;
+    : (repayExitKeys.find((key) => /repay/i.test(key)) ?? repayShapeKey);
   if (
     !debt.compatibleExitShapeKeys.includes(repayKey) &&
     !debt.compatibleManageShapeKeys.includes(repayKey)
@@ -2775,17 +2753,15 @@ export async function runCompXCreditCase(
   };
   await executeConfirmed(
     context,
-    validateAndNormalizePlan(
-      snapshot,
-      basePlan([repay]),
-      [repayReadyOpportunity],
-    ).actions[0]!,
+    validateAndNormalizePlan(snapshot, basePlan([repay]), [
+      repayReadyOpportunity,
+    ]).actions[0]!,
     [repayReadyOpportunity],
   );
 
   snapshot = await readSnapshot(context);
   const debtAfter = snapshot.positions.find(
-    (position) => position.positionId === debt!.positionId,
+    (position) => position.positionId === debt.positionId,
   );
   if (debtAfter && BigInt(debtAfter.amountRaw) > 0n) {
     // Allow residual dust from Canix under-reporting; require wallet COMPX gone.
@@ -2811,7 +2787,7 @@ export async function runCompXCreditCase(
     ];
     const withdrawKey = withdrawKeys.includes(withdrawShapeKey)
       ? withdrawShapeKey
-      : withdrawKeys.find((key) => /withdraw/i.test(key)) ?? withdrawShapeKey;
+      : (withdrawKeys.find((key) => /withdraw/i.test(key)) ?? withdrawShapeKey);
     if (
       !supplied.compatibleExitShapeKeys.includes(withdrawKey) &&
       !supplied.compatibleManageShapeKeys.includes(withdrawKey)
@@ -2830,11 +2806,9 @@ export async function runCompXCreditCase(
     });
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(
-        snapshot,
-        basePlan([withdraw]),
-        [depositOpportunity],
-      ).actions[0]!,
+      validateAndNormalizePlan(snapshot, basePlan([withdraw]), [
+        depositOpportunity,
+      ]).actions[0]!,
       [depositOpportunity],
     );
     return;
@@ -2882,11 +2856,9 @@ export async function runCompXCreditCase(
   });
   await executeConfirmed(
     context,
-    validateAndNormalizePlan(
-      snapshot,
-      basePlan([withdraw]),
-      [depositOpportunity],
-    ).actions[0]!,
+    validateAndNormalizePlan(snapshot, basePlan([withdraw]), [
+      depositOpportunity,
+    ]).actions[0]!,
     [depositOpportunity],
   );
 }
@@ -2919,7 +2891,7 @@ export async function runDorkFiCreditCase(
   const x402FeeBufferRaw = 500_000n;
   const minUsdcForRun = BigInt(usdcRaw) + x402FeeBufferRaw;
 
-  let liquidUsdc = await readAlgodAssetSpendable(
+  const liquidUsdc = await readAlgodAssetSpendable(
     context.config.X402_ALGOD_URL,
     context.walletAddress,
     USDC_ASSET_ID,
@@ -2980,7 +2952,8 @@ export async function runDorkFiCreditCase(
     });
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(topUpSnapshot, basePlan([topUp]), []).actions[0]!,
+      validateAndNormalizePlan(topUpSnapshot, basePlan([topUp]), [])
+        .actions[0]!,
       [],
     );
   }
@@ -3068,17 +3041,11 @@ export async function runDorkFiCreditCase(
         ...(borrowOpportunity.executionShapes.find(
           (shape) => shape.shapeKey === borrowShapeKey,
         ) ??
-          registryDorkFiShape(
-            borrowShapeKey,
-            "borrow",
-            dorkFiInputs,
-            [],
-            {
-              poolAppId: unitPoolAppId,
-              marketAppId: unitMarketAppId,
-              assetId: UNIT_ASSET_ID,
-            },
-          )),
+          registryDorkFiShape(borrowShapeKey, "borrow", dorkFiInputs, [], {
+            poolAppId: unitPoolAppId,
+            marketAppId: unitMarketAppId,
+            assetId: UNIT_ASSET_ID,
+          })),
         requiredInputs: dorkFiInputs,
         // Borrow receives UNIT; do not require holding it beforehand (CompX pattern).
         requiredAssetIds: [],
@@ -3092,17 +3059,11 @@ export async function runDorkFiCreditCase(
   };
   const repayReadyOpportunity = upsertShapeOnOpportunity(
     borrowOpportunity,
-    registryDorkFiShape(
-      repayShapeKey,
-      "repay",
-      dorkFiInputs,
-      [UNIT_ASSET_ID],
-      {
-        poolAppId: unitPoolAppId,
-        marketAppId: unitMarketAppId,
-        assetId: UNIT_ASSET_ID,
-      },
-    ),
+    registryDorkFiShape(repayShapeKey, "repay", dorkFiInputs, [UNIT_ASSET_ID], {
+      poolAppId: unitPoolAppId,
+      marketAppId: unitMarketAppId,
+      assetId: UNIT_ASSET_ID,
+    }),
   );
 
   let debt = snapshot.positions.find((position) =>
@@ -3159,8 +3120,8 @@ export async function runDorkFiCreditCase(
       ];
       const bootstrapWithdrawKey = withdrawKeys.includes(withdrawShapeKey)
         ? withdrawShapeKey
-        : withdrawKeys.find((key) => /withdraw/i.test(key)) ??
-          withdrawShapeKey;
+        : (withdrawKeys.find((key) => /withdraw/i.test(key)) ??
+          withdrawShapeKey);
       if (
         !stranded.compatibleExitShapeKeys.includes(bootstrapWithdrawKey) &&
         !stranded.compatibleManageShapeKeys.includes(bootstrapWithdrawKey)
@@ -3179,11 +3140,9 @@ export async function runDorkFiCreditCase(
       });
       await executeConfirmed(
         context,
-        validateAndNormalizePlan(
-          snapshot,
-          basePlan([bootstrap]),
-          [depositOpportunity],
-        ).actions[0]!,
+        validateAndNormalizePlan(snapshot, basePlan([bootstrap]), [
+          depositOpportunity,
+        ]).actions[0]!,
         [depositOpportunity],
       );
       snapshot = await readSnapshot(context);
@@ -3200,11 +3159,9 @@ export async function runDorkFiCreditCase(
     });
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(
-        snapshot,
-        basePlan([deposit]),
-        [depositOpportunity],
-      ).actions[0]!,
+      validateAndNormalizePlan(snapshot, basePlan([deposit]), [
+        depositOpportunity,
+      ]).actions[0]!,
       [depositOpportunity],
     );
 
@@ -3243,11 +3200,9 @@ export async function runDorkFiCreditCase(
     };
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(
-        snapshot,
-        basePlan([borrowAction]),
-        [borrowOnlyOpportunity],
-      ).actions[0]!,
+      validateAndNormalizePlan(snapshot, basePlan([borrowAction]), [
+        borrowOnlyOpportunity,
+      ]).actions[0]!,
       [borrowOnlyOpportunity],
     );
 
@@ -3296,7 +3251,11 @@ export async function runDorkFiCreditCase(
   }
 
   // Ensure synthetic debt is present in the snapshot for policy position lookup.
-  if (!snapshot.positions.some((position) => position.positionId === debt!.positionId)) {
+  if (
+    !snapshot.positions.some(
+      (position) => position.positionId === debt.positionId,
+    )
+  ) {
     snapshot = {
       ...snapshot,
       positions: [...snapshot.positions, debt],
@@ -3309,7 +3268,7 @@ export async function runDorkFiCreditCase(
   ];
   const repayKey = repayExitKeys.includes(repayShapeKey)
     ? repayShapeKey
-    : repayExitKeys.find((key) => /repay/i.test(key)) ?? repayShapeKey;
+    : (repayExitKeys.find((key) => /repay/i.test(key)) ?? repayShapeKey);
   if (
     !debt.compatibleExitShapeKeys.includes(repayKey) &&
     !debt.compatibleManageShapeKeys.includes(repayKey)
@@ -3347,11 +3306,9 @@ export async function runDorkFiCreditCase(
   };
   await executeConfirmed(
     context,
-    validateAndNormalizePlan(
-      snapshot,
-      basePlan([repay]),
-      [repayReadyOpportunity],
-    ).actions[0]!,
+    validateAndNormalizePlan(snapshot, basePlan([repay]), [
+      repayReadyOpportunity,
+    ]).actions[0]!,
     [repayReadyOpportunity],
   );
 
@@ -3382,7 +3339,7 @@ export async function runDorkFiCreditCase(
   ];
   const withdrawKey = withdrawKeys.includes(withdrawShapeKey)
     ? withdrawShapeKey
-    : withdrawKeys.find((key) => /withdraw/i.test(key)) ?? withdrawShapeKey;
+    : (withdrawKeys.find((key) => /withdraw/i.test(key)) ?? withdrawShapeKey);
   if (
     !supplied.compatibleExitShapeKeys.includes(withdrawKey) &&
     !supplied.compatibleManageShapeKeys.includes(withdrawKey)
@@ -3407,11 +3364,9 @@ export async function runDorkFiCreditCase(
   };
   await executeConfirmed(
     context,
-    validateAndNormalizePlan(
-      snapshot,
-      basePlan([withdraw]),
-      [depositOpportunity],
-    ).actions[0]!,
+    validateAndNormalizePlan(snapshot, basePlan([withdraw]), [
+      depositOpportunity,
+    ]).actions[0]!,
     [depositOpportunity],
   );
 }
@@ -3478,7 +3433,7 @@ export async function runFolksCreditCase(
 
   const x402FeeBufferRaw = 500_000n;
   const minUsdcForRun = BigInt(usdcRaw) + x402FeeBufferRaw;
-  let liquidUsdc = await readAlgodAssetSpendable(
+  const liquidUsdc = await readAlgodAssetSpendable(
     context.config.X402_ALGOD_URL,
     context.walletAddress,
     USDC_ASSET_ID,
@@ -3539,7 +3494,8 @@ export async function runFolksCreditCase(
     });
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(topUpSnapshot, basePlan([topUp]), []).actions[0]!,
+      validateAndNormalizePlan(topUpSnapshot, basePlan([topUp]), [])
+        .actions[0]!,
       [],
     );
   }
@@ -3600,11 +3556,8 @@ export async function runFolksCreditCase(
     const snapshot = await readSnapshot(context);
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(
-        snapshot,
-        basePlan([action]),
-        [opportunity],
-      ).actions[0]!,
+      validateAndNormalizePlan(snapshot, basePlan([action]), [opportunity])
+        .actions[0]!,
       [opportunity],
     );
   };
@@ -3725,9 +3678,7 @@ export async function runFolksCreditCase(
       );
     }
 
-    console.error(
-      `[protocol-verify] ${pinned.caseId}: collateral:sync USDC`,
-    );
+    console.error(`[protocol-verify] ${pinned.caseId}: collateral:sync USDC`);
     await executeFolksStep({
       id: `${pinned.caseId}-sync`,
       type: "open",
@@ -3843,8 +3794,7 @@ export async function runFolksCreditCase(
   }
   // Leave ALGO for fees; repay at most wallet balance minus a small fee buffer.
   const feeBuffer = 200_000n;
-  const maxRepay =
-    walletAlgo > feeBuffer ? walletAlgo - feeBuffer : walletAlgo;
+  const maxRepay = walletAlgo > feeBuffer ? walletAlgo - feeBuffer : walletAlgo;
   if (maxRepay > 0n && repayAmountRaw > maxRepay) {
     repayAmountRaw = maxRepay;
   }
@@ -3951,7 +3901,7 @@ export async function runFolksCreditCase(
     ];
     const withdrawKey = withdrawKeys.includes(withdrawShapeKey)
       ? withdrawShapeKey
-      : withdrawKeys.find((key) => /withdraw/i.test(key)) ?? withdrawShapeKey;
+      : (withdrawKeys.find((key) => /withdraw/i.test(key)) ?? withdrawShapeKey);
     if (
       !supplied.compatibleExitShapeKeys.includes(withdrawKey) &&
       !supplied.compatibleManageShapeKeys.includes(withdrawKey)
@@ -3978,11 +3928,9 @@ export async function runFolksCreditCase(
     });
     await executeConfirmed(
       context,
-      validateAndNormalizePlan(
-        snapshot,
-        basePlan([withdraw]),
-        [usdcOpportunity],
-      ).actions[0]!,
+      validateAndNormalizePlan(snapshot, basePlan([withdraw]), [
+        usdcOpportunity,
+      ]).actions[0]!,
       [usdcOpportunity],
     );
     return;

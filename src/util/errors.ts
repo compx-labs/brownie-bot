@@ -86,7 +86,8 @@ function classifyHtmlOrGatewayFailure(
 ): string | null {
   const htmlCandidate = body || fullText;
   const isHtml = looksLikeHtml(htmlCandidate);
-  const gatewayPhrase = extractGatewayPhrase(htmlCandidate) ?? extractGatewayPhrase(fullText);
+  const gatewayPhrase =
+    extractGatewayPhrase(htmlCandidate) ?? extractGatewayPhrase(fullText);
   if (!isHtml && !gatewayPhrase && status === undefined) {
     return null;
   }

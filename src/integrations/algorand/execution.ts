@@ -530,10 +530,7 @@ export class AlgorandExecutionService {
     const isFolksWithdraw =
       /folks/i.test(shapeKey) && /withdraw/i.test(shapeKey);
 
-    if (
-      ["reduce", "close"].includes(action.type) &&
-      isFolksWithdraw
-    ) {
+    if (["reduce", "close"].includes(action.type) && isFolksWithdraw) {
       if (input.amount === undefined && action.amountRaw) {
         input.amount = action.amountRaw;
       }
@@ -545,10 +542,7 @@ export class AlgorandExecutionService {
       delete input.assetAmount;
       delete input.liquidityAssetAmount;
       if (input.poolAppId === undefined && opportunity) {
-        const poolAppId = resolvePoolAppId(
-          opportunity.executionShapes,
-          input,
-        );
+        const poolAppId = resolvePoolAppId(opportunity.executionShapes, input);
         if (poolAppId !== undefined) {
           input.poolAppId = poolAppId;
         }
@@ -721,7 +715,10 @@ export class AlgorandExecutionService {
       );
     }
 
-    let escrow = await this.folksEscrowStore.get(this.managedAddress, poolAppId);
+    let escrow = await this.folksEscrowStore.get(
+      this.managedAddress,
+      poolAppId,
+    );
     const escrowOptedIntoAsset = escrow
       ? await this.isAssetOptedIn(escrow.escrowAddress, assetId)
       : false;
@@ -736,7 +733,9 @@ export class AlgorandExecutionService {
     console.error(
       `[execution] Folks sequential for ${action.id}: ${selected
         .map((shape) => `${classifyFolksShape(shape)}:${shape.shapeKey}`)
-        .join(" → ")} (escrow=${escrow ? "present" : "missing"}, opted=${escrowOptedIntoAsset})`,
+        .join(
+          " → ",
+        )} (escrow=${escrow ? "present" : "missing"}, opted=${escrowOptedIntoAsset})`,
     );
 
     const payments: PaymentReceipt[] = [];
@@ -937,9 +936,9 @@ export class AlgorandExecutionService {
     );
     let quote = haystackQuoteSchema.parse(quoteResult.data);
     assertFresh(quote.data.expiresAt);
-    const impactExempt = (this.policy.priceImpactExemptToAssetIds ?? []).includes(
-      action.toAssetId,
-    );
+    const impactExempt = (
+      this.policy.priceImpactExemptToAssetIds ?? []
+    ).includes(action.toAssetId);
     if (
       !impactExempt &&
       (quote.data.userPriceImpact ?? 0) > this.policy.maxPriceImpactPct
@@ -1037,6 +1036,8 @@ export class AlgorandExecutionService {
     const hasProviderSigned = decodedMembers.some(
       (member) => member.kind === "signed",
     );
+    // Canix quotes are deterministic within a validity window; unique notes
+    // keep retries/re-runs from colliding with already-confirmed txids.
     // Provider-cosigned groups (Tinyman Analytics farm claims) cannot be
     // regrouped; skip uniqueness notes when any member is already signed.
     const uniqueEncoded = hasProviderSigned
@@ -1169,7 +1170,8 @@ export function isSetupOrPrerequisiteShape(
 export function isPostConfirmPrerequisiteShape(
   shape: Pick<OpportunityExecutionShape, "shapeKey" | "action" | "variant">,
 ): boolean {
-  const key = `${shape.shapeKey}:${shape.action}:${shape.variant}`.toLowerCase();
+  const key =
+    `${shape.shapeKey}:${shape.action}:${shape.variant}`.toLowerCase();
   return /deployescrow/.test(key);
 }
 
@@ -1201,7 +1203,9 @@ export function buildQuoteRequests(
         (candidate) => candidate.opportunityId === action.opportunityId,
       )
     : undefined;
-  const executionInput = stripHostOnlyExecutionInput(action.executionInput ?? {});
+  const executionInput = stripHostOnlyExecutionInput(
+    action.executionInput ?? {},
+  );
   if (
     ["open", "increase"].includes(action.type) &&
     opportunity &&
@@ -1236,9 +1240,7 @@ export function buildQuoteRequests(
       if (!target) {
         return false;
       }
-      return (
-        isSetupOrPrerequisiteShape(shape) && shape.order <= target.order
-      );
+      return isSetupOrPrerequisiteShape(shape) && shape.order <= target.order;
     });
     if (selected.length === 0) {
       return [
@@ -1481,7 +1483,7 @@ export function bumpFolksLoanEscrowFunding(
       group?: Uint8Array;
     };
     mutable.group = undefined;
-    if (transaction.type !== "pay" || !transaction.payment) {
+    if (!transaction.payment) {
       return transaction;
     }
     const sender = transaction.sender.toString();
@@ -1708,8 +1710,7 @@ export function resolvePlannedSpendAmountRaw(
   if (
     action.amountRaw !== null &&
     (action.fromAssetId === assetId ||
-      (action.executionInput &&
-        action.executionInput.assetId === assetId))
+      (action.executionInput && action.executionInput.assetId === assetId))
   ) {
     return action.amountRaw;
   }
@@ -1737,7 +1738,9 @@ export function clampActionAmountToSpendable(
 ): PortfolioAction {
   const { assetId, spendableRaw } = options;
   if (spendableRaw < 0n) {
-    throw new Error(`Spendable balance for asset ${assetId} cannot be negative`);
+    throw new Error(
+      `Spendable balance for asset ${assetId} cannot be negative`,
+    );
   }
   const planned = resolvePlannedSpendAmountRaw(action, assetId);
   if (planned === null) {
@@ -1858,11 +1861,7 @@ export function sanitizeFolksIdentifierFields(
     requiredInputs: [],
     requiredAssetIds: [],
   });
-  if (
-    role !== "setup" &&
-    role !== "opt" &&
-    role !== "deposit"
-  ) {
+  if (role !== "setup" && role !== "opt" && role !== "deposit") {
     // Borrow/repay/collateral quotes also reject poolAppId + assetId together.
     const sanitizedCredit = { ...input };
     if (

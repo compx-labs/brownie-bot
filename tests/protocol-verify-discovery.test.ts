@@ -54,8 +54,7 @@ const PINNED_OPPORTUNITY_IDS = {
   "folks-usdc-deposit": "folks-lending-971372237",
   "folks-credit": "folks-lending-971372237",
   "folks-algo-stake": "folks-staking-xalgo",
-  "tinyman-lp":
-    "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM:lp",
+  "tinyman-lp": "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM:lp",
   "compx-lending": "compx-lending-3491050310",
   "compx-credit": "compx-lending-3491050310",
   "dorkfi-usdc-lending": "dorkfi:algorand:3333688282:31566704:lending",
@@ -226,7 +225,11 @@ function tinymanLpOpportunity(): Opportunity {
 }
 
 function retiPoolingOpportunity(
-  options: { gated?: boolean; opportunityId?: string; validatorId?: number } = {},
+  options: {
+    gated?: boolean;
+    opportunityId?: string;
+    validatorId?: number;
+  } = {},
 ): Opportunity {
   const gated = options.gated ?? true;
   const validatorId =
@@ -237,8 +240,7 @@ function retiPoolingOpportunity(
         ? 12
         : 3);
   const opportunityId =
-    options.opportunityId ??
-    (gated ? "reti-staking-12" : "reti-staking-3");
+    options.opportunityId ?? (gated ? "reti-staking-12" : "reti-staking-3");
   return opportunity({
     protocol: "reti",
     opportunityType: "staking",
@@ -571,7 +573,9 @@ describe("protocol-verify discovery matching", () => {
     ).toBe(true);
     expect(matched["pact-lp"].opportunityId).toBe("pact:pool:algo-usdc");
     expect(matched["haystack-swap"].fromAssetId).toBe(ALGO_ASSET_ID);
-    expect(matched["reti-pooling"].opportunityId).toBe(RETI_VERIFY_OPPORTUNITY_ID);
+    expect(matched["reti-pooling"].opportunityId).toBe(
+      RETI_VERIFY_OPPORTUNITY_ID,
+    );
     expect(matched["reti-pooling"].exitShapeKey).toBe(RETI_UNSTAKE_SHAPE);
     expect(matched["reti-pooling"].notes).toMatch(/ungated/);
     expect(matched["myth-dualstake"].opportunityId).toBe(
@@ -697,21 +701,17 @@ describe("refreshPinnedOpportunity", () => {
     });
     const canix = { callManagedTool } as never;
 
-    const found = await refreshPinnedOpportunity(
-      canix,
-      "TESTWALLET",
-      {
-        caseId: "folks-usdc-deposit",
-        opportunityId: pinnedOpp.opportunityId,
-        protocol: "folks-finance",
-        opportunityType: "lending",
-        assetPair: "USDC",
-        assetIds: [USDC_ASSET_ID],
-        enterShapeKey: "mainnet:folks-finance:v2:deposit:escrow",
-        exitShapeKey: "mainnet:folks-finance:v2:withdraw:escrow",
-        shapes: [],
-      },
-    );
+    const found = await refreshPinnedOpportunity(canix, "TESTWALLET", {
+      caseId: "folks-usdc-deposit",
+      opportunityId: pinnedOpp.opportunityId,
+      protocol: "folks-finance",
+      opportunityType: "lending",
+      assetPair: "USDC",
+      assetIds: [USDC_ASSET_ID],
+      enterShapeKey: "mainnet:folks-finance:v2:deposit:escrow",
+      exitShapeKey: "mainnet:folks-finance:v2:withdraw:escrow",
+      shapes: [],
+    });
 
     expect(found.opportunityId).toBe(pinnedOpp.opportunityId);
     expect(callManagedTool).toHaveBeenCalledTimes(1);
@@ -737,7 +737,8 @@ describe("protocol-verify pinned fixture", () => {
     for (const [caseId, opportunityId] of Object.entries(
       PINNED_OPPORTUNITY_IDS,
     )) {
-      const pinned = fixture.cases[caseId as keyof typeof PINNED_OPPORTUNITY_IDS];
+      const pinned =
+        fixture.cases[caseId as keyof typeof PINNED_OPPORTUNITY_IDS];
       expect(pinned, `missing case ${caseId}`).toBeDefined();
       expect(pinned.opportunityId).toBe(opportunityId);
       expect(pinned.enterShapeKey).toBe(
@@ -747,16 +748,22 @@ describe("protocol-verify pinned fixture", () => {
 
     expect(fixture.cases["haystack-swap"].fromAssetId).toBe(ALGO_ASSET_ID);
     expect(fixture.cases["haystack-swap"].toAssetId).toBe(USDC_ASSET_ID);
-    expect(fixture.cases["folks-algo-stake"].receiptAssetId).toBe(1_134_696_561);
+    expect(fixture.cases["folks-algo-stake"].receiptAssetId).toBe(
+      1_134_696_561,
+    );
 
     expect(fixture.cases["reti-pooling"].exitShapeKey).toBe(RETI_UNSTAKE_SHAPE);
-    expect(fixture.cases["myth-dualstake"].exitShapeKey).toBe(MYTH_REDEEM_SHAPE);
+    expect(fixture.cases["myth-dualstake"].exitShapeKey).toBe(
+      MYTH_REDEEM_SHAPE,
+    );
     expect(fixture.cases["myth-dualstake"].assetIds).toContain(ORA_ASSET_ID);
     expect(fixture.cases["myth-dualstake"].receiptAssetId).toBe(2_933_559_000);
     expect(fixture.cases["compx-credit"].borrowOpportunityId).toBe(
       "compx-lending-3607871733",
     );
-    expect(fixture.cases["compx-credit"].borrowShapeKey).toBe(COMPX_BORROW_SHAPE);
+    expect(fixture.cases["compx-credit"].borrowShapeKey).toBe(
+      COMPX_BORROW_SHAPE,
+    );
     expect(fixture.cases["compx-credit"].repayShapeKey).toBe(COMPX_REPAY_SHAPE);
     expect(fixture.cases["compx-credit"].receiptAssetId).toBe(3_491_050_538);
     expect(fixture.cases["folks-credit"].borrowOpportunityId).toBe(
@@ -769,9 +776,15 @@ describe("protocol-verify pinned fixture", () => {
     expect(fixture.cases["dorkfi-credit"].borrowOpportunityId).toBe(
       "dorkfi:algorand:3333688282:3121954282:lending",
     );
-    expect(fixture.cases["dorkfi-credit"].borrowShapeKey).toBe(DORKFI_BORROW_SHAPE);
-    expect(fixture.cases["dorkfi-credit"].repayShapeKey).toBe(DORKFI_REPAY_SHAPE);
-    expect(fixture.cases["dorkfi-credit"].exitShapeKey).toBe(DORKFI_WITHDRAW_SHAPE);
+    expect(fixture.cases["dorkfi-credit"].borrowShapeKey).toBe(
+      DORKFI_BORROW_SHAPE,
+    );
+    expect(fixture.cases["dorkfi-credit"].repayShapeKey).toBe(
+      DORKFI_REPAY_SHAPE,
+    );
+    expect(fixture.cases["dorkfi-credit"].exitShapeKey).toBe(
+      DORKFI_WITHDRAW_SHAPE,
+    );
   });
 });
 
@@ -794,7 +807,8 @@ describe("buildExitAction", () => {
           inputHints: {
             assetAId: USDC_ASSET_ID,
             assetBId: ALGO_ASSET_ID,
-            poolId: "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM",
+            poolId:
+              "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM",
           },
         }),
       ],
@@ -875,9 +889,7 @@ describe("buildExitAction", () => {
       opportunityId: candidate.opportunityId,
       assetId: USDC_ASSET_ID,
       amountRaw: "999999",
-      compatibleExitShapeKeys: [
-        "mainnet:folks-finance:v2:withdraw:escrow",
-      ],
+      compatibleExitShapeKeys: ["mainnet:folks-finance:v2:withdraw:escrow"],
     });
 
     const exit = buildExitAction({

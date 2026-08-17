@@ -121,7 +121,11 @@ export function resolvePoolAppId(
   executionInput: Record<string, unknown>,
 ): number | undefined {
   const fromInput = executionInput.poolAppId;
-  if (typeof fromInput === "number" && Number.isInteger(fromInput) && fromInput > 0) {
+  if (
+    typeof fromInput === "number" &&
+    Number.isInteger(fromInput) &&
+    fromInput > 0
+  ) {
     return fromInput;
   }
   for (const shape of sortExecutionShapes(shapes)) {

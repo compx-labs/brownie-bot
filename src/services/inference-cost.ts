@@ -34,7 +34,12 @@ export function parseInferenceCostFromHeaders(
   if (rawAmount === undefined || rawAmount.trim() === "") {
     return undefined;
   }
-  const amount = moneyOrNull(rawAmount.trim());
+  let amount: ReturnType<typeof moneyOrNull>;
+  try {
+    amount = moneyOrNull(rawAmount.trim());
+  } catch {
+    return undefined;
+  }
   if (amount === null || amount.isNegative()) {
     return undefined;
   }

@@ -22,6 +22,11 @@ const fixedSuggestedParams = {
 function builder(
   overrides: {
     getSuggestedParams?: () => Promise<algosdk.SuggestedParams>;
+    maxDailyBaseUnits?: bigint;
+    x402DailySpend?: {
+      usedBaseUnits: (now?: Date) => bigint;
+      record: (amountBaseUnits: bigint, now?: Date) => Promise<void>;
+    };
   } = {},
 ) {
   const walletAccount = algosdk.generateAccount();
@@ -130,6 +135,28 @@ describe("AlgorandPaymentBuilder guardrails", () => {
 
     expect(signedPaymentTxId(first.paymentSignature)).not.toBe(
       signedPaymentTxId(second.paymentSignature),
+    );
+  });
+
+  it("enforces the daily cap against the durable spend tracker", async () => {
+    let used = 90_000n;
+    const payments = builder({
+      getSuggestedParams: () => Promise.resolve(fixedSuggestedParams),
+      maxDailyBaseUnits: 100_000n,
+      x402DailySpend: {
+        usedBaseUnits: () => used,
+        record: (amount) => {
+          used += amount;
+          return Promise.resolve();
+        },
+      },
+    });
+    const request = paymentRequest("10000", "/opportunities");
+
+    await expect(payments.build(request)).resolves.toBeDefined();
+    expect(used).toBe(100_000n);
+    await expect(payments.build(request)).rejects.toThrow(
+      /x402 daily spend would exceed 100000 base units/,
     );
   });
 });

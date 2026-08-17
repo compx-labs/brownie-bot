@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildShapeInput,
-} from "../src/integrations/algorand/execution.js";
+import { buildShapeInput } from "../src/integrations/algorand/execution.js";
 import {
   classifyFolksShape,
   needsSequentialEscrowExecution,
@@ -95,9 +93,7 @@ describe("Folks escrow step selection", () => {
       expect(input.poolAppId).toBe(971_372_237);
       expect(input.assetId).toBeUndefined();
     }
-    expect(
-      buildShapeInput(shapes[2]!, executionInput, 100),
-    ).toMatchObject({
+    expect(buildShapeInput(shapes[2]!, executionInput, 100)).toMatchObject({
       poolAppId: 971_372_237,
       assetAmount: "30000000",
     });

@@ -44,10 +44,7 @@ try {
   console.log(`Catalog size: ${opportunities.length}`);
 
   const matched = matchProtocolVerifyCases(opportunities, {
-    algoBudgetRaw: toBaseUnits(
-      config.PROTOCOL_VERIFY_AMOUNT_ALGO,
-      6,
-    ),
+    algoBudgetRaw: toBaseUnits(config.PROTOCOL_VERIFY_AMOUNT_ALGO, 6),
   });
   const cases = assertAllCasesPinned(matched);
   const fixturePath = path.resolve(DEFAULT_PROTOCOL_VERIFY_FIXTURE_PATH);
