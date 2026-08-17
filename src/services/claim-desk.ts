@@ -1,6 +1,7 @@
 import {
   walletClaimableResponseSchema,
   type ClaimableRow,
+  type ExecutionOutcome,
   type ExecutionQuoteRequest,
   type PortfolioAction,
   type WalletClaimable,
@@ -45,42 +46,110 @@ export function quoteRequestsFromRow(
       {
         shapeKey: row.shapeKey,
         input:
-          row.input && typeof row.input === "object"
-            ? { ...row.input }
-            : {},
+          row.input && typeof row.input === "object" ? { ...row.input } : {},
       },
     ];
   }
   return [];
 }
 
+export function rowShapeKeys(row: ClaimableRow): string[] {
+  const keys: string[] = [];
+  if (typeof row.shapeKey === "string" && row.shapeKey.length > 0) {
+    keys.push(row.shapeKey);
+  }
+  if (
+    typeof row.quote?.shapeKey === "string" &&
+    row.quote.shapeKey.length > 0
+  ) {
+    keys.push(row.quote.shapeKey);
+  }
+  for (const quote of row.quotes ?? []) {
+    if (typeof quote.shapeKey === "string" && quote.shapeKey.length > 0) {
+      keys.push(quote.shapeKey);
+    }
+  }
+  return keys;
+}
+
+export function shapeCompatibleWithRow(
+  action: PortfolioAction,
+  row: ClaimableRow,
+): boolean {
+  const shapeKey = action.executionShapeKey;
+  if (!shapeKey) {
+    return false;
+  }
+  if (rowShapeKeys(row).includes(shapeKey)) {
+    return true;
+  }
+  return row.claimKey === shapeKey;
+}
+
 export function findClaimableRow(
   action: PortfolioAction,
   claimable: WalletClaimable,
 ): ClaimableRow | undefined {
-  const shapeKey = action.executionShapeKey;
-  return claimable.rows.find((row) => {
-    if (action.positionId && row.positionId === action.positionId) {
-      return true;
+  return findClaimableRows(action, claimable)[0];
+}
+
+/**
+ * Exact desk matching for a signing path:
+ * 1. positionId and compatible shapeKey/claimKey
+ * 2. else opportunityId and compatible shapeKey/claimKey
+ * 3. else exact shapeKey / quote.shapeKey / claimKey
+ *
+ * Never substring-match claimKey. When the matched row shares a claimKey
+ * (Haystack USDC+HAY, Pact multi-ASA), return every row with that key so the
+ * compile unit is complete.
+ */
+export function findClaimableRows(
+  action: PortfolioAction,
+  claimable: WalletClaimable,
+): ClaimableRow[] {
+  const matched = matchExactClaimableRow(action, claimable.rows);
+  if (!matched) {
+    return [];
+  }
+  if (matched.claimKey) {
+    const shared = claimable.rows.filter(
+      (row) => row.claimKey === matched.claimKey,
+    );
+    if (shared.length > 0) {
+      return shared;
     }
-    if (
-      action.opportunityId &&
-      row.opportunityId &&
-      row.opportunityId === action.opportunityId
-    ) {
-      return true;
+  }
+  return [matched];
+}
+
+function matchExactClaimableRow(
+  action: PortfolioAction,
+  rows: ClaimableRow[],
+): ClaimableRow | undefined {
+  if (action.positionId) {
+    const byPosition = rows.filter(
+      (row) =>
+        row.positionId === action.positionId &&
+        shapeCompatibleWithRow(action, row),
+    );
+    if (byPosition.length > 0) {
+      return byPosition[0];
     }
-    if (!shapeKey) {
-      return false;
+  }
+  if (action.opportunityId) {
+    const byOpportunity = rows.filter(
+      (row) =>
+        row.opportunityId === action.opportunityId &&
+        shapeCompatibleWithRow(action, row),
+    );
+    if (byOpportunity.length > 0) {
+      return byOpportunity[0];
     }
-    if (row.shapeKey === shapeKey || row.quote?.shapeKey === shapeKey) {
-      return true;
-    }
-    if (row.claimKey && shapeKey.toLowerCase().includes(row.claimKey.toLowerCase())) {
-      return true;
-    }
-    return row.quotes?.some((quote) => quote.shapeKey === shapeKey) === true;
-  });
+  }
+  if (action.executionShapeKey) {
+    return rows.find((row) => shapeCompatibleWithRow(action, row));
+  }
+  return undefined;
 }
 
 export function quoteRequestsForClaimAction(
@@ -90,24 +159,146 @@ export function quoteRequestsForClaimAction(
   if (!claimable) {
     return [];
   }
-  const row = findClaimableRow(action, claimable);
-  return row ? quoteRequestsFromRow(row) : [];
+  const unique = new Map<string, ExecutionQuoteRequest>();
+  for (const row of findClaimableRows(action, claimable)) {
+    for (const quote of quoteRequestsFromRow(row)) {
+      const fingerprint = quoteFingerprint(quote);
+      if (!unique.has(fingerprint)) {
+        unique.set(fingerprint, quote);
+      }
+    }
+  }
+  return [...unique.values()];
+}
+
+export function actionHasDeskClaimQuote(
+  action: PortfolioAction,
+  claimable: WalletClaimable | undefined,
+): boolean {
+  return quoteRequestsForClaimAction(action, claimable).length > 0;
+}
+
+export interface PlannedClaimQuote {
+  actionId: string;
+  quote: ExecutionQuoteRequest;
+}
+
+export interface ClaimQuotePlan {
+  planned: PlannedClaimQuote[];
+  skipped: ExecutionOutcome[];
+  unmatchedIds: string[];
+}
+
+/**
+ * Desk-only claim compile plan. Duplicate claimKey / identical quotes are
+ * skipped (first action wins). Unmatched actions are omitted so callers can
+ * send them through executeAction.
+ */
+export function planClaimQuoteRequests(
+  actions: PortfolioAction[],
+  claimable: WalletClaimable | undefined,
+): ClaimQuotePlan {
+  const planned: PlannedClaimQuote[] = [];
+  const skipped: ExecutionOutcome[] = [];
+  const unmatchedIds: string[] = [];
+  const seenClaimKeys = new Set<string>();
+  const seenFingerprints = new Set<string>();
+
+  for (const action of actions) {
+    const rows = claimable ? findClaimableRows(action, claimable) : [];
+    const quotes = quoteRequestsForClaimAction(action, claimable);
+    if (rows.length === 0 || quotes.length === 0) {
+      unmatchedIds.push(action.id);
+      continue;
+    }
+    const claimKey = rows[0]?.claimKey;
+    if (claimKey && seenClaimKeys.has(claimKey)) {
+      skipped.push({
+        actionId: action.id,
+        status: "skipped",
+        error: `Duplicate claimKey ${claimKey} already queued`,
+      });
+      continue;
+    }
+    const novel = quotes.filter(
+      (quote) => !seenFingerprints.has(quoteFingerprint(quote)),
+    );
+    if (novel.length === 0) {
+      skipped.push({
+        actionId: action.id,
+        status: "skipped",
+        error: "Duplicate claim quote already queued",
+      });
+      continue;
+    }
+    if (claimKey) {
+      seenClaimKeys.add(claimKey);
+    }
+    for (const quote of novel) {
+      seenFingerprints.add(quoteFingerprint(quote));
+      planned.push({
+        actionId: action.id,
+        quote: normalizeQuoteRequest(quote),
+      });
+    }
+  }
+
+  return { planned, skipped, unmatchedIds };
 }
 
 export function selectClaimQuoteRequests(
   actions: PortfolioAction[],
   claimable: WalletClaimable | undefined,
   fallback: (action: PortfolioAction) => ExecutionQuoteRequest[],
-): Array<{ actionId: string; quote: ExecutionQuoteRequest }> {
-  const planned: Array<{ actionId: string; quote: ExecutionQuoteRequest }> = [];
+): PlannedClaimQuote[] {
+  const plan = planClaimQuoteRequests(actions, claimable);
+  const handled = new Set([
+    ...plan.planned.map((item) => item.actionId),
+    ...plan.skipped.map((item) => item.actionId),
+  ]);
+  const planned = [...plan.planned];
   for (const action of actions) {
-    const fromDesk = quoteRequestsForClaimAction(action, claimable);
-    const quotes = fromDesk.length > 0 ? fromDesk : fallback(action);
-    for (const quote of quotes) {
-      planned.push({ actionId: action.id, quote: normalizeQuoteRequest(quote) });
+    if (handled.has(action.id)) {
+      continue;
+    }
+    for (const quote of fallback(action)) {
+      planned.push({
+        actionId: action.id,
+        quote: normalizeQuoteRequest(quote),
+      });
     }
   }
   return planned;
+}
+
+/**
+ * Pair compiled quotes with requests by shapeKey. Original array index is
+ * only a tie-break when several responses share the same key.
+ */
+export function alignQuotesByShapeKey<T extends { shapeKey: string }>(
+  requests: PlannedClaimQuote[],
+  responses: T[],
+): Array<{ actionId: string; quote: T }> {
+  if (responses.length !== requests.length) {
+    throw new Error(
+      `Execution quote count mismatch: requested ${requests.length}, received ${responses.length}`,
+    );
+  }
+  const remaining = responses.map((quote, index) => ({ quote, index }));
+  return requests.map((request, requestIndex) => {
+    const candidates = remaining.filter(
+      (item) => item.quote.shapeKey === request.quote.shapeKey,
+    );
+    if (candidates.length === 0) {
+      throw new Error(
+        `No compiled quote for shapeKey ${request.quote.shapeKey} (action ${request.actionId})`,
+      );
+    }
+    const chosen =
+      candidates.find((item) => item.index === requestIndex) ?? candidates[0]!;
+    remaining.splice(remaining.indexOf(chosen), 1);
+    return { actionId: request.actionId, quote: chosen.quote };
+  });
 }
 
 export function compactClaimableForModel(
@@ -130,6 +321,10 @@ export function compactClaimableForModel(
       estimatedNetworkFeeUsd: row.estimatedNetworkFeeUsd ?? null,
     })),
   };
+}
+
+function quoteFingerprint(quote: ExecutionQuoteRequest): string {
+  return `${quote.shapeKey}\n${JSON.stringify(quote.input ?? {})}`;
 }
 
 function normalizeQuoteRequest(

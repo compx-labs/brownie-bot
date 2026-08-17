@@ -630,6 +630,120 @@ describe("TreasuryReviewService", () => {
     ]);
   });
 
+  it("batches only desk-matched claims and sends Réti/Folks through executeAction", async () => {
+    const deskClaim = {
+      id: "claim-farm",
+      type: "claim" as const,
+      protocol: "tinyman",
+      opportunityId: "tinyman:pool:1:farm",
+      positionId: "tinyman:reward:1",
+      amountRaw: null,
+      fromAssetId: null,
+      toAssetId: null,
+      targetWeightPct: null,
+      executionShapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+      executionInput: {},
+      authorizedSpends: [],
+      rationale: "Claim farm.",
+      dependencies: [],
+    };
+    const retiClaim = {
+      id: "claim-reti",
+      type: "claim" as const,
+      protocol: "reti",
+      opportunityId: "reti:1",
+      positionId: "reti:reward:1",
+      amountRaw: null,
+      fromAssetId: null,
+      toAssetId: null,
+      targetWeightPct: null,
+      executionShapeKey: "mainnet:reti:v1:claim",
+      executionInput: {},
+      authorizedSpends: [],
+      rationale: "Claim Réti.",
+      dependencies: [],
+    };
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot({
+          claimable: {
+            rows: [
+              {
+                positionId: "tinyman:reward:1",
+                quote: {
+                  shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+                  input: { poolId: "POOL" },
+                },
+              },
+            ],
+            claimAllQuotes: [],
+            totals: { claimableUsd: 1, worthClaimingUsd: 1 },
+            meta: {},
+            caveats: [],
+          },
+        }),
+        plan: portfolioPlan({
+          actions: [deskClaim, retiClaim],
+          projectedNetBenefitUsd: 1,
+        }),
+        opportunities: [],
+        payments: [],
+        toolCalls: [],
+      }),
+    };
+    const executeAction = vi.fn().mockResolvedValue({
+      outcome: {
+        actionId: "claim-reti",
+        status: "confirmed",
+        transactionId: "TX-RETI",
+      },
+      payments: [],
+    });
+    const executeClaimBatch = vi.fn().mockResolvedValue({
+      outcomes: [
+        {
+          actionId: "claim-farm",
+          status: "confirmed",
+          transactionId: "TX-FARM",
+        },
+      ],
+      payments: [],
+    });
+    const deps = dependencies(agent);
+    const instance = new TreasuryReviewService(
+      deps.agent,
+      deps.policy,
+      { executeAction, executeClaimBatch },
+      deps.notifier,
+      {},
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      true,
+    );
+
+    const result = await instance.run();
+    expect(executeClaimBatch).toHaveBeenCalledOnce();
+    const batched = executeClaimBatch.mock.calls[0]?.[0] as
+      PortfolioAction[] | undefined;
+    expect(batched?.map((item) => item.id)).toEqual(["claim-farm"]);
+    expect(executeAction).toHaveBeenCalledOnce();
+    expect(executeAction).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "claim-reti" }),
+      expect.anything(),
+    );
+    expect(result.executions).toEqual([
+      {
+        actionId: "claim-farm",
+        status: "confirmed",
+        transactionId: "TX-FARM",
+      },
+      {
+        actionId: "claim-reti",
+        status: "confirmed",
+        transactionId: "TX-RETI",
+      },
+    ]);
+  });
+
   it("dry-run still validates the full dependency chain without deferred skips", async () => {
     const swap = {
       id: "swap-1",

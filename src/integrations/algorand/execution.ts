@@ -24,7 +24,11 @@ import {
   selectEscrowShapesToRun,
   sortExecutionShapes,
 } from "./folks-execution.js";
-import { selectClaimQuoteRequests } from "../../services/claim-desk.js";
+import {
+  alignQuotesByShapeKey,
+  planClaimQuoteRequests,
+  selectClaimQuoteRequests,
+} from "../../services/claim-desk.js";
 
 export { FOLKS_GENERAL_LOAN_APP_ID } from "./folks-execution.js";
 
@@ -195,64 +199,129 @@ export class AlgorandExecutionService {
       };
     }
     const opportunities = context.opportunities ?? [];
-    const planned = selectClaimQuoteRequests(
-      actions,
-      context.claimable,
-      (action) =>
-        buildQuoteRequests(action, opportunities, this.policy.maxSlippageBps),
-    );
-    if (planned.length === 0) {
+    const plan = planClaimQuoteRequests(actions, context.claimable);
+    const outcomesByAction = new Map<string, ExecutionOutcome>();
+    for (const skipped of plan.skipped) {
+      outcomesByAction.set(skipped.actionId, skipped);
+    }
+    const recordOutcome = (
+      actionId: string,
+      outcome: ExecutionOutcome,
+    ): void => {
+      const existing = outcomesByAction.get(actionId);
+      if (existing?.status === "confirmed") {
+        return;
+      }
+      outcomesByAction.set(actionId, { ...outcome, actionId });
+    };
+    const markRemaining = (
+      actionIds: string[],
+      error: string,
+      status: "failed" | "skipped" = "skipped",
+    ): void => {
+      for (const actionId of actionIds) {
+        if (!outcomesByAction.has(actionId)) {
+          recordOutcome(actionId, { actionId, status, error });
+        }
+      }
+    };
+
+    if (plan.planned.length === 0) {
       return {
-        outcomes: actions.map((action) => ({
-          actionId: action.id,
-          status: "failed",
-          error: "No claim quotes to compile",
-        })),
+        outcomes: actions
+          .filter((action) => outcomesByAction.has(action.id))
+          .map((action) => outcomesByAction.get(action.id)!),
         payments: [],
       };
     }
-    try {
-      const { batch, payments } = await this.requestQuotes(
-        actions.map((action) => action.id).join(","),
-        planned.map((item) => item.quote),
-      );
-      const outcomesByAction = new Map<string, ExecutionOutcome>();
-      for (const [index, quote] of batch.data.entries()) {
-        const actionId = planned[index]?.actionId ?? actions[0]!.id;
-        assertFresh(quote.expiresAt);
-        const submit = await this.signAndSubmitEncoded(
-          planned.length === 1 ? actionId : `${actionId}:${index}`,
-          quote.encodedTransactions,
+
+    const actionsById = new Map(actions.map((action) => [action.id, action]));
+    const extraSignersByAction = new Map<string, Map<string, Uint8Array>>();
+    const receiveAssetIdsByAction = new Map<string, number[]>();
+    const enrichedInputByAction = new Map<string, Record<string, unknown>>();
+    for (const item of plan.planned) {
+      const action = actionsById.get(item.actionId);
+      if (!action) {
+        continue;
+      }
+      const opportunity = action.opportunityId
+        ? opportunities.find(
+            (candidate) => candidate.opportunityId === action.opportunityId,
+          )
+        : undefined;
+      let enriched = enrichedInputByAction.get(item.actionId);
+      if (!enriched) {
+        enriched = await this.enrichShapeExecutionInput(action, opportunity);
+        enrichedInputByAction.set(item.actionId, enriched);
+        extraSignersByAction.set(
+          item.actionId,
+          await this.folksExitExtraSigners(
+            { ...action, executionInput: enriched },
+            opportunity,
+          ),
         );
-        const outcome: ExecutionOutcome = {
-          ...submit.outcome,
-          actionId,
-          toolName: "canix_get_execution_quote",
-        };
-        outcomesByAction.set(actionId, outcome);
-        if (outcome.status !== "confirmed") {
+        receiveAssetIdsByAction.set(
+          item.actionId,
+          collectPotentialReceiveAssetIds(action, opportunity),
+        );
+      }
+      item.quote.input = { ...enriched, ...(item.quote.input ?? {}) };
+    }
+
+    let payments: PaymentReceipt[] = [];
+    try {
+      const result = await this.requestQuotes(
+        actions.map((action) => action.id).join(","),
+        plan.planned.map((item) => item.quote),
+      );
+      payments = result.payments;
+      const aligned = alignQuotesByShapeKey(plan.planned, result.batch.data);
+      for (const [index, { actionId, quote }] of aligned.entries()) {
+        const action = actionsById.get(actionId) ?? actions[0]!;
+        const remainingIds = aligned
+          .slice(index + 1)
+          .map((item) => item.actionId);
+        try {
+          const outcome = await this.submitQuotedTransactions(
+            action,
+            quote,
+            extraSignersByAction.get(actionId) ??
+              new Map<string, Uint8Array>(),
+            receiveAssetIdsByAction.get(actionId) ?? [],
+            aligned.length === 1 ? actionId : `${actionId}:${index}`,
+          );
+          recordOutcome(actionId, outcome);
+          if (outcome.status !== "confirmed") {
+            markRemaining(
+              remainingIds,
+              "Claim batch stopped before this action",
+            );
+            break;
+          }
+        } catch (error) {
+          recordOutcome(actionId, {
+            actionId,
+            status: "failed",
+            error: formatExecutionError(error),
+          });
+          markRemaining(remainingIds, "Claim batch stopped before this action");
           break;
         }
       }
-      const outcomes = actions.map(
-        (action) =>
-          outcomesByAction.get(action.id) ?? {
-            actionId: action.id,
-            status: "skipped" as const,
-            error: "Claim batch stopped before this action",
-          },
-      );
-      return { outcomes, payments };
     } catch (error) {
-      return {
-        outcomes: actions.map((action) => ({
-          actionId: action.id,
-          status: "failed",
-          error: formatExecutionError(error),
-        })),
-        payments: [],
-      };
+      markRemaining(
+        plan.planned.map((item) => item.actionId),
+        formatExecutionError(error),
+        "failed",
+      );
     }
+
+    return {
+      outcomes: actions
+        .filter((action) => outcomesByAction.has(action.id))
+        .map((action) => outcomesByAction.get(action.id)!),
+      payments,
+    };
   }
 
   private async executeShape(
@@ -413,38 +482,26 @@ export class AlgorandExecutionService {
       error: "No execution quotes returned",
     };
 
-    for (const [index, quote] of batch.data.entries()) {
-      assertFresh(quote.expiresAt);
-      const escrowSigners = folksEscrowSignersFromMetadata(quote.metadata);
-      for (const [address, secret] of escrowSigners) {
-        extraSigners.set(address, secret);
-      }
-      const encoded = await this.withLeadingAssetOptIns(
-        quote.encodedTransactions,
-        [
-          ...receiveAssetIds,
-          ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
-        ],
-      );
-      const submit = await this.signAndSubmitEncoded(
-        batch.data.length === 1
+    const aligned = alignQuotesByShapeKey(
+      quotes.map((quote) => ({
+        actionId: enrichedAction.id,
+        quote,
+      })),
+      batch.data,
+    );
+    for (const [index, { quote }] of aligned.entries()) {
+      lastOutcome = await this.submitQuotedTransactions(
+        enrichedAction,
+        quote,
+        extraSigners,
+        receiveAssetIds,
+        aligned.length === 1
           ? enrichedAction.id
           : `${enrichedAction.id}:${index}`,
-        this.maybePatchFolksOracle(enrichedAction, encoded),
-        extraSigners,
       );
-      lastOutcome = {
-        ...submit.outcome,
-        actionId: enrichedAction.id,
-        toolName: "canix_get_execution_quote",
-      };
-      if (submit.outcome.status !== "confirmed") {
+      if (lastOutcome.status !== "confirmed") {
         return { outcome: lastOutcome, payments };
       }
-      await this.persistFolksEscrowFromQuoteMetadata(
-        enrichedAction,
-        quote.metadata,
-      );
     }
     return { outcome: lastOutcome, payments };
   }
@@ -488,31 +545,16 @@ export class AlgorandExecutionService {
       }
 
       const quote = batch.data[0]!;
-      assertFresh(quote.expiresAt);
-      const escrowSigners = folksEscrowSignersFromMetadata(quote.metadata);
-      for (const [address, secret] of escrowSigners) {
-        extraSigners.set(address, secret);
-      }
-      const submit = await this.signAndSubmitEncoded(
-        stepLabel,
-        this.maybePatchFolksOracle(
-          action,
-          await this.withLeadingAssetOptIns(quote.encodedTransactions, [
-            ...receiveAssetIds,
-            ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
-          ]),
-        ),
+      lastOutcome = await this.submitQuotedTransactions(
+        action,
+        quote,
         extraSigners,
+        receiveAssetIds,
+        stepLabel,
       );
-      lastOutcome = {
-        ...submit.outcome,
-        actionId: action.id,
-        toolName: "canix_get_execution_quote",
-      };
-      if (submit.outcome.status !== "confirmed") {
+      if (lastOutcome.status !== "confirmed") {
         return { outcome: lastOutcome, payments };
       }
-      await this.persistFolksEscrowFromQuoteMetadata(action, quote.metadata);
     }
     return { outcome: lastOutcome, payments };
   }
@@ -913,6 +955,97 @@ export class AlgorandExecutionService {
     );
   }
 
+  /**
+   * Submit one compiled quote: opt in to missing receive ASAs (same group when
+   * unsigned, a prior standalone group when any member is already signed),
+   * attach Folks extra-signers, then sign/submit the claim group unmodified
+   * when provider-cosigned.
+   */
+  private async submitQuotedTransactions(
+    action: PortfolioAction,
+    quote: z.infer<typeof executableQuoteSchema>,
+    extraSigners: Map<string, Uint8Array>,
+    receiveAssetIds: number[],
+    stepLabel: string,
+  ): Promise<ExecutionOutcome> {
+    assertFresh(quote.expiresAt);
+    const escrowSigners = folksEscrowSignersFromMetadata(quote.metadata);
+    for (const [address, secret] of escrowSigners) {
+      extraSigners.set(address, secret);
+    }
+    const prepared = await this.prepareGroupWithOptIns(
+      stepLabel,
+      quote.encodedTransactions,
+      [
+        ...receiveAssetIds,
+        ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
+      ],
+    );
+    if (prepared.optInOutcome && prepared.optInOutcome.status !== "confirmed") {
+      return {
+        ...prepared.optInOutcome,
+        actionId: action.id,
+        toolName: "canix_get_execution_quote",
+      };
+    }
+    const encoded = encodedGroupHasSignedMember(prepared.encoded)
+      ? prepared.encoded
+      : this.maybePatchFolksOracle(action, prepared.encoded);
+    const submit = await this.signAndSubmitEncoded(
+      stepLabel,
+      encoded,
+      extraSigners,
+    );
+    if (submit.outcome.status === "confirmed") {
+      await this.persistFolksEscrowFromQuoteMetadata(action, quote.metadata);
+    }
+    return {
+      ...submit.outcome,
+      actionId: action.id,
+      toolName: "canix_get_execution_quote",
+    };
+  }
+
+  private async prepareGroupWithOptIns(
+    actionId: string,
+    encodedTransactions: string[],
+    assetIds: number[],
+  ): Promise<{ encoded: string[]; optInOutcome?: ExecutionOutcome }> {
+    const missing: number[] = [];
+    for (const assetId of assetIds) {
+      if (assetId <= 0) {
+        continue;
+      }
+      if (!(await this.isAssetOptedIn(this.managedAddress, assetId))) {
+        missing.push(assetId);
+      }
+    }
+    if (missing.length === 0) {
+      return { encoded: encodedTransactions };
+    }
+    if (encodedGroupHasSignedMember(encodedTransactions)) {
+      const optInEncoded = buildStandaloneAssetOptInTransactions(
+        encodedTransactions,
+        this.managedAddress,
+        missing,
+      );
+      console.error(
+        `[execution] Submitting standalone ASA opt-in(s) for asset(s) ${missing.join(", ")} before signed claim group`,
+      );
+      const optInSubmit = await this.signAndSubmitEncoded(
+        `${actionId}:optin`,
+        optInEncoded,
+      );
+      return {
+        encoded: encodedTransactions,
+        optInOutcome: optInSubmit.outcome,
+      };
+    }
+    return {
+      encoded: await this.withLeadingAssetOptIns(encodedTransactions, missing),
+    };
+  }
+
   private async executeSwap(action: PortfolioAction): Promise<{
     outcome: ExecutionOutcome;
     payments: PaymentReceipt[];
@@ -1065,11 +1198,7 @@ export class AlgorandExecutionService {
     const submitted = (await this.algod.sendRawTransaction(signed).do()) as {
       txid: string;
     };
-    const confirmation = await algosdk.waitForConfirmation(
-      this.algod,
-      submitted.txid,
-      8,
-    );
+    const confirmation = await this.waitForSubmittedTransaction(submitted.txid);
     return {
       outcome: {
         actionId,
@@ -1078,6 +1207,10 @@ export class AlgorandExecutionService {
         confirmedRound: confirmation.confirmedRound?.toString(),
       },
     };
+  }
+
+  private async waitForSubmittedTransaction(txid: string) {
+    return algosdk.waitForConfirmation(this.algod, txid, 8);
   }
 
   private async signAndSubmit(
@@ -1625,6 +1758,11 @@ export function prependAssetOptInTransactions(
   senderAddress: string,
   assetIds: number[],
 ): string[] {
+  if (encodedGroupHasSignedMember(encodedTransactions)) {
+    throw new Error(
+      "Cannot prepend ASA opt-ins onto a provider-signed execution group",
+    );
+  }
   const uniqueAssetIds = [
     ...new Set(assetIds.filter((assetId) => assetId > 0)),
   ].sort((left, right) => left - right);
@@ -1674,6 +1812,69 @@ export function prependAssetOptInTransactions(
       "base64",
     ),
   );
+}
+
+export function encodedGroupHasSignedMember(
+  encodedTransactions: string[],
+): boolean {
+  return encodedTransactions.some((encoded) => {
+    try {
+      return decodeQuoteGroupMember(encoded).kind === "signed";
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Unsigned self opt-in group using the quoted group's validity window.
+ * Used when the claim group already has provider signatures and must not be
+ * regrouped.
+ */
+export function buildStandaloneAssetOptInTransactions(
+  encodedTransactions: string[],
+  senderAddress: string,
+  assetIds: number[],
+): string[] {
+  const uniqueAssetIds = [
+    ...new Set(assetIds.filter((assetId) => assetId > 0)),
+  ].sort((left, right) => left - right);
+  if (uniqueAssetIds.length === 0 || encodedTransactions.length === 0) {
+    return [];
+  }
+  const template = transactionFromEncodedMember(encodedTransactions[0]!);
+  const suggestedParams = {
+    fee: 1_000n,
+    flatFee: true as const,
+    firstValid: template.firstValid,
+    lastValid: template.lastValid,
+    genesisHash: template.genesisHash!,
+    genesisID: template.genesisID ?? "",
+    minFee: 1_000n,
+  };
+  const optIns = uniqueAssetIds.map((assetId) =>
+    algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: senderAddress,
+      receiver: senderAddress,
+      amount: 0n,
+      assetIndex: BigInt(assetId),
+      suggestedParams,
+    }),
+  );
+  const grouped = optIns.length === 1 ? optIns : algosdk.assignGroupID(optIns);
+  return grouped.map((transaction) =>
+    Buffer.from(algosdk.encodeUnsignedTransaction(transaction)).toString(
+      "base64",
+    ),
+  );
+}
+
+function transactionFromEncodedMember(encoded: string): algosdk.Transaction {
+  const member = decodeQuoteGroupMember(encoded);
+  if (member.kind === "unsigned") {
+    return member.transaction;
+  }
+  return algosdk.decodeSignedTransaction(Buffer.from(encoded, "base64")).txn;
 }
 
 /**
@@ -1970,7 +2171,9 @@ function assertFresh(expiresAt: string): void {
   }
 }
 
-function decodeQuoteGroupMember(encoded: string):
+function decodeQuoteGroupMember(
+  encoded: string,
+):
   | { kind: "unsigned"; transaction: algosdk.Transaction }
   | { kind: "signed"; bytes: Uint8Array } {
   const bytes = Buffer.from(encoded, "base64");
