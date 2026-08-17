@@ -8,6 +8,10 @@ import type { Canix402Client } from "../integrations/canix402/client.js";
 /** Align with portfolio-agent opportunity tool cap. */
 export const HOST_RESEARCH_OPPORTUNITY_LIMIT = 10;
 
+export const COMPX_ASSET_ID = 1_732_165_149;
+export const TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID =
+  "ZKAP7DLHJ25VTHPD3W73FGDM7VGU3DJAXL7GNUFW5CG4MIMY72EZ5GFIAI:lp";
+
 const HELD_PROTOCOL_PAGE_SIZE = 100;
 const HELD_PROTOCOL_MAX_PAGES = 10;
 
@@ -19,6 +23,8 @@ export interface HostResearchOptions {
    * manage plans. Top-N personalized/list catalogs often omit these.
    */
   snapshot?: PortfolioSnapshot;
+  /** Preferred-hold ASA ids — host searches by asset so thin LP/lend rows appear. */
+  preferredHoldAssetIds?: number[];
 }
 
 export interface HostResearchResult {
@@ -58,6 +64,16 @@ export async function prefetchHostResearch(
   }
   mergeOpportunities(opportunities, listed.opportunities);
 
+  const preferred = await enrichOpportunitiesWithPreferredHolds(
+    canix,
+    options.walletAddress,
+    options.preferredHoldAssetIds ?? [],
+    limit,
+  );
+  toolCalls.push(...preferred.toolCalls);
+  payments.push(...preferred.payments);
+  mergeOpportunities(opportunities, preferred.opportunities);
+
   if (options.snapshot) {
     const held = await enrichOpportunitiesWithHeldPositions(
       canix,
@@ -94,6 +110,80 @@ export function heldOpportunityIdsFromSnapshot(
     if (position.opportunityId) {
       ids.add(position.opportunityId);
     }
+  }
+  return [...ids];
+}
+
+/**
+ * Search preferred-hold ASAs (and Tinyman COMPX/ALGO when CompX is preferred)
+ * so thin LP/lend rows are not omitted from APY/TVL top-N catalogs.
+ */
+export async function enrichOpportunitiesWithPreferredHolds(
+  canix: Canix402Client,
+  walletAddress: string,
+  preferredHoldAssetIds: number[],
+  limit = HOST_RESEARCH_OPPORTUNITY_LIMIT,
+): Promise<HostResearchResult> {
+  if (preferredHoldAssetIds.length === 0) {
+    return { opportunities: [], toolCalls: [], payments: [] };
+  }
+
+  const opportunities: Opportunity[] = [];
+  const toolCalls: string[] = [];
+  const payments: PaymentReceipt[] = [];
+  const searches: Array<{ assetIds: number[]; platform?: string }> = [
+    ...preferredHoldAssetIds.map((assetId) => ({ assetIds: [assetId] })),
+  ];
+  if (preferredHoldAssetIds.includes(COMPX_ASSET_ID)) {
+    searches.push({ platform: "tinyman", assetIds: [COMPX_ASSET_ID] });
+  }
+
+  for (const search of searches) {
+    try {
+      const result = await canix.searchOpportunities(walletAddress, {
+        ...search,
+        limit,
+        includeInactive: false,
+      });
+      toolCalls.push("canix_search_opportunities");
+      if (result.payment) {
+        payments.push(result.payment);
+      }
+      mergeOpportunities(opportunities, result.opportunities);
+    } catch (error) {
+      console.error(
+        `[host-research] Preferred-hold search failed (${search.platform ?? "any"} assetIds=${search.assetIds.join(",")}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  return { opportunities, toolCalls, payments };
+}
+
+export function preferredOpportunityIds(
+  opportunities: Opportunity[],
+  preferredHoldAssetIds: number[],
+): string[] {
+  const preferred = new Set(preferredHoldAssetIds);
+  const ids = new Set<string>();
+  for (const opportunity of opportunities) {
+    const assetIds = opportunity.assetIds ?? [];
+    if (
+      opportunity.opportunityId === TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID ||
+      assetIds.some((assetId) => preferred.has(assetId))
+    ) {
+      ids.add(opportunity.opportunityId);
+    }
+  }
+  if (
+    preferred.has(COMPX_ASSET_ID) &&
+    opportunities.some(
+      (item) => item.opportunityId === TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID,
+    )
+  ) {
+    ids.add(TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID);
   }
   return [...ids];
 }

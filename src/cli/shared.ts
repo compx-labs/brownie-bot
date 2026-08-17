@@ -208,6 +208,33 @@ export function printPortfolioSnapshot(
     );
   }
 
+  const claimable = snapshot.claimable;
+  if (claimable) {
+    console.log(`\nClaim desk rows: ${claimable.rows.length}`);
+    console.table([
+      {
+        claimableUsd: formatNullableUsd(claimable.totals.claimableUsd),
+        worthClaimingUsd: formatNullableUsd(claimable.totals.worthClaimingUsd),
+      },
+    ]);
+    if (claimable.rows.length > 0) {
+      console.table(
+        claimable.rows.map((row) => ({
+          Protocol: row.protocol ?? "—",
+          ClaimKey: row.claimKey ?? "—",
+          Shape: row.shapeKey ?? row.quote?.shapeKey ?? "—",
+          USD: formatNullableUsd(row.usdValue ?? null),
+          WorthClaiming:
+            row.worthClaiming === undefined
+              ? "—"
+              : row.worthClaiming
+                ? "yes"
+                : "no",
+        })),
+      );
+    }
+  }
+
   console.log(`\nLiquid balances: ${snapshot.liquidBalances.length}`);
   console.log(
     `Account min balance (microAlgos): ${snapshot.minimumBalanceRaw}`,

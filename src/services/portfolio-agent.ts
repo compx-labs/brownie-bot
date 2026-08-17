@@ -20,7 +20,10 @@ import {
   prefetchHostResearch,
   heldOpportunityIdsFromSnapshot,
   enrichOpportunitiesWithHeldPositions,
+  enrichOpportunitiesWithPreferredHolds,
+  preferredOpportunityIds,
 } from "./host-research.js";
+import { compactClaimableForModel } from "./claim-desk.js";
 import {
   parseInferenceCostFromHeaders,
   summarizeInferenceCosts,
@@ -248,7 +251,9 @@ GOAL
 Deploy idle capital into high-TVL, execution-ready yield after fees/slippage/risk. Keep minLiquidReservePct liquid. Prefer deeper liquidity over peak APY for yield deployment (preferred holds below target are an exception—see below). Host guidance numbers are in the task input—plan toward them; the host hard-enforces structure when signing.
 
 SNAPSHOT
-Host already loaded positions + liquid balances. Treat null/partial protocol data as incomplete, not zero. For liquidBalances: use amount/spendableAmount/usdValue for judgment and summaries; use amountRaw/spendableAmountRaw only in authorizedSpends and executionInput. Never multiply amountRaw by a USD price. Never invent decimals.
+Host already loaded positions + liquid balances, and a claim desk when available (claimable). Treat null/partial protocol data as incomplete, not zero. For liquidBalances: use amount/spendableAmount/usdValue for judgment and summaries; use amountRaw/spendableAmountRaw only in authorizedSpends and executionInput. Never multiply amountRaw by a USD price. Never invent decimals.
+Debt rows (positionType "debt") are executable liabilities. Repay via compatibleExitShapeKeys (repay shapes) using that row's inputHints and amountRaw — do not invent size from wallet inventory. usdValue null on debt is still a real loan; do not treat it as zero. If totals.borrowedUsd is null, debt data is incomplete.
+Claim desk (claimable when present): prefer rows with worthClaiming=true; skip rows the desk marks not worth claiming unless the operator mandate says otherwise. Use claimKey / shapeKey from the desk (or the matching reward position's compatibleManageShapeKeys). Host compiles selected claims in one quote request. Réti is not on the claim desk. Haystack USDC+HAY and Pact multi-ASA farms share one claimKey each. Synthetic stALGO TINY amount-unknown rows are incomplete — do not treat missing claimableUsd as zero.
 
 CAPITAL
 Deploy surplus above the reserve when eligible executable opportunities exist. Hold only with named rejected candidates (id, APY, TVL, why). Ending liquid USDC (asset 31566704) should be ~5+ for ops (Canix x402 + ZeroSignal); if short, end with a small consolidate-usdc-buffer swap. When deploying ALGO (asset 0) via open/increase/swap-out, never spend the full spendableAmount — leave ≥5 ALGO above the account minimum balance (keep at least 5 ALGO of spendable unspent after the plan). Draining ALGO down to min balance leaves no fee room and blocks all further transactions. Do not invent secrets, mnemonics, or payment details.
@@ -259,7 +264,7 @@ PLAN ACTIONS
 - Prefer executionReady with non-empty shapeKeys; empty shapeKeys = research-only—never invent keys.
 - open/increase: one capital action per opportunity; executionShapeKey from shapeKeys (deposit/addLiquidity-style); authorizedSpends + amountRaw/fromAssetId; executionInput may be null (host completes). No separate setup/escrow/opt-in plan actions.
 - close/reduce/claim: executionShapeKey from position compatibleExitShapeKeys / compatibleManageShapeKeys; size with amountRaw / executionInput; authorizedSpends may be []. Never invent keys; empty catalogs = no supported path.
-- Claim-all manage shapes (claimRewards / claim with no amount input, including Haystack staking rewards): set amountRaw to null — never "0". A zero amount hard-blocks the whole plan. Put reward estimates in rationale only.
+- Claim-all manage shapes (claimRewards / claim with no amount input, including Haystack staking rewards): set amountRaw to null — never "0". A zero amount hard-blocks the whole plan. Put reward estimates in rationale only. When the claim desk lists the row, still emit a claim action against the reward position; host uses the desk's ready quote inputs.
 - Tinyman farm rewards: claim against the reward position (positionType reward / opportunityId ending :farm) using that row's compatibleManageShapeKeys (e.g. mainnet:tinyman:staking-v1:farm:claimRewards). Do NOT claim against the farmed LP row — its manage keys are empty by design (exit is removeLiquidity + farm:uncommit only).
 - Swaps: (1) unlock required assets for a following open/increase, (2) consolidate USDC ops buffer, (3) rotate non-preferred idle liquid into deployable capital or preferred holds. Prefer canix_get_quote before sizing. If a quote tool returns an error (timeout, liquidity, impact), retry with a different size/pair or skip that swap and continue the plan—do not stop the whole review.
 - Missing required assets: prior swap action(s), then depend on those action ids only.
@@ -293,15 +298,17 @@ summary must be a string. holdDecisions is a string[]. Nullable action fields ma
 export const PORTFOLIO_AGENT_PROMPT_V1 = `${PORTFOLIO_AGENT_PROMPT_SHARED}
 
 FULL MODE — RESEARCH
+Host already searched preferred-hold ASAs (including Tinyman preferred/ALGO LP when that ASA is a preferred hold) and pinned those rows in preferredOpportunities when present. Do not conclude "no LP available" from a high-TVL list that omitted them.
 1. Call canix_get_personalized_opportunities once (managed wallet).
 2. Call canix_search_opportunities or canix_list_opportunities once for high-TVL / executionReady (prefer limit ≤ 10).
-3. Stop after those two unless you truly need one more (e.g. canix_get_quote for a planned swap). Avoid canix_list_execution_shapes and canix_get_token_prices unless shapeKeys or usdValue are missing.
+3. A dedicated preferred-asset search is optional if preferredOpportunities already covers the pair you need.
+4. Stop after those unless you truly need one more (e.g. canix_get_quote for a planned swap). Avoid canix_list_execution_shapes and canix_get_token_prices unless shapeKeys or usdValue are missing.
 Tool rows are skinny (shapeKeys only); host keeps full shapes for policy/execution. Do not favor named protocols—rank by TVL, readiness, net benefit, concentration.`;
 
 export const PORTFOLIO_AGENT_PROMPT_LITE = `${PORTFOLIO_AGENT_PROMPT_SHARED}
 
 LITE MODE — NO TOOLS
-Host already researched (personalized + high-TVL). Use researchedOpportunities / candidates only. Prefer executionReady with non-empty shapeKeys. Rank by TVL, readiness, net benefit, concentration—not named protocols.`;
+Host already researched (personalized + high-TVL + preferred-hold asset searches, including Tinyman preferred/ALGO LP when applicable). Use researchedOpportunities / candidates / preferredOpportunities only. Prefer executionReady with non-empty shapeKeys. Rank by TVL, readiness, net benefit, concentration—not named protocols.`;
 
 /**
  * Base prompt for the given AI mode, optionally appending operator prose.
@@ -486,17 +493,38 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     const research = await prefetchHostResearch(this.canix, {
       walletAddress: this.options.walletAddress,
       snapshot,
+      preferredHoldAssetIds: this.options.hostGuidance.preferredHoldAssets.map(
+        (asset) => asset.assetId,
+      ),
     });
     payments.push(...research.payments);
     const toolCalls = ["canix_get_positions", ...research.toolCalls];
     const inferenceCharges: InferenceCostCharge[] = [];
-    const heldOpportunityIds = heldOpportunityIdsFromSnapshot(snapshot);
+    const pinOpportunityIds = [
+      ...heldOpportunityIdsFromSnapshot(snapshot),
+      ...preferredOpportunityIds(
+        research.opportunities,
+        this.options.hostGuidance.preferredHoldAssets.map(
+          (asset) => asset.assetId,
+        ),
+      ),
+    ];
     const researchedOpportunities = compactOpportunitiesForModel(
       research.opportunities,
       {
         minTvlUsd: this.options.hostGuidance.minTvlUsd,
         maxRows: MAX_OPPORTUNITY_TOOL_LIMIT,
-        pinOpportunityIds: heldOpportunityIds,
+        pinOpportunityIds,
+      },
+    );
+    const preferredOpportunities = compactOpportunitiesForModel(
+      research.opportunities.filter((item) =>
+        pinOpportunityIds.includes(item.opportunityId),
+      ),
+      {
+        minTvlUsd: this.options.hostGuidance.minTvlUsd,
+        maxRows: MAX_OPPORTUNITY_TOOL_LIMIT,
+        pinOpportunityIds,
       },
     );
     const initialInput = JSON.stringify({
@@ -508,6 +536,8 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       portfolioSnapshot: compactSnapshotForModel(snapshot),
       researchedOpportunities,
       candidates: researchedOpportunities,
+      preferredOpportunities,
+      claimable: compactClaimableForModel(snapshot.claimable),
       ...(priorReview ? { priorReview } : {}),
     });
 
@@ -585,6 +615,33 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     const toolCalls: string[] = ["canix_get_positions"];
     const opportunities: Opportunity[] = [];
     const inferenceCharges: InferenceCostCharge[] = [];
+    const preferredHoldAssetIds =
+      this.options.hostGuidance.preferredHoldAssets.map((asset) => asset.assetId);
+    const preferredResearch = await enrichOpportunitiesWithPreferredHolds(
+      this.canix,
+      this.options.walletAddress,
+      preferredHoldAssetIds,
+    );
+    toolCalls.push(...preferredResearch.toolCalls);
+    payments.push(...preferredResearch.payments);
+    for (const item of preferredResearch.opportunities) {
+      opportunities.push(item);
+    }
+    const pinOpportunityIds = [
+      ...heldOpportunityIdsFromSnapshot(snapshot),
+      ...preferredOpportunityIds(
+        preferredResearch.opportunities,
+        preferredHoldAssetIds,
+      ),
+    ];
+    const preferredOpportunities = compactOpportunitiesForModel(
+      preferredResearch.opportunities,
+      {
+        minTvlUsd: this.options.hostGuidance.minTvlUsd,
+        maxRows: MAX_OPPORTUNITY_TOOL_LIMIT,
+        pinOpportunityIds,
+      },
+    );
     const initialInput = JSON.stringify({
       task: "Research and produce today's portfolio plan.",
       managedWallet: this.options.walletAddress,
@@ -592,6 +649,8 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
       aiMode: "full",
       hostGuidance: this.options.hostGuidance,
       portfolioSnapshot: compactSnapshotForModel(snapshot),
+      preferredOpportunities,
+      claimable: compactClaimableForModel(snapshot.claimable),
       ...(priorReview ? { priorReview } : {}),
     });
     /** Explicit client-side transcript; never use previous_response_id (ZS/privacy). */
@@ -739,6 +798,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
               compactToolResultForModel(call.name, result.data, {
                 minTvlUsd: this.options.hostGuidance.minTvlUsd,
                 maxRows: MAX_OPPORTUNITY_TOOL_LIMIT,
+                pinOpportunityIds,
               }),
             ),
           });
@@ -1269,7 +1329,11 @@ function coerceAmountString(value: unknown): string | undefined {
 export function compactToolResultForModel(
   toolName: string,
   data: unknown,
-  options: { minTvlUsd: number; maxRows: number },
+  options: {
+    minTvlUsd: number;
+    maxRows: number;
+    pinOpportunityIds?: string[];
+  },
 ): unknown {
   const cleaned = stripPaymentNoise(data);
   if (!OPPORTUNITY_RESEARCH_TOOLS.has(toolName)) {
@@ -1401,6 +1465,7 @@ function compactSnapshotForModel(snapshot: PortfolioSnapshot) {
       compatibleExitShapeKeys: position.compatibleExitShapeKeys,
       compatibleManageShapeKeys: position.compatibleManageShapeKeys,
     })),
+    claimable: compactClaimableForModel(snapshot.claimable),
   };
 }
 

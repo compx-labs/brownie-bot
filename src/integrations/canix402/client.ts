@@ -8,8 +8,10 @@ import {
   type AssetPrice,
   type OpportunityResult,
   type PaymentReceipt,
+  type WalletClaimable,
   type WalletPositions,
 } from "../../domain.js";
+import { normalizeWalletClaimable } from "../../services/claim-desk.js";
 import { formatMoney, moneyOrNull } from "../../services/money.js";
 import { sanitizeErrorText } from "../../util/errors.js";
 import type { PaymentBuilder } from "./payment.js";
@@ -101,6 +103,7 @@ const TOOL_RESOURCE_PATHS: Record<string, string> = {
   canix_search_opportunities: "/opportunities/search",
   canix_get_personalized_opportunities: "/opportunities/personalized",
   canix_get_positions: "/positions",
+  canix_list_claimable: "/positions/claimable",
   canix_get_execution_quote: "/execution/quotes",
   canix_swap: "/swaps/transactions",
 };
@@ -207,6 +210,57 @@ export class Canix402Client {
       );
     }
     return { positions, payment: result.payment };
+  }
+
+  async getClaimable(address: string): Promise<{
+    claimable: WalletClaimable;
+    payment?: PaymentReceipt;
+  }> {
+    const result = await this.callManagedTool(
+      "canix_list_claimable",
+      {},
+      address,
+    );
+    const claimable = normalizeWalletClaimable(result.data);
+    if (claimable.meta.address && claimable.meta.address !== address) {
+      throw new Error(
+        "Canix402 claimable response address does not match request",
+      );
+    }
+    return { claimable, payment: result.payment };
+  }
+
+  async searchOpportunities(
+    walletAddress: string,
+    options: {
+      assetIds?: number[];
+      platform?: string;
+      limit?: number;
+      includeInactive?: boolean;
+    } = {},
+  ): Promise<OpportunityResult> {
+    const args: Record<string, unknown> = {
+      includeInactive: options.includeInactive ?? false,
+    };
+    if (options.limit !== undefined) {
+      args.limit = options.limit;
+    }
+    if (options.platform) {
+      args.platform = options.platform;
+    }
+    if (options.assetIds && options.assetIds.length > 0) {
+      args.assetIds = options.assetIds;
+    }
+    const result = await this.callManagedTool(
+      "canix_search_opportunities",
+      args,
+      walletAddress,
+    );
+    const parsed = opportunitiesResponseSchema.parse(result.data);
+    return {
+      opportunities: parsed.data,
+      payment: result.payment,
+    };
   }
 
   async getOpportunities(limit: number): Promise<OpportunityResult> {
@@ -605,6 +659,22 @@ function sanitizeSchemaNode(node: unknown): void {
   }
 }
 
+function injectQuoteUserAddress(
+  item: unknown,
+  walletAddress: string,
+): Record<string, unknown> {
+  const record =
+    item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+  const input =
+    record.input && typeof record.input === "object"
+      ? (record.input as Record<string, unknown>)
+      : {};
+  return {
+    ...record,
+    input: { ...input, userAddress: walletAddress },
+  };
+}
+
 function injectManagedWallet(
   toolName: string,
   rawArgs: Record<string, unknown>,
@@ -614,6 +684,7 @@ function injectManagedWallet(
   const addressTools = new Set([
     "canix_get_personalized_opportunities",
     "canix_get_positions",
+    "canix_list_claimable",
     "canix_get_quote",
     "canix_optin",
     "canix_swap",
@@ -623,20 +694,12 @@ function injectManagedWallet(
   }
   if (toolName === "canix_get_execution_quote") {
     const quotes = Array.isArray(args.quotes) ? args.quotes : [];
-    args.quotes = quotes.map((item) => {
-      const record =
-        item && typeof item === "object"
-          ? (item as Record<string, unknown>)
-          : {};
-      const input =
-        record.input && typeof record.input === "object"
-          ? (record.input as Record<string, unknown>)
-          : {};
-      return {
-        ...record,
-        input: { ...input, userAddress: walletAddress },
-      };
-    });
+    args.quotes = quotes.map((item) => injectQuoteUserAddress(item, walletAddress));
+    if (Array.isArray(args.claimAllQuotes)) {
+      args.claimAllQuotes = args.claimAllQuotes.map((item) =>
+        injectQuoteUserAddress(item, walletAddress),
+      );
+    }
   }
   if (
     (toolName === "canix_optin" || toolName === "canix_swap") &&
@@ -678,9 +741,11 @@ function assertManagedPaymentResource(
     throw new Error("PAYMENT_REQUIRED resource does not match MCP tool");
   }
   if (
-    ["canix_get_personalized_opportunities", "canix_get_positions"].includes(
-      toolName,
-    ) &&
+    [
+      "canix_get_personalized_opportunities",
+      "canix_get_positions",
+      "canix_list_claimable",
+    ].includes(toolName) &&
     url.searchParams.get("address") !== walletAddress
   ) {
     throw new Error("PAYMENT_REQUIRED resource changed managed wallet");

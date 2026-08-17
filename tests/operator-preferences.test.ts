@@ -23,6 +23,18 @@ describe("portfolio agent base prompt", () => {
     }
   });
 
+  it("describes claim desk, debt repay, and preferred-hold host search", () => {
+    for (const prompt of [
+      PORTFOLIO_AGENT_PROMPT_V1,
+      PORTFOLIO_AGENT_PROMPT_LITE,
+    ]) {
+      expect(prompt).toMatch(/claim desk/i);
+      expect(prompt).toMatch(/worthClaiming/);
+      expect(prompt).toMatch(/positionType "debt"/);
+      expect(prompt).toMatch(/preferred-hold/);
+    }
+  });
+
   it("has no CompX ASA / core CompX mandate strings", () => {
     for (const prompt of [
       PORTFOLIO_AGENT_PROMPT_V1,

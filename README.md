@@ -132,7 +132,7 @@ Missing or empty → disregarded. See
 
 Mainnet, USDC ASA `31566704`, the Canix402 API origin, and endpoint payment
 ceilings are code-level invariants rather than environment configuration.
-Current ceilings are 5,000 base units for positions and swap transaction
+Current ceilings are 5,000 base units for positions, claimable, and swap transaction
 generation, 10,000 for general/search/protocol opportunities, 50,000 for
 personalized opportunities, and 100,000 for execution quotes. A separate daily
 x402 cap applies (default `MAX_DAILY_X402_BASE_UNITS`, 5 USDC). The bot validates
@@ -214,7 +214,8 @@ npm run canix:personalized
 npm run canix:personalized -- 25
 ```
 
-Wallet / portfolio scan for `BOT_WALLET` (positions ~0.005 USDC + free Algod
+Wallet / portfolio scan for `BOT_WALLET` (positions ~0.005 USDC + claim desk
+~0.001 USDC + free Algod
 balances). Uses the same reader as the daily review and prints completeness,
 every caveat, protocol status, totals (including nulls), positions, and liquid
 balances. Exit code `2` means the snapshot is incomplete; `1` means the scan

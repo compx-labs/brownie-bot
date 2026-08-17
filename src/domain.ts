@@ -149,6 +149,75 @@ export const walletPositionsSchema = z.object({
 
 export type WalletPositions = z.infer<typeof walletPositionsSchema>;
 
+export const executionQuoteRequestSchema = z
+  .object({
+    shapeKey: z.string().min(1),
+    input: z.record(z.string(), z.unknown()).optional().default({}),
+  })
+  .passthrough();
+
+export type ExecutionQuoteRequest = z.infer<typeof executionQuoteRequestSchema>;
+
+export const claimableRowSchema = z
+  .object({
+    claimKey: z.string().min(1).optional(),
+    positionId: z.string().min(1).optional(),
+    opportunityId: z.string().nullable().optional(),
+    protocol: z.string().optional(),
+    shapeKey: z.string().min(1).optional(),
+    usdValue: z.number().nullable().optional(),
+    worthClaiming: z.boolean().optional(),
+    estimatedNetworkFeeUsd: z.number().nullable().optional(),
+    quote: executionQuoteRequestSchema.optional(),
+    quotes: z.array(executionQuoteRequestSchema).optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+export type ClaimableRow = z.infer<typeof claimableRowSchema>;
+
+export const walletClaimableResponseSchema = z
+  .object({
+    data: z.array(claimableRowSchema).optional(),
+    claims: z.array(claimableRowSchema).optional(),
+    claimable: z.array(claimableRowSchema).optional(),
+    claimAllQuotes: z.array(executionQuoteRequestSchema).optional(),
+    totals: z
+      .object({
+        claimableUsd: z.number().nullable().optional(),
+        worthClaimingUsd: z.number().nullable().optional(),
+      })
+      .passthrough()
+      .optional(),
+    meta: z
+      .object({
+        address: z.string().optional(),
+        fetchedAt: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    caveats: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+export type WalletClaimableResponse = z.infer<
+  typeof walletClaimableResponseSchema
+>;
+
+export interface WalletClaimable {
+  rows: ClaimableRow[];
+  claimAllQuotes: ExecutionQuoteRequest[];
+  totals: {
+    claimableUsd: number | null;
+    worthClaimingUsd: number | null;
+  };
+  meta: {
+    address?: string;
+    fetchedAt?: string;
+  };
+  caveats: string[];
+}
+
 export const liquidBalanceSchema = z.object({
   assetId: z.number().int().nonnegative(),
   amountRaw: z.string().regex(/^[0-9]+$/),
@@ -176,6 +245,8 @@ export interface PortfolioSnapshot {
   minimumBalanceRaw: string;
   complete: boolean;
   caveats: string[];
+  /** Paid claim desk; absent when the endpoint is unavailable. */
+  claimable?: WalletClaimable;
 }
 
 export interface PaymentReceipt {

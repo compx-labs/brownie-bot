@@ -28,6 +28,7 @@ import {
   USDC_ASSET_ID,
   assertAllCasesPinned,
   buildExitAction,
+  isExecutableDorkFiDebt,
   loadProtocolVerifyFixture,
   matchProtocolVerifyCases,
   pickCapitalEnterShape,
@@ -552,6 +553,24 @@ describe("protocol-verify discovery matching", () => {
     expect(matched["dorkfi-credit"].borrowShapeKey).toBe(DORKFI_BORROW_SHAPE);
     expect(matched["dorkfi-credit"].repayShapeKey).toBe(DORKFI_REPAY_SHAPE);
     expect(matched["dorkfi-credit"].exitShapeKey).toBe(DORKFI_WITHDRAW_SHAPE);
+    expect(
+      isExecutableDorkFiDebt(
+        {
+          protocol: "dorkfi",
+          positionType: "debt",
+          positionId: "dorkfi:debt:3333688282",
+          opportunityId: "dorkfi:algorand:3333688282:3121954282:lending",
+          assetId: UNIT_ASSET_ID,
+          assetSymbol: "UNIT",
+          amountRaw: "10",
+          amount: "10",
+          usdValue: null,
+          compatibleExitShapeKeys: [DORKFI_REPAY_SHAPE],
+          compatibleManageShapeKeys: [],
+        },
+        { marketAppId: 3_333_688_282 },
+      ),
+    ).toBe(true);
     expect(matched["pact-lp"].opportunityId).toBe("pact:pool:algo-usdc");
     expect(matched["haystack-swap"].fromAssetId).toBe(ALGO_ASSET_ID);
     expect(matched["reti-pooling"].opportunityId).toBe(

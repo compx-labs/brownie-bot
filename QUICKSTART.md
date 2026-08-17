@@ -265,6 +265,7 @@ headers are skipped.
 | Endpoint / tool                   | Ceiling (base units) | Ceiling (USDC) | Typical use                               |
 | --------------------------------- | -------------------: | -------------: | ----------------------------------------- |
 | Positions (`canix_get_positions`) |                5,000 |          0.005 | Every review + wallet scan                |
+| Claim desk (`canix_list_claimable`) |              5,000 |          0.005 | Every review (live price **0.001** USDC)  |
 | List opportunities                |               10,000 |           0.01 | Research                                  |
 | Search / filter opportunities     |               10,000 |           0.01 | Research (high-TVL discovery)             |
 | Protocol opportunities            |               10,000 |           0.01 | Per protocol query                        |
@@ -277,7 +278,7 @@ accounting).
 
 ### Ballpark per dry-run review
 
-**`AI_MODE=full` (default):** a typical dry-run pays for **positions + personalized + one
+**`AI_MODE=full` (default):** a typical dry-run pays for **positions + claim desk + personalized + preferred-asset search(es) + one
 list/search** (model-facing rows capped at 10 with `shapeKeys` only), plus **ZeroSignal**
 for the multi-turn planning loop. Recent Canix
 x402 spend often lands around **~0.05–0.15 USDC**, depending on how many research
@@ -286,7 +287,8 @@ on the live ZeroSignal catalog price for `OPENAI_MODEL` (default
 `glm-5.2`) and how many tool-follow-up turns run;
 see [ZeroSignal pricing](https://txnlab.gitbook.io/zerosignal/for-users/pricing.md).
 
-**`AI_MODE=lite`:** the host prefetches research (personalized + list, ≤10 rows each; no
+**`AI_MODE=lite`:** the host prefetches research (personalized + list + preferred-hold
+asset searches, ≤10 rows each; no
 protocol favoritism), then makes **one**
 decide-only ZeroSignal call with tools disabled. Canix x402 is similar; ZeroSignal spend
 is usually much lower because there is no multi-turn tool loop. Prefer
@@ -296,7 +298,7 @@ CLI one-shots (each spends real USDC; no LLM):
 
 | Command                       | Approx. cost            |
 | ----------------------------- | ----------------------- |
-| `npm run canix:wallet-scan`   | ~0.005 USDC (positions) |
+| `npm run canix:wallet-scan`   | ~0.006 USDC (positions + claim desk) |
 | `npm run canix:opportunities` | ≤ 0.01 USDC             |
 | `npm run canix:personalized`  | ≤ 0.05 USDC             |
 

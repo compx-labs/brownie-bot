@@ -239,6 +239,69 @@ describe("Canix402Client", () => {
     });
   });
 
+  it("injects the managed wallet and parses the claim desk", async () => {
+    const address =
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+    const paymentRequired = {
+      x402Version: 2,
+      resource: {
+        url: `https://canix402-api.compx.io/positions/claimable?address=${address}`,
+      },
+      accepts: [],
+    };
+    const callTool = vi
+      .fn<ToolCaller["callTool"]>()
+      .mockResolvedValueOnce(
+        toolResult({
+          error: "PAYMENT_REQUIRED",
+          mcpPayment: { paymentRequired },
+        }),
+      )
+      .mockResolvedValueOnce(
+        toolResult({
+          data: [
+            {
+              claimKey: "tinyman-farm",
+              positionId: "tinyman:reward:1",
+              worthClaiming: true,
+              usdValue: 0.5,
+              quote: {
+                shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+                input: { poolId: "POOL" },
+              },
+            },
+          ],
+          totals: { claimableUsd: 0.5, worthClaimingUsd: 0.5 },
+          meta: { address, fetchedAt: new Date().toISOString() },
+        }),
+      );
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      {
+        build: vi.fn().mockResolvedValue({
+          paymentSignature: "claimable-payment",
+          receipt: {
+            amountBaseUnits: "1000",
+            assetId: "31566704",
+            network: "algorand:mainnet",
+          },
+        }),
+      },
+    );
+
+    const result = await client.getClaimable(address);
+
+    expect(result.claimable.rows).toHaveLength(1);
+    expect(result.claimable.rows[0]?.worthClaiming).toBe(true);
+    expect(callTool).toHaveBeenNthCalledWith(1, "canix_list_claimable", {
+      address,
+    });
+    expect(callTool).toHaveBeenNthCalledWith(2, "canix_list_claimable", {
+      address,
+      paymentSignature: "claimable-payment",
+    });
+  });
+
   it("fetches free token prices without a payment builder", async () => {
     const callTool = vi.fn<ToolCaller["callTool"]>().mockResolvedValue(
       toolResult({

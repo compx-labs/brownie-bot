@@ -12,6 +12,7 @@ import {
   recomputeWalletPositionTotals,
   repricePositionsFromTokenPrices,
 } from "../../services/position-pricing.js";
+import { sanitizeErrorMessage } from "../../util/errors.js";
 
 export interface PortfolioReader {
   read(): Promise<{
@@ -32,10 +33,12 @@ export class AlgorandPortfolioReader implements PortfolioReader {
     snapshot: PortfolioSnapshot;
     payments: PaymentReceipt[];
   }> {
-    const [{ positions, payment }, accountState] = await Promise.all([
-      this.canix.getPositions(this.address),
-      this.readAccountState(),
-    ]);
+    const [{ positions, payment }, claimableResult, accountState] =
+      await Promise.all([
+        this.canix.getPositions(this.address),
+        this.readClaimable(),
+        this.readAccountState(),
+      ]);
     const repriceAssetIds = collectRepriceAssetIds(positions.data);
     const liquidAssetIds = accountState.balances.map(
       (balance) => balance.assetId,
@@ -83,7 +86,11 @@ export class AlgorandPortfolioReader implements PortfolioReader {
         "At least one aggregate position valuation is incomplete",
       );
     }
-    const caveats = [...hardCaveats, ...softCaveats];
+    const caveats = [
+      ...hardCaveats,
+      ...softCaveats,
+      ...claimableResult.caveats,
+    ];
     return {
       snapshot: {
         address: this.address,
@@ -95,9 +102,32 @@ export class AlgorandPortfolioReader implements PortfolioReader {
         minimumBalanceRaw: accountState.minimumBalanceRaw,
         complete: hardCaveats.length === 0,
         caveats,
+        claimable: claimableResult.claimable,
       },
-      payments: payment ? [payment] : [],
+      payments: [
+        ...(payment ? [payment] : []),
+        ...(claimableResult.payment ? [claimableResult.payment] : []),
+      ],
     };
+  }
+
+  private async readClaimable(): Promise<{
+    claimable?: PortfolioSnapshot["claimable"];
+    payment?: PaymentReceipt;
+    caveats: string[];
+  }> {
+    try {
+      const result = await this.canix.getClaimable(this.address);
+      return {
+        claimable: result.claimable,
+        payment: result.payment,
+        caveats: result.claimable.caveats,
+      };
+    } catch (error) {
+      return {
+        caveats: [`claim desk unavailable: ${sanitizeErrorMessage(error)}`],
+      };
+    }
   }
 
   private async readAccountState(): Promise<{
