@@ -216,23 +216,25 @@ describe("backend routes", () => {
         url: "/runs?limit=1",
       });
       expect(emptyLimit.statusCode).toBe(200);
-      const body = emptyLimit.json() as {
-        retentionDays: number;
-        runs: Array<Record<string, unknown>>;
-      };
-      expect(body.retentionDays).toBe(7);
-      expect(body.runs).toHaveLength(1);
-      expect(body.runs[0]).toMatchObject({
-        id: "newer-run",
-        status: "failed",
-        error: "agent timeout",
+      expect(emptyLimit.json()).toMatchObject({
+        retentionDays: 7,
+        runs: [
+          {
+            id: "newer-run",
+            status: "failed",
+            error: "agent timeout",
+          },
+        ],
       });
-      expect(body.runs[0]).not.toHaveProperty("snapshot");
-      expect(body.runs[0]).not.toHaveProperty("plan");
-      expect(body.runs[0]).not.toHaveProperty("opportunities");
+      const limitedPayload = JSON.stringify(emptyLimit.json());
+      expect(limitedPayload).not.toContain('"snapshot"');
+      expect(limitedPayload).not.toContain('"plan"');
+      expect(limitedPayload).not.toContain('"opportunities"');
 
       const all = await context.app.inject({ method: "GET", url: "/runs" });
-      expect(all.json().runs).toHaveLength(2);
+      expect(all.json()).toMatchObject({
+        runs: [{ id: "newer-run" }, { id: "older-run" }],
+      });
     } finally {
       await context?.app.close();
       context = undefined;

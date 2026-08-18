@@ -195,8 +195,8 @@ describe("LocalFilesystemReviewRunStore", () => {
       });
       const stale = sampleRun({
         id: "stale-run",
-        startedAt: "2026-08-09T09:00:00.000Z",
-        completedAt: "2026-08-09T09:00:01.000Z",
+        startedAt: "2026-08-10T09:00:00.000Z",
+        completedAt: "2026-08-10T09:00:01.000Z",
       });
       const fresh = sampleRun({
         id: "fresh-run",
@@ -307,8 +307,8 @@ describe("SpacesReviewRunStore", () => {
     });
     const stale = sampleRun({
       id: "spaces-stale",
-      startedAt: "2026-08-09T09:00:00.000Z",
-      completedAt: "2026-08-09T09:00:01.000Z",
+      startedAt: "2026-08-10T09:00:00.000Z",
+      completedAt: "2026-08-10T09:00:01.000Z",
     });
     const fresh = sampleRun({
       id: "spaces-fresh",
@@ -318,6 +318,9 @@ describe("SpacesReviewRunStore", () => {
     });
     await store.putLatest(stale, { now: new Date(stale.startedAt) });
     await store.putLatest(fresh, { now: new Date(fresh.startedAt) });
+    expect(
+      memory.objects.has(datedReviewKey("brownie", "WALLETADDR", stale)),
+    ).toBe(true);
 
     const now = new Date("2026-08-17T12:00:00.000Z");
     const listed = await store.list("WALLETADDR", { now });
