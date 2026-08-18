@@ -1,5 +1,10 @@
 import type { AccountingRun, ReviewRun } from "../domain.js";
 import { CashflowTxError } from "../integrations/algorand/cashflow-tx.js";
+import {
+  REVIEW_HISTORY_RETENTION_DAYS,
+  type ReviewRunStore,
+  type ReviewRunSummary,
+} from "../integrations/storage/review-run-store.js";
 import { sanitizeErrorMessage, sanitizeErrorText } from "../util/errors.js";
 import {
   AccountingRunInProgressError,
@@ -53,6 +58,7 @@ const HELP_TEXT = [
   "Brownie operator commands:",
   "/help — list commands",
   "/status — health and last-run summary",
+  "/history — recent dated review runs (7-day retention, summaries only)",
   "/run — start a treasury review now (acks immediately; digest follows)",
   "/accounting — start an accounting snapshot now (acks immediately)",
   "/deposit <txid> — record external funding (paste pay/axfer txid)",
@@ -124,6 +130,8 @@ export interface OperatorCommandDeps {
   signingEnabled: boolean;
   unwindService?: DeterministicUnwindService;
   unwindPending?: UnwindPendingStore;
+  reviewStore?: ReviewRunStore;
+  walletAddress?: string;
 }
 
 export function createOperatorCommandHandlers(
@@ -136,6 +144,15 @@ export function createOperatorCommandHandlers(
       Promise.resolve(
         formatStatusReply(buildHealthReport(deps.getHealthInput())),
       ),
+    history: async () => {
+      if (!deps.reviewStore || !deps.walletAddress) {
+        return "Review history is not configured on this process.";
+      }
+      const runs = await deps.reviewStore.list(deps.walletAddress, {
+        limit: 14,
+      });
+      return formatHistoryReply(runs);
+    },
     run: (ctx) => {
       if (deps.getHealthInput().busy) {
         return Promise.reject(
@@ -374,6 +391,21 @@ function shortTxid(txid: string): string {
     return txid;
   }
   return `${txid.slice(0, 8)}…${txid.slice(-6)}`;
+}
+
+export function formatHistoryReply(
+  runs: ReviewRunSummary[],
+  retentionDays = REVIEW_HISTORY_RETENTION_DAYS,
+): string {
+  if (runs.length === 0) {
+    return `No review history in the last ${retentionDays} days.`;
+  }
+  const lines = [`Recent reviews (last ${retentionDays} days):`];
+  for (const run of runs) {
+    const error = run.error ? ` — ${truncateReply(run.error, 80)}` : "";
+    lines.push(`${run.startedAt}  ${run.status}  ${run.id}${error}`);
+  }
+  return lines.join("\n");
 }
 
 export function formatStatusReply(report: HealthReport): string {

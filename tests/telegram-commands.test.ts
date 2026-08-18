@@ -10,6 +10,7 @@ import {
 import {
   createCommandDispatcher,
   createOperatorCommandHandlers,
+  formatHistoryReply,
   formatStatusReply,
   isAllowedTelegramChat,
   parseTelegramCommand,
@@ -148,7 +149,7 @@ describe("createOperatorCommandHandlers", () => {
       handlers.help!(
         commandCtx({ command: { name: "help", args: "", raw: "/help" } }),
       ),
-    ).resolves.toContain("/unwind");
+    ).resolves.toContain("/history");
 
     const status = await handlers.status!(
       commandCtx({ command: { name: "status", args: "", raw: "/status" } }),
@@ -170,6 +171,42 @@ describe("createOperatorCommandHandlers", () => {
         }),
       ),
     ).rejects.toThrow(/already in progress/i);
+  });
+
+  it("lists recent review summaries on /history", async () => {
+    const list = vi.fn().mockResolvedValue([
+      {
+        id: "run-1",
+        startedAt: "2026-08-17T09:00:00.000Z",
+        completedAt: "2026-08-17T09:00:01.000Z",
+        status: "no-op",
+        signingEnabled: false,
+      },
+    ]);
+    const handlers = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        reviewStore: { list } as never,
+        walletAddress: "WALLET",
+      }),
+    );
+
+    const text = await handlers.history!(
+      commandCtx({ command: { name: "history", args: "", raw: "/history" } }),
+    );
+    expect(text).toContain("Recent reviews (last 7 days)");
+    expect(text).toContain("run-1");
+    expect(text).toContain("no-op");
+    expect(text).not.toContain("snapshot");
+    expect(list).toHaveBeenCalledWith("WALLET", { limit: 14 });
+  });
+
+  it("says when review history is unconfigured", async () => {
+    const handlers = createOperatorCommandHandlers(baseHandlerDeps());
+    await expect(
+      handlers.history!(
+        commandCtx({ command: { name: "history", args: "", raw: "/history" } }),
+      ),
+    ).resolves.toMatch(/not configured/i);
   });
 
   it("maps coordinator busy via health busy flag before starting", async () => {
@@ -610,6 +647,27 @@ describe("createOperatorCommandHandlers", () => {
         }),
       ),
     ).resolves.toContain("Already recorded withdrawal: $5.00");
+  });
+});
+
+describe("formatHistoryReply", () => {
+  it("renders compact lines and an empty-state message", () => {
+    expect(formatHistoryReply([])).toBe(
+      "No review history in the last 7 days.",
+    );
+    const text = formatHistoryReply([
+      {
+        id: "run-9",
+        startedAt: "2026-08-17T09:00:00.000Z",
+        completedAt: "2026-08-17T09:00:01.000Z",
+        status: "failed",
+        signingEnabled: false,
+        error: "agent timeout",
+      },
+    ]);
+    expect(text).toContain("Recent reviews (last 7 days):");
+    expect(text).toContain("2026-08-17T09:00:00.000Z  failed  run-9");
+    expect(text).toContain("agent timeout");
   });
 });
 
