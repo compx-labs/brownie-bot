@@ -285,8 +285,7 @@ export class AlgorandExecutionService {
           const outcome = await this.submitQuotedTransactions(
             action,
             quote,
-            extraSignersByAction.get(actionId) ??
-              new Map<string, Uint8Array>(),
+            extraSignersByAction.get(actionId) ?? new Map<string, Uint8Array>(),
             receiveAssetIdsByAction.get(actionId) ?? [],
             aligned.length === 1 ? actionId : `${actionId}:${index}`,
           );
