@@ -18,9 +18,12 @@ import {
   type S3ClientConfig,
 } from "@aws-sdk/client-s3";
 
-import { reviewRunSchema, type ReviewRun } from "../../domain.js";
+import type { ZodError } from "zod";
 
-/** Dated review files older than this are deleted on write and list. */
+import { reviewRunSchema, type ReviewRun } from "../../domain.js";
+import { sanitizeErrorText } from "../../util/errors.js";
+
+/** Dated review files older than this are deleted on write (not on list). */
 export const REVIEW_HISTORY_RETENTION_DAYS = 7;
 export const REVIEW_HISTORY_RETENTION_MS =
   REVIEW_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -306,12 +309,16 @@ async function readLatestReview(
   io: Pick<ReviewHistoryIo, "getJson">,
   key: string,
 ): Promise<ReviewRun | undefined> {
-  const payload = await io.getJson(key);
-  if (payload === undefined) {
+  const loaded = await loadDatedReview(io, key);
+  if (!loaded.ok) {
+    if (loaded.reason !== "file missing") {
+      console.warn(
+        `[review-run-store] Ignoring unreadable ${key}: ${loaded.reason}`,
+      );
+    }
     return undefined;
   }
-  const parsed = reviewRunSchema.safeParse(payload);
-  return parsed.success ? parsed.data : undefined;
+  return loaded.run;
 }
 
 async function persistReviewRun(
@@ -336,20 +343,27 @@ async function listReviewHistory(
   options: ListReviewRunsOptions,
 ): Promise<ReviewRunSummary[]> {
   const now = options.now ?? new Date();
-  await rotateReviewHistory(io, prefix, walletAddress, now);
   const limit = clampReviewListLimit(options.limit);
   const keys = await listDatedReviewKeys(io, prefix, walletAddress);
   const summaries: ReviewRunSummary[] = [];
   for (const key of keys) {
-    const payload = await io.getJson(key);
-    if (payload === undefined) {
+    const loaded = await loadDatedReview(io, key);
+    if (loaded.ok) {
+      if (isExpiredReviewStartedAt(loaded.run.startedAt, now)) {
+        continue;
+      }
+      summaries.push(summarizeReviewRun(loaded.run));
       continue;
     }
-    const parsed = reviewRunSchema.safeParse(payload);
-    if (!parsed.success) {
+    if (isExpiredReviewKey(key, now)) {
       continue;
     }
-    summaries.push(summarizeReviewRun(parsed.data));
+    if (loaded.reason !== "file missing") {
+      console.warn(
+        `[review-run-store] Unreadable dated review ${key}: ${loaded.reason}`,
+      );
+      summaries.push(summarizeUnreadableReview(key, loaded.reason));
+    }
   }
   summaries.sort(compareReviewSummaries);
   return summaries.slice(0, limit);
@@ -364,12 +378,42 @@ async function rotateReviewHistory(
   const keys = await listDatedReviewKeys(io, prefix, walletAddress);
   const deleted: string[] = [];
   for (const key of keys) {
-    if (isExpiredReviewKey(key, now)) {
+    const loaded = await loadDatedReview(io, key);
+    const expired = loaded.ok
+      ? isExpiredReviewStartedAt(loaded.run.startedAt, now)
+      : isExpiredReviewKey(key, now);
+    if (expired) {
       await io.deleteKey(key);
       deleted.push(key);
     }
   }
   return deleted;
+}
+
+type LoadedDatedReview =
+  { ok: true; run: ReviewRun } | { ok: false; reason: string };
+
+async function loadDatedReview(
+  io: Pick<ReviewHistoryIo, "getJson">,
+  key: string,
+): Promise<LoadedDatedReview> {
+  let payload: unknown;
+  try {
+    payload = await io.getJson(key);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return { ok: false, reason: "invalid JSON" };
+    }
+    throw error;
+  }
+  if (payload === undefined) {
+    return { ok: false, reason: "file missing" };
+  }
+  const parsed = reviewRunSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { ok: false, reason: formatSchemaIssues(parsed.error) };
+  }
+  return { ok: true, run: parsed.data };
 }
 
 async function listDatedReviewKeys(
@@ -415,6 +459,21 @@ export function summarizeReviewRun(run: ReviewRun): ReviewRunSummary {
   };
 }
 
+export function summarizeUnreadableReview(
+  key: string,
+  reason: string,
+): ReviewRunSummary {
+  const startedAt = datedReviewIsoFromKey(key) ?? "1970-01-01T00:00:00.000Z";
+  return {
+    id: runIdFromDatedKey(key),
+    startedAt,
+    completedAt: startedAt,
+    status: "failed",
+    signingEnabled: false,
+    error: `Unreadable review file: ${sanitizeErrorText(reason, { maxLength: 180 })}`,
+  };
+}
+
 export function clampReviewListLimit(raw: unknown): number {
   if (raw === undefined || raw === null || raw === "") {
     return DEFAULT_REVIEW_LIST_LIMIT;
@@ -440,12 +499,26 @@ export function isDatedReviewKey(
   );
 }
 
+export function isExpiredReviewStartedAt(
+  startedAt: string,
+  now: Date,
+): boolean {
+  const ms = Date.parse(startedAt);
+  if (!Number.isFinite(ms)) {
+    return false;
+  }
+  return now.getTime() - ms >= REVIEW_HISTORY_RETENTION_MS;
+}
+
 export function isExpiredReviewKey(key: string, now: Date): boolean {
   const ms = datedReviewUtcMs(key);
   if (ms === undefined) {
     return false;
   }
-  return now.getTime() - ms >= REVIEW_HISTORY_RETENTION_MS;
+  // Last millisecond of that UTC day, so unreadable files are not dropped
+  // before a full week after the latest startedAt that path could represent.
+  const dayEndMs = ms + 24 * 60 * 60 * 1000 - 1;
+  return now.getTime() - dayEndMs >= REVIEW_HISTORY_RETENTION_MS;
 }
 
 function datedReviewUtcMs(key: string): number | undefined {
@@ -454,6 +527,28 @@ function datedReviewUtcMs(key: string): number | undefined {
     return undefined;
   }
   return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function datedReviewIsoFromKey(key: string): string | undefined {
+  const ms = datedReviewUtcMs(key);
+  if (ms === undefined) {
+    return undefined;
+  }
+  return new Date(ms).toISOString();
+}
+
+function runIdFromDatedKey(key: string): string {
+  const file = key.split("/").pop() ?? "run.json";
+  return file.replace(/\.json$/i, "") || "run";
+}
+
+function formatSchemaIssues(error: ZodError): string {
+  const issue = error.issues[0];
+  if (!issue) {
+    return "invalid review run schema";
+  }
+  const path = issue.path.length > 0 ? issue.path.join(".") : "root";
+  return `${path}: ${issue.message}`;
 }
 
 function reviewsPrefix(prefix: string, walletAddress: string): string {

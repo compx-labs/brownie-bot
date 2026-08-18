@@ -401,7 +401,9 @@ overall; only `public/pnl.json` is world-readable via object ACL.
 Latest review JSON is stored alongside accounting under the same local
 `ACCOUNTING_DATA_DIR` (or Spaces) root. Each completed review also writes
 `wallets/<addr>/reviews/<yyyy>/<mm>/<dd>/<runId>.json`. Dated files older
-than 7 days are deleted on write and list; `latest.json` is kept.
+than 7 days (rolling from `startedAt`) are deleted on write;
+`latest.json` is kept. Listing (`GET /runs`, Telegram `/history`) does
+not delete files. Unreadable dated files appear as failed summaries.
 Persistence is best-effort: a store write failure is logged and does not
 fail the review.
 

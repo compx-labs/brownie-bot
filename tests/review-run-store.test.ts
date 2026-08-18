@@ -127,6 +127,7 @@ describe("LocalFilesystemReviewRunStore", () => {
 
   it("returns undefined for missing or corrupt latest.json", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "brownie-review-"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const store = new LocalFilesystemReviewRunStore({ rootDir });
       await expect(store.getLatest("MISSING")).resolves.toBeUndefined();
@@ -143,7 +144,12 @@ describe("LocalFilesystemReviewRunStore", () => {
       );
       await writeFile(filePath, '{"not":"a-review-run"}', "utf8");
       await expect(store.getLatest("WALLETADDR")).resolves.toBeUndefined();
+
+      await writeFile(filePath, "{not json", "utf8");
+      await expect(store.getLatest("WALLETADDR")).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalled();
     } finally {
+      warn.mockRestore();
       await rm(rootDir, { recursive: true, force: true });
     }
   });
@@ -244,7 +250,7 @@ describe("LocalFilesystemReviewRunStore", () => {
     }
   });
 
-  it("list rotates expired files before returning summaries", async () => {
+  it("hides expired files on list without deleting them", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "brownie-review-"));
     try {
       const store = new LocalFilesystemReviewRunStore({ rootDir });
@@ -259,14 +265,98 @@ describe("LocalFilesystemReviewRunStore", () => {
       await mkdir(dirname(stalePath), { recursive: true });
       await writeFile(stalePath, JSON.stringify(stale), "utf8");
 
-      const listed = await store.list("WALLETADDR", {
-        now: new Date("2026-08-17T00:00:00.000Z"),
-      });
+      const now = new Date("2026-08-17T00:00:00.000Z");
+      const listed = await store.list("WALLETADDR", { now });
       expect(listed).toEqual([]);
+      expect(JSON.parse(await readFile(stalePath, "utf8"))).toMatchObject({
+        id: "expired",
+      });
+
+      const deleted = await store.rotate("WALLETADDR", now);
+      expect(deleted).toEqual([staleKey]);
       await expect(readFile(stalePath, "utf8")).rejects.toMatchObject({
         code: "ENOENT",
       });
     } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a late-UTC-day run until startedAt plus 7 days", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "brownie-review-"));
+    try {
+      const store = new LocalFilesystemReviewRunStore({
+        rootDir,
+        prefix: "brownie",
+      });
+      const late = sampleRun({
+        id: "late-run",
+        startedAt: "2026-08-11T23:00:00.000Z",
+        completedAt: "2026-08-11T23:00:01.000Z",
+      });
+      await store.putLatest(late, { now: new Date(late.startedAt) });
+      const datedKey = datedReviewKey("brownie", "WALLETADDR", late);
+      const datedPath = join(rootDir, ...datedKey.split("/"));
+
+      const beforeExpiry = new Date("2026-08-18T22:59:00.000Z");
+      await expect(
+        store.list("WALLETADDR", { now: beforeExpiry }),
+      ).resolves.toEqual([summarizeReviewRun(late)]);
+      await expect(store.rotate("WALLETADDR", beforeExpiry)).resolves.toEqual(
+        [],
+      );
+      expect(JSON.parse(await readFile(datedPath, "utf8"))).toMatchObject({
+        id: "late-run",
+      });
+
+      const atExpiry = new Date("2026-08-18T23:00:00.000Z");
+      await expect(
+        store.list("WALLETADDR", { now: atExpiry }),
+      ).resolves.toEqual([]);
+      expect(JSON.parse(await readFile(datedPath, "utf8"))).toMatchObject({
+        id: "late-run",
+      });
+      await expect(store.rotate("WALLETADDR", atExpiry)).resolves.toEqual([
+        datedKey,
+      ]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns unreadable dated files as failed summaries instead of throwing", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "brownie-review-"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const store = new LocalFilesystemReviewRunStore({ rootDir });
+      const invalidJsonKey =
+        "wallets/WALLETADDR/reviews/2026/08/17/bad-json.json";
+      const invalidSchemaKey =
+        "wallets/WALLETADDR/reviews/2026/08/17/bad-schema.json";
+      const invalidJsonPath = join(rootDir, ...invalidJsonKey.split("/"));
+      const invalidSchemaPath = join(rootDir, ...invalidSchemaKey.split("/"));
+      await mkdir(dirname(invalidJsonPath), { recursive: true });
+      await writeFile(invalidJsonPath, "{not json", "utf8");
+      await writeFile(invalidSchemaPath, '{"not":"a-review-run"}', "utf8");
+
+      const listed = await store.list("WALLETADDR", {
+        now: new Date("2026-08-17T12:00:00.000Z"),
+      });
+      expect(listed).toHaveLength(2);
+      expect(listed.map((run) => run.id).sort()).toEqual([
+        "bad-json",
+        "bad-schema",
+      ]);
+      expect(listed.find((run) => run.id === "bad-json")?.error).toContain(
+        "invalid JSON",
+      );
+      expect(listed.find((run) => run.id === "bad-schema")?.error).toMatch(
+        /^Unreadable review file:/,
+      );
+      expect(listed.every((run) => run.status === "failed")).toBe(true);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
       await rm(rootDir, { recursive: true, force: true });
     }
   });
@@ -326,6 +416,15 @@ describe("SpacesReviewRunStore", () => {
     const listed = await store.list("WALLETADDR", { now });
     expect(listed.map((run) => run.id)).toEqual(["spaces-fresh"]);
     expect(listed[0]).not.toHaveProperty("snapshot");
+    expect(
+      memory.objects.has(datedReviewKey("brownie", "WALLETADDR", stale)),
+    ).toBe(true);
+    expect(
+      memory.objects.has(datedReviewKey("brownie", "WALLETADDR", fresh)),
+    ).toBe(true);
+
+    const deleted = await store.rotate("WALLETADDR", now);
+    expect(deleted).toEqual([datedReviewKey("brownie", "WALLETADDR", stale)]);
     expect(
       memory.objects.has(datedReviewKey("brownie", "WALLETADDR", stale)),
     ).toBe(false);
