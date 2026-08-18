@@ -66,7 +66,10 @@ describe("preferred-hold host research", () => {
   });
 
   it("prefetches preferred holds after personalized + list", async () => {
-    const listed = opportunity({ opportunityId: "listed:1", tvlUsd: 1_000_000 });
+    const listed = opportunity({
+      opportunityId: "listed:1",
+      tvlUsd: 1_000_000,
+    });
     const compxLp = opportunity({
       opportunityId: TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID,
       assetIds: [COMPX_ASSET_ID, 0],

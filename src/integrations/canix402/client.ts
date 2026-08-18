@@ -694,7 +694,9 @@ function injectManagedWallet(
   }
   if (toolName === "canix_get_execution_quote") {
     const quotes = Array.isArray(args.quotes) ? args.quotes : [];
-    args.quotes = quotes.map((item) => injectQuoteUserAddress(item, walletAddress));
+    args.quotes = quotes.map((item) =>
+      injectQuoteUserAddress(item, walletAddress),
+    );
     if (Array.isArray(args.claimAllQuotes)) {
       args.claimAllQuotes = args.claimAllQuotes.map((item) =>
         injectQuoteUserAddress(item, walletAddress),

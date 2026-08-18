@@ -616,7 +616,9 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
     const opportunities: Opportunity[] = [];
     const inferenceCharges: InferenceCostCharge[] = [];
     const preferredHoldAssetIds =
-      this.options.hostGuidance.preferredHoldAssets.map((asset) => asset.assetId);
+      this.options.hostGuidance.preferredHoldAssets.map(
+        (asset) => asset.assetId,
+      );
     const preferredResearch = await enrichOpportunitiesWithPreferredHolds(
       this.canix,
       this.options.walletAddress,

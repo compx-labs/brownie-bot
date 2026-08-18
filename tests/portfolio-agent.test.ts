@@ -23,7 +23,12 @@ import {
   withStreamTrue,
   type ResponsesClient,
 } from "../src/services/portfolio-agent.js";
-import { opportunity, portfolioPlan, portfolioSnapshot, enterShape } from "./fixtures.js";
+import {
+  opportunity,
+  portfolioPlan,
+  portfolioSnapshot,
+  enterShape,
+} from "./fixtures.js";
 import { TINYMAN_COMPX_ALGO_LP_OPPORTUNITY_ID } from "../src/services/host-research.js";
 
 const managedWallet =
