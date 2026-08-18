@@ -134,7 +134,7 @@ describe("TreasuryReviewService", () => {
       false,
       undefined,
       undefined,
-      { getLatest: vi.fn(), putLatest },
+      { getLatest: vi.fn(), putLatest, list: vi.fn(), rotate: vi.fn() },
     );
 
     const result = await instance.run();
@@ -175,7 +175,7 @@ describe("TreasuryReviewService", () => {
       false,
       undefined,
       undefined,
-      { getLatest: vi.fn(), putLatest },
+      { getLatest: vi.fn(), putLatest, list: vi.fn(), rotate: vi.fn() },
     );
 
     const result = await reviewService.run();

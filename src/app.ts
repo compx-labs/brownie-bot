@@ -29,7 +29,9 @@ import {
   type AccountingStore,
 } from "./integrations/storage/accounting-store.js";
 import {
+  clampReviewListLimit,
   LocalFilesystemReviewRunStore,
+  REVIEW_HISTORY_RETENTION_DAYS,
   SpacesReviewRunStore,
   type ReviewRunStore,
 } from "./integrations/storage/review-run-store.js";
@@ -340,6 +342,17 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     });
   });
 
+  app.get("/runs", async (request) => {
+    const query = request.query as { limit?: string };
+    const runs = await reviewStore.list(config.BOT_WALLET, {
+      limit: clampReviewListLimit(query.limit),
+    });
+    return {
+      retentionDays: REVIEW_HISTORY_RETENTION_DAYS,
+      runs,
+    };
+  });
+
   app.get("/runs/latest", async (_request, reply) => {
     if (!state.latest) {
       return reply.code(404).send({
@@ -501,6 +514,8 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
       signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
       unwindService,
       unwindPending,
+      reviewStore,
+      walletAddress: config.BOT_WALLET,
       getHealthInput: () => ({
         signingEnabled: config.ENABLE_TRANSACTION_SIGNING,
         paused: pauseStore.isPaused(),

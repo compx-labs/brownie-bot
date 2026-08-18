@@ -385,6 +385,9 @@ overall; only `public/pnl.json` is world-readable via object ACL.
   mark `status` as `degraded` with `warnings` when something is down or
   stale). Always HTTP 200 while the process is up — check the `status`
   field (`ok` | `degraded`).
+- `GET /runs` — recent dated review summaries (id, timestamps, status,
+  optional error; no snapshot/plan payload). Query `?limit=` (default 50,
+  max 200). Retention is 7 days.
 - `GET /runs/latest` — latest review result (hydrated from
   `wallets/<addr>/reviews/latest.json` on boot; updated after each review)
 - `POST /runs` — manually run a review; disabled unless
@@ -396,8 +399,13 @@ overall; only `public/pnl.json` is world-readable via object ACL.
 - `POST /accounting/cashflows` — record an immutable external cashflow event
 
 Latest review JSON is stored alongside accounting under the same local
-`ACCOUNTING_DATA_DIR` (or Spaces) root. Persistence is best-effort: a store
-write failure is logged and does not fail the review.
+`ACCOUNTING_DATA_DIR` (or Spaces) root. Each completed review also writes
+`wallets/<addr>/reviews/<yyyy>/<mm>/<dd>/<runId>.json`. Dated files older
+than 7 days (rolling from `startedAt`) are deleted on write;
+`latest.json` is kept. Listing (`GET /runs`, Telegram `/history`) does
+not delete files. Unreadable dated files appear as failed summaries.
+Persistence is best-effort: a store write failure is logged and does not
+fail the review.
 
 ## Canix402 payment flow
 
@@ -449,6 +457,7 @@ default `dist/index.js`) also long-polls for operator slash commands from
 | ------------------ | --------------------------------------------------------------------------------------- |
 | `/help`            | List commands                                                                           |
 | `/status`          | Health / busy / paused / signing / last-run ages / daily Canix x402 + ZS used+remaining |
+| `/history`         | Recent dated review summaries (7-day retention; no full payloads)                       |
 | `/run`             | Force a treasury review (acks immediately; digest follows)                              |
 | `/accounting`      | Force an accounting snapshot (acks immediately; digest follows)                         |
 | `/deposit <txid>`  | Record external funding from a pay/axfer transaction                                    |
