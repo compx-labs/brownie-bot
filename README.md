@@ -283,11 +283,11 @@ curl -sS -X POST "http://127.0.0.1:3000/accounting/run" \
   -H "Authorization: Bearer ${MANUAL_TRIGGER_TOKEN}"
 ```
 
-| Condition | HTTP | JSON |
-| --- | --- | --- |
-| Token unset / empty | `404` | `{ "error": "NOT_FOUND", "message": "Manual review triggering is disabled" }` (`POST /accounting/run` says "Manual accounting triggering is disabled") |
-| Missing header, or `Authorization` is not exactly `Bearer <token>` | `401` | `{ "error": "UNAUTHORIZED", "message": "A valid bearer token is required" }` |
-| A review/accounting run is already in progress | `409` | `{ "error": "RUN_IN_PROGRESS", "message": "…" }` |
+| Condition                                                          | HTTP  | JSON                                                                                                                                                   |
+| ------------------------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Token unset / empty                                                | `404` | `{ "error": "NOT_FOUND", "message": "Manual review triggering is disabled" }` (`POST /accounting/run` says "Manual accounting triggering is disabled") |
+| Missing header, or `Authorization` is not exactly `Bearer <token>` | `401` | `{ "error": "UNAUTHORIZED", "message": "A valid bearer token is required" }`                                                                           |
+| A review/accounting run is already in progress                     | `409` | `{ "error": "RUN_IN_PROGRESS", "message": "…" }`                                                                                                       |
 
 Unlike Telegram `/run` (acks immediately; digest follows), `POST /runs` waits
 for the full review. That can take minutes and spends mainnet USDC on Canix402
@@ -297,11 +297,11 @@ unauthenticated. Other mutating routes (`POST /accounting/cashflows`,
 
 ### Docker `once` vs long-lived server
 
-| Mode | How | Behavior |
-| --- | --- | --- |
-| Long-lived server | `docker compose up -d` or `docker run …` with **no** extra arg | Entrypoint starts zs-proxy, then `node dist/index.js`: HTTP API, Telegram long-poll, accounting cron, optional `RUN_CRON` |
-| `once` | `docker run … once` (or `RUN_ONCE=true`) | Starts zs-proxy, runs one treasury review (`dist/run-once.js`), prints a JSON summary, exits. **No** HTTP listen, **no** Telegram commands |
-| `smoke` | `docker run … smoke` | LLM + one Canix research call; never quotes or signs |
+| Mode              | How                                                            | Behavior                                                                                                                                   |
+| ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Long-lived server | `docker compose up -d` or `docker run …` with **no** extra arg | Entrypoint starts zs-proxy, then `node dist/index.js`: HTTP API, Telegram long-poll, accounting cron, optional `RUN_CRON`                  |
+| `once`            | `docker run … once` (or `RUN_ONCE=true`)                       | Starts zs-proxy, runs one treasury review (`dist/run-once.js`), prints a JSON summary, exits. **No** HTTP listen, **no** Telegram commands |
+| `smoke`           | `docker run … smoke`                                           | LLM + one Canix research call; never quotes or signs                                                                                       |
 
 ```bash
 # One-shot review in a throwaway container (stop the long-lived replica first
@@ -519,20 +519,20 @@ When Telegram is configured, the **long-lived server** (`npm start` / Docker
 default `dist/index.js`) also long-polls for operator slash commands from
 `TELEGRAM_CHAT_ID` only:
 
-| Command            | Behavior                                                                                |
-| ------------------ | --------------------------------------------------------------------------------------- |
-| `/help`            | List commands                                                                           |
-| `/status`          | Health / busy / paused / signing / last-run ages / daily Canix x402 + ZS used+remaining |
-| `/history`         | Recent dated review summaries (7-day retention; no full payloads)                       |
+| Command            | Behavior                                                                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `/help`            | List commands                                                                                              |
+| `/status`          | Health / busy / paused / signing / last-run ages / daily Canix x402 + ZS used+remaining                    |
+| `/history`         | Recent dated review summaries (7-day retention; no full payloads)                                          |
 | `/run`             | Force a treasury review (acks immediately; digest follows). HTTP/Docker: [Force a review](#force-a-review) |
-| `/accounting`      | Force an accounting snapshot (acks immediately; digest follows)                         |
-| `/deposit <txid>`  | Record external funding from a pay/axfer transaction                                    |
-| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction                                 |
-| `/unwind`          | Preview host close-all (positions + LST receipts); then `/unwind confirm`               |
-| `/unwind confirm`  | Execute pending unwind (multi-wave until flat or stuck)                                 |
-| `/unwind cancel`   | Discard pending unwind preview                                                          |
-| `/pause`           | Hold trading; reviews continue as plan-only                                             |
-| `/resume`          | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`)                    |
+| `/accounting`      | Force an accounting snapshot (acks immediately; digest follows)                                            |
+| `/deposit <txid>`  | Record external funding from a pay/axfer transaction                                                       |
+| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction                                                    |
+| `/unwind`          | Preview host close-all (positions + LST receipts); then `/unwind confirm`                                  |
+| `/unwind confirm`  | Execute pending unwind (multi-wave until flat or stuck)                                                    |
+| `/unwind cancel`   | Discard pending unwind preview                                                                             |
+| `/pause`           | Hold trading; reviews continue as plan-only                                                                |
+| `/resume`          | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`)                                       |
 
 Pause is a durable runtime kill-switch (wallet-scoped JSON under
 `ACCOUNTING_DATA_DIR`). It does not change the env signing flag; `/resume`
