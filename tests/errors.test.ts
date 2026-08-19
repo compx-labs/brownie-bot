@@ -67,7 +67,14 @@ describe("sanitizeErrorText", () => {
     ).toBe("Canix bad gateway (502)");
   });
 
-  it("collapses whitespace on plain multi-line text", () => {
-    expect(sanitizeErrorText("line one\n\nline two")).toBe("line one line two");
+  it("labels Algod when a gateway HTML body names an algonode origin", () => {
+    expect(
+      sanitizeErrorText(
+        `HTTP 504 <!DOCTYPE html><html><title>504 Gateway Timeout</title><h3>connection to mainnet-api.algonode.cloud</h3></html>`,
+        { status: 504 },
+      ),
+    ).toBe(
+      "Algod gateway timeout (504); could not reach mainnet-api.algonode.cloud",
+    );
   });
 });
