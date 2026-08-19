@@ -150,6 +150,62 @@ describe("backend routes", () => {
       url: "/runs",
     });
     expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      error: "NOT_FOUND",
+      message: "Manual review triggering is disabled",
+    });
+
+    const accounting = await context.app.inject({
+      method: "POST",
+      url: "/accounting/run",
+    });
+    expect(accounting.statusCode).toBe(404);
+    expect(accounting.json()).toEqual({
+      error: "NOT_FOUND",
+      message: "Manual accounting triggering is disabled",
+    });
+  });
+
+  it("rejects missing or wrong bearer tokens when MANUAL_TRIGGER_TOKEN is set", async () => {
+    const token = "sixteen-chars-ok";
+    context = await createApp(
+      loadConfig({
+        ...environment,
+        MANUAL_TRIGGER_TOKEN: token,
+      }),
+    );
+
+    const missing = await context.app.inject({
+      method: "POST",
+      url: "/runs",
+    });
+    expect(missing.statusCode).toBe(401);
+    expect(missing.json()).toEqual({
+      error: "UNAUTHORIZED",
+      message: "A valid bearer token is required",
+    });
+
+    const wrong = await context.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: "Bearer not-the-token-value" },
+    });
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.json()).toEqual({
+      error: "UNAUTHORIZED",
+      message: "A valid bearer token is required",
+    });
+
+    const accountingWrong = await context.app.inject({
+      method: "POST",
+      url: "/accounting/run",
+      headers: { authorization: "Bearer not-the-token-value" },
+    });
+    expect(accountingWrong.statusCode).toBe(401);
+    expect(accountingWrong.json()).toEqual({
+      error: "UNAUTHORIZED",
+      message: "A valid bearer token is required",
+    });
   });
 
   it("lists dated review summaries on GET /runs without full payloads", async () => {
