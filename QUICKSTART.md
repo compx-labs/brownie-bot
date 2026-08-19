@@ -79,8 +79,10 @@ always uses **`stream: true`** (ZS/proxy read timeouts kill silent non-streaming
 requests). It does not use `previous_response_id` (ZeroSignal-compatible; nodes do not keep
 prompt history).
 
-Then skip to [§4](#4-sanity-checks) / run a review via the container HTTP API or
-logs. For one-shot local Node reviews without Docker, use §2b.
+Then skip to [§4](#4-sanity-checks). To force a review: Telegram `/run` on the
+long-lived container, HTTP `POST /runs` with `MANUAL_TRIGGER_TOKEN`, or Docker
+`once` — see [README.md — Force a review](./README.md#force-a-review). For
+one-shot local Node reviews without Docker, use §2b.
 
 ## 2b. Local host zs-proxy
 
@@ -153,8 +155,14 @@ Expect `status` (`ok` | `degraded`), `latestReview` age/status when a run
 exists, and `telegramConfigured` / `accountingStorage` to reflect what you set
 (`local` when Spaces is omitted). If a required env is missing, the process
 exits with a one-line `Missing required env …` message (not a Zod dump). For
-zs-proxy / Canix / Algod / Telegram failures after boot, see
+zs-proxy / Canix / Algod / Telegram / HTTP force-run (`404`/`401`/`409`)
+failures after boot, see
 [README.md — Ops troubleshooting](./README.md#ops-troubleshooting).
+
+To force a review on this long-lived process without Telegram, set
+`MANUAL_TRIGGER_TOKEN` (≥16 chars) and `POST /runs` with
+`Authorization: Bearer <token>` — see
+[README.md — Force a review](./README.md#force-a-review).
 
 Cheap portfolio probe (pays the positions fee only; does not need the LLM):
 
@@ -181,7 +189,13 @@ npm run run-once
 
 # Or full prod-like path (builds image, starts in-container zs-proxy, one review):
 npm run run-once-with-docker
+# equivalent: docker run --rm --env-file .env ghcr.io/compx-labs/brownie-bot:latest once
 ```
+
+`once` is a one-shot process (no HTTP API). If `docker compose up -d` is already
+running, prefer `POST /runs` on port 3000 instead of a second container — see
+[README.md — Force a review](./README.md#force-a-review). Docker logs mix
+zs-proxy with Brownie; `sanitize-zs-logs.mjs` filters proxy HTML dumps.
 
 You should get a plan report on Telegram or in the terminal. With signing
 disabled, the bot does **not** call execution-quote, swap, or opt-in endpoints.

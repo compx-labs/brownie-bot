@@ -169,7 +169,8 @@ match `.env.example`; schema defaults live in `src/config.ts`.
 
 **Runtime:** `NODE_ENV`, `HOST` (`0.0.0.0`), `PORT` (`3000`),
 `RUN_CRON` (`false`), `CRON_SCHEDULE`, `CRON_TIMEZONE` (`UTC`),
-`MANUAL_TRIGGER_TOKEN` (unset; HTTP force-run disabled unless ≥16 chars),
+`MANUAL_TRIGGER_TOKEN` (unset; HTTP force-run disabled unless ≥16 chars;
+see [Force a review](#force-a-review)),
 `CANIX402_MCP_URL`, `X402_ALGOD_URL`, `X402_INDEXER_URL`,
 `ACCOUNTING_CRON_SCHEDULE`, `ACCOUNTING_CRON_TIMEZONE` (`UTC`),
 `ACCOUNTING_DATA_DIR` (`data/accounting`), `FOLKS_ESCROW_DATA_DIR`
@@ -257,6 +258,69 @@ balances and the Canix402 positions endpoint. Accounting history is stored in
 DigitalOcean Spaces when configured, otherwise under `ACCOUNTING_DATA_DIR`. The
 in-process latest-run response is operational convenience only and is lost on
 restart. The scheduler and overlap lock assume a single service replica.
+
+## Force a review
+
+Chat-side force-run is Telegram `/run` (and `/accounting`) on the long-lived
+server — see [Telegram](#telegram). This section is HTTP and Docker so you do
+not need to read source.
+
+### HTTP (`MANUAL_TRIGGER_TOKEN`)
+
+The long-lived process (`npm start` / `npm run dev` / Docker default) listens
+on `HOST`/`PORT` (defaults `0.0.0.0:3000`). Set `MANUAL_TRIGGER_TOKEN` to a
+secret **at least 16 characters**, then restart. Empty or unset disables the
+trigger routes (they 404). A token shorter than 16 characters fails startup
+with `Optional env MANUAL_TRIGGER_TOKEN is invalid`.
+
+```bash
+# Treasury review — blocks until the run finishes, then returns the run JSON
+curl -sS -X POST "http://127.0.0.1:3000/runs" \
+  -H "Authorization: Bearer ${MANUAL_TRIGGER_TOKEN}"
+
+# Accounting snapshot — same bearer
+curl -sS -X POST "http://127.0.0.1:3000/accounting/run" \
+  -H "Authorization: Bearer ${MANUAL_TRIGGER_TOKEN}"
+```
+
+| Condition                                                          | HTTP  | JSON                                                                                                                                                   |
+| ------------------------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Token unset / empty                                                | `404` | `{ "error": "NOT_FOUND", "message": "Manual review triggering is disabled" }` (`POST /accounting/run` says "Manual accounting triggering is disabled") |
+| Missing header, or `Authorization` is not exactly `Bearer <token>` | `401` | `{ "error": "UNAUTHORIZED", "message": "A valid bearer token is required" }`                                                                           |
+| A review/accounting run is already in progress                     | `409` | `{ "error": "RUN_IN_PROGRESS", "message": "…" }`                                                                                                       |
+
+Unlike Telegram `/run` (acks immediately; digest follows), `POST /runs` waits
+for the full review. That can take minutes and spends mainnet USDC on Canix402
+and zs-proxy inference. `GET /health`, `GET /runs`, and `GET /runs/latest` stay
+unauthenticated. Other mutating routes (`POST /accounting/cashflows`,
+`POST /accounting/inception`) use the same bearer model.
+
+### Docker `once` vs long-lived server
+
+| Mode              | How                                                            | Behavior                                                                                                                                   |
+| ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Long-lived server | `docker compose up -d` or `docker run …` with **no** extra arg | Entrypoint starts zs-proxy, then `node dist/index.js`: HTTP API, Telegram long-poll, accounting cron, optional `RUN_CRON`                  |
+| `once`            | `docker run … once` (or `RUN_ONCE=true`)                       | Starts zs-proxy, runs one treasury review (`dist/run-once.js`), prints a JSON summary, exits. **No** HTTP listen, **no** Telegram commands |
+| `smoke`           | `docker run … smoke`                                           | LLM + one Canix research call; never quotes or signs                                                                                       |
+
+```bash
+# One-shot review in a throwaway container (stop the long-lived replica first
+# if it uses the same wallet — overlap lock is in-process only)
+docker run --rm --env-file .env ghcr.io/compx-labs/brownie-bot:latest once
+
+# Same path, rebuilds the local image first
+npm run run-once-with-docker
+```
+
+`once` does not need `MANUAL_TRIGGER_TOKEN`. Prefer HTTP `POST /runs` when the
+server is already up so you keep Telegram and cron on the same process.
+
+**Logs:** container stdout mixes **zs-proxy + brownie-bot**. Brownie sanitizes
+its own errors (Telegram, logs, persisted `ReviewRun.error`). Proxy lines with
+HTML `err_body=` dumps (CDN 502/504 pages) are shortened by
+[`docker/sanitize-zs-logs.mjs`](./docker/sanitize-zs-logs.mjs) before they hit
+stdout. If that filter file is missing, the entrypoint logs a warning and
+leaves raw proxy output enabled.
 
 ## Accounting snapshots
 
@@ -390,13 +454,15 @@ overall; only `public/pnl.json` is world-readable via object ACL.
   max 200). Retention is 7 days.
 - `GET /runs/latest` — latest review result (hydrated from
   `wallets/<addr>/reviews/latest.json` on boot; updated after each review)
-- `POST /runs` — manually run a review; disabled unless
-  `MANUAL_TRIGGER_TOKEN` is set and requires
-  `Authorization: Bearer <token>`
+- `POST /runs` — force a treasury review (blocks until complete). Requires
+  `MANUAL_TRIGGER_TOKEN` and `Authorization: Bearer <token>`. Unset token →
+  `404`; bad/missing bearer → `401`; overlap → `409`. See
+  [Force a review](#force-a-review).
 - `GET /accounting/latest` — latest accounting run
 - `GET /accounting/inception` — all-time inception baseline (404 if unset)
-- `POST /accounting/run` — manually run accounting; same bearer token model
+- `POST /accounting/run` — force an accounting snapshot; same bearer model
 - `POST /accounting/cashflows` — record an immutable external cashflow event
+  (same bearer)
 
 Latest review JSON is stored alongside accounting under the same local
 `ACCOUNTING_DATA_DIR` (or Spaces) root. Each completed review also writes
@@ -453,20 +519,20 @@ When Telegram is configured, the **long-lived server** (`npm start` / Docker
 default `dist/index.js`) also long-polls for operator slash commands from
 `TELEGRAM_CHAT_ID` only:
 
-| Command            | Behavior                                                                                |
-| ------------------ | --------------------------------------------------------------------------------------- |
-| `/help`            | List commands                                                                           |
-| `/status`          | Health / busy / paused / signing / last-run ages / daily Canix x402 + ZS used+remaining |
-| `/history`         | Recent dated review summaries (7-day retention; no full payloads)                       |
-| `/run`             | Force a treasury review (acks immediately; digest follows)                              |
-| `/accounting`      | Force an accounting snapshot (acks immediately; digest follows)                         |
-| `/deposit <txid>`  | Record external funding from a pay/axfer transaction                                    |
-| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction                                 |
-| `/unwind`          | Preview host close-all (positions + LST receipts); then `/unwind confirm`               |
-| `/unwind confirm`  | Execute pending unwind (multi-wave until flat or stuck)                                 |
-| `/unwind cancel`   | Discard pending unwind preview                                                          |
-| `/pause`           | Hold trading; reviews continue as plan-only                                             |
-| `/resume`          | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`)                    |
+| Command            | Behavior                                                                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `/help`            | List commands                                                                                              |
+| `/status`          | Health / busy / paused / signing / last-run ages / daily Canix x402 + ZS used+remaining                    |
+| `/history`         | Recent dated review summaries (7-day retention; no full payloads)                                          |
+| `/run`             | Force a treasury review (acks immediately; digest follows). HTTP/Docker: [Force a review](#force-a-review) |
+| `/accounting`      | Force an accounting snapshot (acks immediately; digest follows)                                            |
+| `/deposit <txid>`  | Record external funding from a pay/axfer transaction                                                       |
+| `/withdraw <txid>` | Record external withdrawal from a pay/axfer transaction                                                    |
+| `/unwind`          | Preview host close-all (positions + LST receipts); then `/unwind confirm`                                  |
+| `/unwind confirm`  | Execute pending unwind (multi-wave until flat or stuck)                                                    |
+| `/unwind cancel`   | Discard pending unwind preview                                                                             |
+| `/pause`           | Hold trading; reviews continue as plan-only                                                                |
+| `/resume`          | Clear the hold (signing still requires `ENABLE_TRANSACTION_SIGNING`)                                       |
 
 Pause is a durable runtime kill-switch (wallet-scoped JSON under
 `ACCOUNTING_DATA_DIR`). It does not change the env signing flag; `/resume`
@@ -598,8 +664,9 @@ upload `{prefix}/operator-preferences.md` instead — no volume required.
 before the first review (`zs-proxy fund` from any machine with the same
 mnemonic, or transfer USDC/ALGO to the address).
 
-On-demand review (no `MANUAL_TRIGGER_TOKEN`): stop the long-running container if
-needed, rebuild if the entrypoint changed, then:
+Force a review without Telegram: HTTP `POST /runs` on this long-lived container
+(needs `MANUAL_TRIGGER_TOKEN`), or a one-shot `once` container. Details, curl,
+auth failures, and log mixing: [Force a review](#force-a-review).
 
 ```bash
 # Safe connectivity smoke (LLM + one Canix research call; never signs)
@@ -612,7 +679,8 @@ npm run run-once-with-docker
 `smoke` starts zs-proxy, runs `dist/smoke-llm.js` (ZeroSignal +
 `canix_list_opportunities` only), prints JSON, and exits. `run-once-with-docker`
 builds the image and runs `once` (full review); with signing enabled it can move
-treasury assets.
+treasury assets. Container stdout mixes zs-proxy with Brownie;
+`docker/sanitize-zs-logs.mjs` filters proxy HTML dumps.
 
 For local non-Docker runs, install zs-proxy on the host instead — see
 [QUICKSTART.md](./QUICKSTART.md).
@@ -696,3 +764,19 @@ and `accounting-once` do not poll.
 - On boot, pending updates are drained so a redeploy does not replay stale
   `/run`s. If commands never arrive, confirm you are messaging the chat whose
   id is `TELEGRAM_CHAT_ID` (group ids are negative).
+
+### HTTP force-run 404 / 401 / 409
+
+`POST /runs` and `POST /accounting/run` need `MANUAL_TRIGGER_TOKEN` on the
+**long-lived** server. A Docker `once` container never listens, so curl to
+`:3000` will fail even if the token is set.
+
+- **404 `NOT_FOUND`:** token unset or empty — HTTP triggering is off (not a
+  missing route). Set a ≥16-character token and restart.
+- **401 `UNAUTHORIZED`:** header missing or not exactly
+  `Authorization: Bearer <token>`.
+- **409 `RUN_IN_PROGRESS`:** a review or accounting run is already holding the
+  in-process lock (cron, Telegram `/run`, or another HTTP POST). Wait and
+  retry; do not start a second `once` container against the same wallet.
+
+Full table and curl: [Force a review](#force-a-review).
