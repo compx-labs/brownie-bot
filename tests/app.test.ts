@@ -56,6 +56,7 @@ describe("backend routes", () => {
       },
     });
     expect(response.json()).not.toHaveProperty("deps");
+    expect(response.json()).not.toHaveProperty("wallet");
 
     const runs = await context.app.inject({
       method: "GET",

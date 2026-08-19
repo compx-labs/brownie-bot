@@ -174,7 +174,9 @@ see [Force a review](#force-a-review)),
 `CANIX402_MCP_URL`, `X402_ALGOD_URL`, `X402_INDEXER_URL`,
 `ACCOUNTING_CRON_SCHEDULE`, `ACCOUNTING_CRON_TIMEZONE` (`UTC`),
 `ACCOUNTING_DATA_DIR` (`data/accounting`), `FOLKS_ESCROW_DATA_DIR`
-(`data/folks-escrows`).
+(`data/folks-escrows`), `HEALTH_LOW_ALGO` (`1`; spendable ALGO floor for
+`?deps=1` / `/status`; `0` disables), `HEALTH_LOW_USDC` (`1`; USDC floor;
+`0` disables).
 
 **Inference / zs-proxy:** `OPENAI_BASE_URL` (host-local zs-proxy `/v1`),
 `OPEN_AI_API_KEY` (SDK placeholder; zs-proxy ignores it), `OPENAI_MODEL`
@@ -445,10 +447,13 @@ overall; only `public/pnl.json` is world-readable via object ACL.
   review/accounting age and status (from in-memory / hydrated state), plus
   UTC daily Canix x402 and zs-proxy used/remaining (`spend`). Does
   not contact deps by default. Append `?deps=1` to also probe zs-proxy
-  `/healthz`, Algod `/health`, and free `canix_health` (short timeouts; may
-  mark `status` as `degraded` with `warnings` when something is down or
-  stale). Always HTTP 200 while the process is up — check the `status`
-  field (`ok` | `degraded`).
+  `/healthz`, Algod `/health`, free `canix_health`, and a single Algod
+  account lookup for advisory trading-wallet ALGO/USDC floors
+  (`HEALTH_LOW_ALGO` / `HEALTH_LOW_USDC`; `0` disables a check). Low
+  balance marks `status` as `degraded` with `warnings` but does **not**
+  pause trading. Short timeouts; may also mark `degraded` when a dep is
+  down or last run is stale. Always HTTP 200 while the process is up —
+  check the `status` field (`ok` | `degraded`).
 - `GET /runs` — recent dated review summaries (id, timestamps, status,
   optional error; no snapshot/plan payload). Query `?limit=` (default 50,
   max 200). Retention is 7 days.
@@ -734,6 +739,21 @@ indexer for `/deposit` `/withdraw`). Public AlgoNode can rate-limit or stall.
 - Override `X402_ALGOD_URL` (and `X402_INDEXER_URL`) with a provider that
   allows your IP. Timeouts during a review fail that run; they do not crash
   the HTTP process.
+
+### Low wallet balance
+
+`GET /health?deps=1` and Telegram `/status` compare spendable ALGO
+(amount − min-balance) and USDC ASA `31566704` against
+`HEALTH_LOW_ALGO` / `HEALTH_LOW_USDC` (defaults `1` token unit; `0`
+disables a check). Warnings are advisory: trading is not paused.
+
+- `Low ALGO: … spendable (floor …)` — fund ALGO for fees, MBR, and
+  zs-proxy tickets.
+- `Low USDC: … (floor …)` or `USDC ASA 31566704 not opted in` — fund
+  USDC / opt in so Canix x402 and inference can pay.
+- `Wallet balance check failed: …` — Algod account lookup failed (HTML
+  502/504 is classified; no page dumps). Plain `GET /health` skips this
+  extra Algod call.
 
 ### Missing mnemonic
 

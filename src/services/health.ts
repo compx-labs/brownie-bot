@@ -1,10 +1,15 @@
 import type { AccountingRun, ReviewRun } from "../domain.js";
 import type { DailySpendReport } from "./daily-spend.js";
+import { formatBaseUnits, money } from "./money.js";
 import { sanitizeErrorMessage, sanitizeErrorText } from "../util/errors.js";
 
 const DEFAULT_STALE_REVIEW_HOURS = 36;
 const DEFAULT_STALE_ACCOUNTING_HOURS = 36;
 const DEFAULT_DEP_TIMEOUT_MS = 2_500;
+const ALGO_DECIMALS = 6;
+const USDC_DECIMALS = 6;
+/** Mainnet USDC ASA used for Canix x402 and zs-proxy spend. */
+export const HEALTH_USDC_ASSET_ID = 31_566_704;
 
 export type HealthStatus = "ok" | "degraded";
 
@@ -21,6 +26,29 @@ export interface HealthRunSummary {
   ageSeconds: number | null;
   failed: boolean;
   error?: string;
+}
+
+export interface HealthWalletFloors {
+  /** Token units (ALGO). `0` disables the ALGO floor. */
+  algo: number;
+  /** Token units (USDC). `0` disables the USDC floor. */
+  usdc: number;
+}
+
+export interface HealthWalletBalances {
+  ok: boolean;
+  latencyMs: number | null;
+  error?: string;
+  /** Spendable ALGO in token units (amount − min-balance). */
+  algoSpendable: string;
+  /** USDC holding in token units (`0` when not opted in). */
+  usdc: string;
+  usdcOptedIn: boolean;
+  usdcFrozen: boolean;
+  floors: {
+    algo: string;
+    usdc: string;
+  };
 }
 
 export interface HealthReport {
@@ -43,6 +71,8 @@ export interface HealthReport {
     algod: HealthDependencyCheck;
     canix: HealthDependencyCheck;
   };
+  /** Live Algod wallet balances vs floors (`?deps=1` / Telegram `/status`). */
+  wallet?: HealthWalletBalances;
   warnings: string[];
 }
 
@@ -57,6 +87,7 @@ export interface BuildHealthReportInput {
   latestAccounting?: AccountingRun;
   spend?: DailySpendReport;
   deps?: HealthReport["deps"];
+  wallet?: HealthWalletBalances;
   now?: Date;
   staleReviewHours?: number;
   staleAccountingHours?: number;
@@ -137,6 +168,13 @@ export function buildHealthReport(input: BuildHealthReportInput): HealthReport {
     }
   }
 
+  if (input.wallet) {
+    const algodDown = input.deps?.algod.ok === false;
+    warnings.push(
+      ...walletBalanceWarnings(input.wallet, { skipProbeFailure: algodDown }),
+    );
+  }
+
   const status: HealthStatus = warnings.length > 0 ? "degraded" : "ok";
 
   return {
@@ -154,8 +192,62 @@ export function buildHealthReport(input: BuildHealthReportInput): HealthReport {
     latestAccounting,
     ...(input.spend ? { spend: input.spend } : {}),
     ...(input.deps ? { deps: input.deps } : {}),
+    ...(input.wallet ? { wallet: input.wallet } : {}),
     warnings,
   };
+}
+
+/** True when at least one floor is enabled (skip the extra Algod account call otherwise). */
+export function shouldProbeWalletBalances(floors: HealthWalletFloors): boolean {
+  return floors.algo > 0 || floors.usdc > 0;
+}
+
+export function formatWalletFloor(value: number): string {
+  return money(value).toFixed();
+}
+
+/**
+ * Advisory low-balance messages. Does not pause trading.
+ * Probe failures are omitted when `skipProbeFailure` is set (Algod already flagged).
+ */
+export function walletBalanceWarnings(
+  wallet: HealthWalletBalances,
+  options?: { skipProbeFailure?: boolean },
+): string[] {
+  if (!wallet.ok) {
+    if (options?.skipProbeFailure) {
+      return [];
+    }
+    return [
+      wallet.error
+        ? `Wallet balance check failed: ${wallet.error}`
+        : "Wallet balance check failed",
+    ];
+  }
+
+  const warnings: string[] = [];
+  const algoFloor = money(wallet.floors.algo);
+  const usdcFloor = money(wallet.floors.usdc);
+
+  if (algoFloor.gt(0) && money(wallet.algoSpendable).lt(algoFloor)) {
+    warnings.push(
+      `Low ALGO: ${wallet.algoSpendable} spendable (floor ${wallet.floors.algo})`,
+    );
+  }
+
+  if (usdcFloor.gt(0)) {
+    if (!wallet.usdcOptedIn) {
+      warnings.push(
+        `USDC ASA ${HEALTH_USDC_ASSET_ID} not opted in (floor ${wallet.floors.usdc})`,
+      );
+    } else if (wallet.usdcFrozen) {
+      warnings.push("USDC is frozen (cannot spend)");
+    } else if (money(wallet.usdc).lt(usdcFloor)) {
+      warnings.push(`Low USDC: ${wallet.usdc} (floor ${wallet.floors.usdc})`);
+    }
+  }
+
+  return warnings;
 }
 
 export function zsProxyHealthzUrl(openaiBaseUrl: string): string {
@@ -181,6 +273,141 @@ export function algodHealthUrl(algodUrl: string): string {
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+export function algodAccountUrl(algodUrl: string, address: string): string {
+  const url = new URL(algodUrl);
+  const trimmedPath = url.pathname.replace(/\/+$/, "");
+  const encoded = encodeURIComponent(address);
+  url.pathname = `${trimmedPath}/v2/accounts/${encoded}`.replace(
+    /\/{2,}/g,
+    "/",
+  );
+  if (!url.pathname.startsWith("/")) {
+    url.pathname = `/${url.pathname}`;
+  }
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+export async function probeWalletBalances(
+  algodUrl: string,
+  address: string,
+  options: {
+    floors: HealthWalletFloors;
+    timeoutMs?: number;
+    fetchImpl?: typeof fetch;
+  },
+): Promise<HealthWalletBalances> {
+  const floors = {
+    algo: formatWalletFloor(options.floors.algo),
+    usdc: formatWalletFloor(options.floors.usdc),
+  };
+  const timeoutMs = options.timeoutMs ?? DEFAULT_DEP_TIMEOUT_MS;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(algodAccountUrl(algodUrl, address), {
+      method: "GET",
+      signal: controller.signal,
+    });
+    const latencyMs = Date.now() - started;
+    if (!response.ok) {
+      const body = await readBodyPreview(response);
+      return {
+        ok: false,
+        latencyMs,
+        error: sanitizeErrorText(
+          body ? `HTTP ${response.status} ${body}` : `HTTP ${response.status}`,
+          { maxLength: 160, status: response.status },
+        ),
+        algoSpendable: "0",
+        usdc: "0",
+        usdcOptedIn: false,
+        usdcFrozen: false,
+        floors,
+      };
+    }
+    const payload = (await response.json()) as AlgodAccountResponse;
+    return {
+      ok: true,
+      latencyMs,
+      ...parseAccountBalances(payload),
+      floors,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      latencyMs: Date.now() - started,
+      error: sanitizeErrorMessage(error, { maxLength: 160 }),
+      algoSpendable: "0",
+      usdc: "0",
+      usdcOptedIn: false,
+      usdcFrozen: false,
+      floors,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface AlgodAccountResponse {
+  amount?: number | string;
+  "min-balance"?: number | string;
+  assets?: Array<{
+    "asset-id"?: number | string;
+    amount?: number | string;
+    "is-frozen"?: boolean;
+  }>;
+}
+
+function parseAccountBalances(
+  payload: AlgodAccountResponse,
+): Pick<
+  HealthWalletBalances,
+  "algoSpendable" | "usdc" | "usdcOptedIn" | "usdcFrozen"
+> {
+  const amount = asBigInt(payload.amount);
+  const minimum = asBigInt(payload["min-balance"]);
+  const spendable = amount > minimum ? amount - minimum : 0n;
+  const holding = (payload.assets ?? []).find(
+    (asset) => asBigInt(asset["asset-id"]) === BigInt(HEALTH_USDC_ASSET_ID),
+  );
+  const usdcOptedIn = holding !== undefined;
+  const usdcFrozen = holding?.["is-frozen"] === true;
+  const usdcRaw =
+    holding !== undefined && !usdcFrozen ? asBigInt(holding.amount) : 0n;
+  return {
+    algoSpendable: formatBaseUnits(spendable.toString(), ALGO_DECIMALS),
+    usdc: formatBaseUnits(usdcRaw.toString(), USDC_DECIMALS),
+    usdcOptedIn,
+    usdcFrozen,
+  };
+}
+
+function asBigInt(value: unknown): bigint {
+  if (typeof value === "bigint") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return BigInt(Math.trunc(value));
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) {
+    return BigInt(value.trim());
+  }
+  return 0n;
+}
+
+async function readBodyPreview(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    return text.trim().slice(0, 400);
+  } catch {
+    return "";
+  }
 }
 
 export async function probeHttpDependency(

@@ -147,7 +147,8 @@ Notes:
 npm run dev
 # In another terminal:
 curl -s localhost:3000/health
-# Optional dependency probes (zs-proxy, Algod, free canix_health):
+# Optional dependency probes (zs-proxy, Algod, free canix_health,
+# plus advisory ALGO/USDC floors vs HEALTH_LOW_ALGO / HEALTH_LOW_USDC):
 curl -s 'localhost:3000/health?deps=1'
 ```
 

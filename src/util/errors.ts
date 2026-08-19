@@ -135,6 +135,13 @@ function resolveProvider(text: string, origin: string | null): string {
   if (/\bcanix\b|\bcanix402\b|PAYMENT_REQUIRED/i.test(text)) {
     return "Canix";
   }
+  if (
+    /\balgod\b/i.test(text) ||
+    /algonode\.cloud/i.test(text) ||
+    Boolean(origin?.includes("algonode"))
+  ) {
+    return "Algod";
+  }
   return "Upstream";
 }
 

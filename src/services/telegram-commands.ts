@@ -22,6 +22,7 @@ import {
   buildHealthReport,
   type BuildHealthReportInput,
   type HealthReport,
+  type HealthWalletBalances,
 } from "./health.js";
 import type { OperatorPauseStore } from "./operator-pause.js";
 import { RunCoordinatorBusyError } from "./run-coordinator.js";
@@ -125,6 +126,11 @@ export interface OperatorCommandDeps {
   reviewService: TreasuryReviewService;
   accountingService: AccountingService;
   getHealthInput: () => BuildHealthReportInput;
+  /**
+   * Cheap Algod account lookup for `/status` low-balance warnings.
+   * Omitted in tests that only cover in-memory health.
+   */
+  probeWalletBalances?: () => Promise<HealthWalletBalances | undefined>;
   pauseStore: OperatorPauseStore;
   /** Env signing flag; /resume reports whether trading is actually effective. */
   signingEnabled: boolean;
@@ -140,10 +146,13 @@ export function createOperatorCommandHandlers(
   return {
     help: () => Promise.resolve(HELP_TEXT),
     start: () => Promise.resolve(HELP_TEXT),
-    status: () =>
-      Promise.resolve(
-        formatStatusReply(buildHealthReport(deps.getHealthInput())),
-      ),
+    status: async () => {
+      const input = deps.getHealthInput();
+      if (deps.probeWalletBalances) {
+        input.wallet = await deps.probeWalletBalances();
+      }
+      return formatStatusReply(buildHealthReport(input));
+    },
     history: async () => {
       if (!deps.reviewStore || !deps.walletAddress) {
         return "Review history is not configured on this process.";
@@ -441,8 +450,18 @@ export function formatStatusReply(report: HealthReport): string {
   if (report.spend) {
     lines.push(...formatDailySpendLines(report.spend));
   }
+  if (report.wallet?.ok) {
+    const usdcLabel = report.wallet.usdcOptedIn
+      ? report.wallet.usdcFrozen
+        ? "USDC frozen"
+        : `${report.wallet.usdc} USDC`
+      : "USDC not opted in";
+    lines.push(
+      `Wallet: ${report.wallet.algoSpendable} ALGO spendable, ${usdcLabel}`,
+    );
+  }
   if (report.warnings.length > 0) {
-    lines.push(`Warnings: ${report.warnings.slice(0, 3).join("; ")}`);
+    lines.push(`Warnings: ${report.warnings.slice(0, 4).join("; ")}`);
   }
   return lines.join("\n");
 }
