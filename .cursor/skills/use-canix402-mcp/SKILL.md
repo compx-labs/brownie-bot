@@ -14,11 +14,93 @@ wallet session.
 1. **x402 payment signature** pays for the API response. Pass its base64
    envelope back to the same MCP tool as `paymentSignature`.
 2. **Execution signature** authorizes transactions returned by
-   `canix_get_execution_quote`. Sign and submit those transactions only after
-   receiving and reviewing the paid response.
+   `canix_get_execution_quote` or `canix_compose_enter`. Sign and submit those
+   transactions only after receiving and reviewing the paid response.
 
-Paying for a quote does not execute the quote. Canix neither signs nor submits
-the returned execution group.
+Paying for a quote or compose does not execute it. Canix neither signs nor
+submits the returned execution groups.
+
+## Brownie planner vs Canix plans SKU
+
+Brownie keeps its LLM `portfolio_plan` + host `PortfolioPolicy`. Do **not** call
+`canix_get_plan` from the agent loop. For a single-asset swap-then-enter after
+policy approval, the **host** calls `canix_compose_enter` (~0.10 USDC) so opt-in
+→ Haystack swap → enter can finish in one review before the ~30s quote expires.
+Two-sided LP and Folks/Pact escrow setup stay on dependency waves /
+`canix_get_execution_quote`.
+
+## Host compose loop (`canix_compose_enter`)
+
+1. Eligible when a foundation `swap` feeds a dependent `open`/`increase` with a
+   unique `requiredAssetIds` length of 1, and the opportunity is not Folks
+   sequential escrow / Pact `deployEscrow`.
+2. Gate Haystack price impact with `canix_get_quote` first (preferred-hold
+   exemptions still apply).
+3. Call `canix_compose_enter` with
+   `{ address, opportunityId, fromAssetId, amount, slippage? }` (paid ~0.10 USDC).
+4. Require `meta.executionSubmitted === false` and `meta.groupsMerged === false`.
+5. Review `steps[]` warnings. Fail closed on `compileStatus: "blocked"`.
+6. If an opt-in step is compiled: submit that group, then **re-compose** (opt-in
+   confirmation ages the swap quote).
+7. Submit swap then enter groups in `order`. Never merge groups. Sign only
+   `signer: "user"` legs; preserve `logicsig` / `haystack` `signedTransaction`.
+8. Deferred setup/enter → fall back to sequential `canix_get_execution_quote`
+   (do not route Folks through compose in v1).
+
+## Signing an execution quote
+
+For `canix_get_execution_quote`:
+
+1. Prefer enter shapes from the opportunity's `executionShapes` (and exit/manage
+   keys from positions). Use `canix_list_execution_shapes` only as a catalog
+   cross-check—do not invent keys. Read construction caveats from
+   `meta.caveatsDocsPath` / protocol caveats docs when present.
+2. Pass `{ quotes: [{ shapeKey, input }, ...] }` (min 1). Multi-step opens
+   (e.g. Folks setup then deposit) should appear as separate items in
+   `executionShapes` order. Response `data` is an `ExecutableQuote[]` in the
+   same order; groups are never merged. Price is flat ~0.10 USDC per request.
+3. Complete the x402 payment workflow above.
+4. Require `meta.executionSubmitted === false`.
+5. For each quote in `data`, before signing, review:
+   - `expiresAt` has not passed
+   - every warning in `warnings`
+   - every sender, receiver, amount, asset ID, app ID, fee, and group member in
+     `transactions`
+   - the group still matches the user's stated intent and spending limits
+6. When `groupTransactions` / `userSignIndexes` are present,
+   `encodedTransactions` contains **only** user legs — assemble the full algod
+   group from `groupTransactions` in index order. Sign only `signer: "user"`;
+   preserve `signedTransaction` on `logicsig` / `haystack` / pre-signed
+   `protocol` members. Do not sign `protocol` or `logicsig` with a mnemonic.
+7. Preserve order and group IDs. Do not rebuild, regroup, or modify quoted
+   transactions after validation. Submit each group atomically before expiry,
+   then proceed to the next quote in `data`.
+8. If `metadata.submitMode === "tinyman-analytics-claim"`: sign user legs, then
+   `POST` to `metadata.claimUrl` with
+   `{ signed_transactions: [userSignedB64], transactions: metadata.unsignedProtocolTransactions }`.
+   Do not send an incomplete group to algod.
+9. On failure, expect `error.details.quoteIndex` and `error.details.shapeKey`.
+
+Example for a single user signer over one quote (no provider cosign):
+
+```typescript
+for (const quote of response.data) {
+  const signed = quote.encodedTransactions.map((encoded: string) => {
+    const txn = algosdk.decodeUnsignedTransaction(
+      Buffer.from(encoded, "base64"),
+    );
+    if (txn.sender.toString() !== account.addr.toString()) {
+      throw new Error(`Unexpected signer ${txn.sender.toString()}`);
+    }
+    return algosdk.signTransaction(txn, account.sk).blob;
+  });
+  await algod.sendRawTransaction(signed).do();
+}
+```
+
+Some shapes require multiple signers. Resolve keys by decoded transaction
+sender; never sign every group member blindly with one key. Follow the
+shape-specific documentation and treat any returned private key as sensitive.
 
 ## Paid MCP workflow
 
@@ -121,53 +203,6 @@ Wrap either variant in this JSON shape, then base64-encode the UTF-8 JSON:
 
 Preserve the complete live `paymentRequired` and selected accept object. Do not
 invent, omit, or rewrite facilitator fields.
-
-## Signing an execution quote
-
-For `canix_get_execution_quote`:
-
-1. Prefer enter shapes from the opportunity's `executionShapes` (and exit/manage
-   keys from positions). Use `canix_list_execution_shapes` only as a catalog
-   cross-check—do not invent keys.
-2. Pass `{ quotes: [{ shapeKey, input }, ...] }` (min 1). Multi-step opens
-   (e.g. Folks setup then deposit) should appear as separate items in
-   `executionShapes` order. Response `data` is an `ExecutableQuote[]` in the
-   same order; groups are never merged. Price is flat ~0.10 USDC per request.
-3. Complete the x402 payment workflow above.
-4. Require `meta.executionSubmitted === false`.
-5. For each quote in `data`, before signing, review:
-   - `expiresAt` has not passed
-   - every warning in `warnings`
-   - every sender, receiver, amount, asset ID, app ID, fee, and group member in
-     `transactions`
-   - the group still matches the user's stated intent and spending limits
-6. Decode each item in `encodedTransactions` as an unsigned Algorand
-   transaction and sign it with the key for that transaction's sender.
-7. Preserve order and group IDs. Do not rebuild, regroup, or modify quoted
-   transactions after validation. Submit each group atomically before expiry,
-   then proceed to the next quote in `data`.
-8. On failure, expect `error.details.quoteIndex` and `error.details.shapeKey`.
-
-Example for a single user signer over one quote:
-
-```typescript
-for (const quote of response.data) {
-  const signed = quote.encodedTransactions.map((encoded: string) => {
-    const txn = algosdk.decodeUnsignedTransaction(
-      Buffer.from(encoded, "base64"),
-    );
-    if (txn.sender.toString() !== account.addr.toString()) {
-      throw new Error(`Unexpected signer ${txn.sender.toString()}`);
-    }
-    return algosdk.signTransaction(txn, account.sk).blob;
-  });
-  await algod.sendRawTransaction(signed).do();
-}
-```
-
-Some shapes require multiple signers. Resolve keys by decoded transaction
-sender; never sign every group member blindly with one key. Follow the
-shape-specific documentation and treat any returned private key as sensitive.
 
 ## Secret and spend guardrails
 

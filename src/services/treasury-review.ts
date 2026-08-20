@@ -11,6 +11,7 @@ import type {
   ReviewRun,
   WalletClaimable,
 } from "../domain.js";
+import { findComposePairs } from "../integrations/algorand/execution.js";
 import type { ReviewRunStore } from "../integrations/storage/review-run-store.js";
 import { sanitizeErrorMessage } from "../util/errors.js";
 import { actionHasDeskClaimQuote } from "./claim-desk.js";
@@ -50,6 +51,19 @@ export interface ActionExecutor {
     context?: { opportunities?: Opportunity[]; claimable?: WalletClaimable },
   ): Promise<{
     outcomes: ExecutionOutcome[];
+    payments: PaymentReceipt[];
+  }>;
+  /**
+   * Protocol 1.4.0: collapse foundation swap + dependent open/increase into
+   * one `canix_compose_enter` flow (same review).
+   */
+  executeComposeEnter?(
+    enterAction: PortfolioAction,
+    swapAction: PortfolioAction,
+    opportunities: Opportunity[],
+  ): Promise<{
+    outcome: ExecutionOutcome;
+    swapOutcome: ExecutionOutcome;
     payments: PaymentReceipt[];
   }>;
 }
@@ -197,6 +211,35 @@ export class TreasuryReviewService {
             }
             agentResult.payments.push(...batch.payments);
           }
+
+          // Protocol 1.4.0: collapse eligible swap → enter into one compose call
+          // so the enter is not deferred to the next review.
+          const composeConsumed = new Set<string>();
+          if (this.executor.executeComposeEnter) {
+            const pairs = findComposePairs(
+              ordered,
+              agentResult.opportunities,
+            );
+            for (const pair of pairs) {
+              if (
+                composeConsumed.has(pair.swap.id) ||
+                composeConsumed.has(pair.enter.id)
+              ) {
+                continue;
+              }
+              const composed = await this.executor.executeComposeEnter(
+                pair.enter,
+                pair.swap,
+                agentResult.opportunities,
+              );
+              batchedOutcomes.set(pair.swap.id, composed.swapOutcome);
+              batchedOutcomes.set(pair.enter.id, composed.outcome);
+              composeConsumed.add(pair.swap.id);
+              composeConsumed.add(pair.enter.id);
+              agentResult.payments.push(...composed.payments);
+            }
+          }
+
           for (const action of ordered) {
             if (action.type === "hold") {
               executions.push({ actionId: action.id, status: "skipped" });

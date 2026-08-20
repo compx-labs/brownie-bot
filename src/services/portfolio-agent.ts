@@ -62,6 +62,7 @@ export const MAX_OPPORTUNITY_TOOL_LIMIT = 10;
 /** Host-only after policy approval. Never expose to the planning agent. */
 const FINAL_EXECUTION_TOOLS = new Set([
   "canix_get_execution_quote",
+  "canix_compose_enter",
   "canix_optin",
   "canix_swap",
 ]);
@@ -764,7 +765,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
             output: JSON.stringify({
               error: "EXECUTION_HOST_ONLY",
               message:
-                "Final execution tools run only after the plan is approved. Use research and canix_get_quote for planning; do not call canix_get_execution_quote, canix_optin, or canix_swap.",
+                "Final execution tools run only after the plan is approved. Use research and canix_get_quote for planning; do not call canix_get_execution_quote, canix_compose_enter, canix_optin, or canix_swap.",
             }),
           });
           continue;
@@ -1506,6 +1507,12 @@ function assertRequiredCapabilities(
     ...(signingEnabled
       ? {
           canix_get_execution_quote: ["quotes"],
+          canix_compose_enter: [
+            "address",
+            "opportunityId",
+            "fromAssetId",
+            "amount",
+          ],
           canix_optin: ["address", "quote"],
           canix_swap: ["address", "quote", "slippage"],
         }

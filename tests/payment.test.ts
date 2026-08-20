@@ -99,6 +99,28 @@ describe("AlgorandPaymentBuilder guardrails", () => {
     expect(built.receipt.resourcePath).toBe("/positions/claimable");
   });
 
+  it("accepts protocol 1.4.0 compose and plans ceilings", async () => {
+    const payments = builder({
+      getSuggestedParams: () => Promise.resolve(fixedSuggestedParams),
+    });
+    const compose = await payments.build(
+      paymentRequest("100000", "/execution/compose"),
+    );
+    expect(compose.receipt.resourcePath).toBe("/execution/compose");
+    expect(compose.receipt.amountBaseUnits).toBe("100000");
+
+    const plans = await payments.build(paymentRequest("250000", "/plans"));
+    expect(plans.receipt.resourcePath).toBe("/plans");
+    expect(plans.receipt.amountBaseUnits).toBe("250000");
+
+    await expect(
+      payments.build(paymentRequest("100001", "/execution/compose")),
+    ).rejects.toThrow(/execution\/compose endpoint ceiling/);
+    await expect(
+      payments.build(paymentRequest("250001", "/plans")),
+    ).rejects.toThrow(/plans endpoint ceiling/);
+  });
+
   it("builds unique payment notes for the same resource and amount", () => {
     const left = new TextDecoder().decode(
       encodePaymentNote("/protocols/tinyman/opportunities", "nonce-a"),

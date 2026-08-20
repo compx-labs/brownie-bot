@@ -103,7 +103,12 @@ malformed actions still fail closed. Opportunities include enter
 `compatibleExitShapeKeys` / `compatibleManageShapeKeys`. The host validates plan
 shape keys against those catalogs and, when signing, calls
 `canix_get_execution_quote` with a `quotes` array (flat ~0.10 USDC per request),
-then signs each returned group in order.
+then signs each returned group in order. When a plan pairs a foundation swap with
+a single-asset enter, the host may instead call `canix_compose_enter` (~0.10 USDC)
+so opt-in → swap → enter complete in one review before the Haystack ~30s quote
+expires. Groups are never merged; sign only `user` legs and preserve
+`logicsig`/`haystack` pre-signed members. Brownie keeps its own LLM
+`portfolio_plan` planner and does **not** call `canix_get_plan`.
 
 To enable execution, first confirm `BOT_WALLET` is the account derived from
 `WALLET_MNEMONIC`, review the policy variables in `.env.example`, complete
@@ -134,7 +139,8 @@ Mainnet, USDC ASA `31566704`, the Canix402 API origin, and endpoint payment
 ceilings are code-level invariants rather than environment configuration.
 Current ceilings are 5,000 base units for positions, claimable, and swap transaction
 generation, 10,000 for general/search/protocol opportunities, 50,000 for
-personalized opportunities, and 100,000 for execution quotes. A separate daily
+personalized opportunities, and 100,000 for execution quotes and compose enter.
+`/plans` is capped at 250,000 but unused by the bot. A separate daily
 x402 cap applies (default `MAX_DAILY_X402_BASE_UNITS`, 5 USDC). The bot validates
 every live requirement against these limits before signing. Facilitator
 fee-payer groups are supported.
@@ -622,6 +628,9 @@ production uses**: agent-minimal plan actions (shape key + spends/amount only)
 `AlgorandExecutionService` (quotes + local sign + submit). A green suite
 means those pinned venues work when the live agent emits the same minimal
 fields (shape key, amounts, position id)—not a parallel verify-only builder.
+Same-review **compose** (`canix_compose_enter` for swap→single-asset enter) is
+exercised in unit tests (`treasury-review` / execution helpers); protocol-verify
+cases that already hold the enter asset still use `canix_get_execution_quote`.
 
 ```bash
 RUN_PROTOCOL_VERIFY=true npm run test:protocol-verify

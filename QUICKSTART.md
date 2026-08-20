@@ -287,6 +287,8 @@ headers are skipped.
 | Personalized opportunities        |               50,000 |           0.05 | Every review (usually)                    |
 | Swap transactions                 |                5,000 |          0.005 | **Signing only**                          |
 | Execution quotes                  |              100,000 |           0.10 | **Signing only** (flat per quote request) |
+| Compose enter (`canix_compose_enter`) |          100,000 |           0.10 | **Signing only** (swap-aware single-asset enter) |
+| Plans (`/plans`, unused by bot)   |              250,000 |           0.25 | Ceiling only — brownie does not call this |
 
 Free (no x402 payment path): `canix_health`, `canix_get_token_prices` (used by
 accounting).

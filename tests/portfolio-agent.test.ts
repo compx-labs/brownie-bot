@@ -41,6 +41,7 @@ const requiredTools = [
   "canix_get_protocol_opportunities",
   "canix_list_execution_shapes",
   "canix_get_execution_quote",
+  "canix_compose_enter",
   "canix_get_quote",
   "canix_optin",
   "canix_swap",
@@ -70,6 +71,12 @@ function toolSchema(name: string) {
           },
         },
       },
+    },
+    canix_compose_enter: {
+      address: {},
+      opportunityId: {},
+      fromAssetId: {},
+      amount: {},
     },
     canix_get_quote: {
       address: {},
@@ -212,6 +219,7 @@ describe("OpenAiPortfolioAgent", () => {
       create.mock.calls[0]?.[0] as { tools: Array<{ name: string }> }
     ).tools.map((tool) => tool.name);
     expect(toolNames).not.toContain("canix_get_execution_quote");
+    expect(toolNames).not.toContain("canix_compose_enter");
     expect(toolNames).not.toContain("canix_optin");
     expect(toolNames).not.toContain("canix_swap");
     expect(toolNames).not.toContain("canix_get_openapi");
@@ -458,6 +466,7 @@ describe("OpenAiPortfolioAgent", () => {
       create.mock.calls[0]?.[0] as { tools: Array<{ name: string }> }
     ).tools.map((tool) => tool.name);
     expect(toolNames).not.toContain("canix_get_execution_quote");
+    expect(toolNames).not.toContain("canix_compose_enter");
     expect(toolNames).not.toContain("canix_optin");
     expect(toolNames).not.toContain("canix_swap");
 

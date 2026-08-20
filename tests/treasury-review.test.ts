@@ -14,7 +14,7 @@ import {
 } from "../src/services/treasury-review.js";
 import type { RunNotifier } from "../src/services/telegram.js";
 import type { PortfolioAction } from "../src/domain.js";
-import { opportunity, portfolioPlan, portfolioSnapshot } from "./fixtures.js";
+import { opportunity, portfolioPlan, portfolioSnapshot, enterShape } from "./fixtures.js";
 
 function dependencies(agent: PortfolioAgent) {
   const validate = vi.fn().mockReturnValue({
@@ -551,6 +551,114 @@ describe("TreasuryReviewService", () => {
       expect.objectContaining({ id: "reduce-1" }),
       expect.anything(),
     );
+  });
+
+  it("collapses eligible swap→enter via compose in the same review", async () => {
+    const swap = {
+      id: "swap-1",
+      type: "swap" as const,
+      protocol: null,
+      opportunityId: null,
+      positionId: null,
+      amountRaw: "1000000",
+      fromAssetId: 31_566_704,
+      toAssetId: 0,
+      targetWeightPct: null,
+      executionShapeKey: null,
+      executionInput: null,
+      authorizedSpends: [{ assetId: 31_566_704, amountRaw: "1000000" }],
+      rationale: "USDC to ALGO.",
+      dependencies: [],
+    };
+    const open = {
+      id: "open-1",
+      type: "open" as const,
+      protocol: "reti",
+      opportunityId: "reti:1",
+      positionId: null,
+      amountRaw: "990000",
+      fromAssetId: 0,
+      toAssetId: null,
+      targetWeightPct: 10,
+      executionShapeKey: "mainnet:reti:v1:stake:algo",
+      executionInput: { amount: "990000" },
+      authorizedSpends: [{ assetId: 0, amountRaw: "990000" }],
+      rationale: "Stake ALGO.",
+      dependencies: ["swap-1"],
+    };
+    const reti = opportunity({
+      protocol: "reti",
+      opportunityId: "reti:1",
+      assetPair: "ALGO",
+      assetIds: [0],
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:reti:v1:stake:algo",
+          protocol: "reti",
+          action: "stake",
+          variant: "algo",
+          requiredAssetIds: [0],
+          requiredInputs: ["amount"],
+        }),
+      ],
+    });
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot(),
+        plan: portfolioPlan({
+          actions: [swap, open],
+          projectedNetBenefitUsd: 5,
+        }),
+        opportunities: [reti],
+        payments: [],
+        toolCalls: [],
+      }),
+    };
+    const executeAction = vi.fn();
+    const executeComposeEnter = vi.fn().mockResolvedValue({
+      outcome: {
+        actionId: "open-1",
+        status: "confirmed",
+        toolName: "canix_compose_enter",
+        transactionId: "TX-ENTER",
+      },
+      swapOutcome: {
+        actionId: "swap-1",
+        status: "confirmed",
+        toolName: "canix_compose_enter",
+        transactionId: "TX-ENTER",
+      },
+      payments: [],
+    });
+    const deps = dependencies(agent);
+    const instance = new TreasuryReviewService(
+      deps.agent,
+      deps.policy,
+      { executeAction, executeComposeEnter },
+      deps.notifier,
+      {},
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      true,
+    );
+
+    const result = await instance.run();
+    expect(result.status).toBe("confirmed");
+    expect(result.executions).toEqual([
+      {
+        actionId: "swap-1",
+        status: "confirmed",
+        toolName: "canix_compose_enter",
+        transactionId: "TX-ENTER",
+      },
+      {
+        actionId: "open-1",
+        status: "confirmed",
+        toolName: "canix_compose_enter",
+        transactionId: "TX-ENTER",
+      },
+    ]);
+    expect(executeComposeEnter).toHaveBeenCalledOnce();
+    expect(executeAction).not.toHaveBeenCalled();
   });
 
   it("still executes independent no-dependency actions together", async () => {

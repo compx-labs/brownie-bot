@@ -32,6 +32,7 @@ liveIt(
         "canix_get_personalized_opportunities",
         "canix_list_execution_shapes",
         "canix_get_execution_quote",
+        "canix_compose_enter",
         "canix_get_quote",
         "canix_optin",
         "canix_swap",

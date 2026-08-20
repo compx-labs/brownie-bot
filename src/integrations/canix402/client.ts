@@ -105,6 +105,7 @@ const TOOL_RESOURCE_PATHS: Record<string, string> = {
   canix_get_positions: "/positions",
   canix_list_claimable: "/positions/claimable",
   canix_get_execution_quote: "/execution/quotes",
+  canix_compose_enter: "/execution/compose",
   canix_swap: "/swaps/transactions",
 };
 
@@ -688,6 +689,7 @@ function injectManagedWallet(
     "canix_get_quote",
     "canix_optin",
     "canix_swap",
+    "canix_compose_enter",
   ]);
   if (addressTools.has(toolName)) {
     args.address = walletAddress;

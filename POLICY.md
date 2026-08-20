@@ -18,7 +18,7 @@ Agent plan JSON
 
 If schema parse fails, status is `reported` and **policy never runs** (`Policy n/a`). That is not a policy block.
 
-When signing is enabled, the host executes only **no-dependency** actions in the approved plan. Actions that depend on earlier plan steps are marked `skipped` with `Deferred to next review (depends on earlier plan steps)`. The next review sees a fresh snapshot and a richer `priorReview` continuity brief (plan summary, policy outcome, deferred/failed actions — not only execution status rows) and can replan sizes against live balances. Dry-run still validates the full plan without deferred skips.
+When signing is enabled, the host executes only **no-dependency** actions in the approved plan. Actions that depend on earlier plan steps are marked `skipped` with `Deferred to next review (depends on earlier plan steps)`. **Exception (protocol 1.4.0):** a foundation `swap` paired with a dependent single-asset `open`/`increase` may collapse into one `canix_compose_enter` call so opt-in → Haystack swap → enter run in the **same** review (Haystack quotes expire in ~30s). Two-sided LP and Folks/Pact escrow setup still use the deferred wave. The next review sees a fresh snapshot and a richer `priorReview` continuity brief (plan summary, policy outcome, deferred/failed actions — not only execution status rows) and can replan sizes against live balances. Dry-run still validates the full plan without deferred skips.
 
 ## Approval model
 
