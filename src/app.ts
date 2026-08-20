@@ -66,7 +66,10 @@ import {
   buildHealthReport,
   probeCanixDependency,
   probeHttpDependency,
+  probeWalletBalances,
+  shouldProbeWalletBalances,
   zsProxyHealthzUrl,
+  type HealthWalletBalances,
 } from "./services/health.js";
 import {
   DeterministicUnwindService,
@@ -319,13 +322,16 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     const includeDeps = query.deps === "1" || query.deps === "true";
     const storage = isSpacesConfigured(config) ? "spaces" : "local";
     let deps: ReturnType<typeof buildHealthReport>["deps"];
+    let wallet: HealthWalletBalances | undefined;
     if (includeDeps) {
-      const [zsProxy, algod, canixCheck] = await Promise.all([
+      const [zsProxy, algod, canixCheck, walletCheck] = await Promise.all([
         probeHttpDependency(zsProxyHealthzUrl(config.OPENAI_BASE_URL)),
         probeHttpDependency(algodHealthUrl(config.X402_ALGOD_URL)),
         probeCanixDependency(() => canix.health()),
+        probeConfiguredWalletBalances(config),
       ]);
       deps = { zsProxy, algod, canix: canixCheck };
+      wallet = walletCheck;
     }
 
     return buildHealthReport({
@@ -339,6 +345,7 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
       latestAccounting: accountingState.latest,
       spend: dailySpendStore.getReport(),
       deps,
+      wallet,
     });
   });
 
@@ -527,6 +534,7 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
         latestAccounting: accountingState.latest,
         spend: dailySpendStore.getReport(),
       }),
+      probeWalletBalances: () => probeConfiguredWalletBalances(config),
     });
     telegramCommandLoop = new TelegramCommandLoop({
       client: new TelegramBotClient(telegram.botToken),
@@ -551,4 +559,26 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
     coordinator,
     telegramCommandLoop,
   };
+}
+
+function walletBalanceFloors(config: AppConfig): {
+  algo: number;
+  usdc: number;
+} {
+  return {
+    algo: config.HEALTH_LOW_ALGO,
+    usdc: config.HEALTH_LOW_USDC,
+  };
+}
+
+function probeConfiguredWalletBalances(
+  config: AppConfig,
+): Promise<HealthWalletBalances | undefined> {
+  const floors = walletBalanceFloors(config);
+  if (!shouldProbeWalletBalances(floors)) {
+    return Promise.resolve(undefined);
+  }
+  return probeWalletBalances(config.X402_ALGOD_URL, config.BOT_WALLET, {
+    floors,
+  });
 }

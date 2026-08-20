@@ -123,16 +123,20 @@ describe("loadConfig", () => {
     expect(config.ACCOUNTING_DATA_DIR).toBe("data/accounting");
     expect(config.MAX_DAILY_X402_BASE_UNITS).toBe(5_000_000);
     expect(config.MAX_DAILY_ZS_USDC).toBe(5);
+    expect(config.HEALTH_LOW_ALGO).toBe(1);
+    expect(config.HEALTH_LOW_USDC).toBe(1);
     expect(config.TELEGRAM_BOT_TOKEN).toBeUndefined();
     expect(config.DO_SPACES_BUCKET).toBeUndefined();
   });
 
-  it("accepts MAX_DAILY_ZS_USDC=0 for uncapped display", () => {
+  it("accepts HEALTH_LOW_ALGO=0 and HEALTH_LOW_USDC=0 to disable floors", () => {
     const config = loadConfig({
       ...requiredEnvironment,
-      MAX_DAILY_ZS_USDC: "0",
+      HEALTH_LOW_ALGO: "0",
+      HEALTH_LOW_USDC: "0",
     });
-    expect(config.MAX_DAILY_ZS_USDC).toBe(0);
+    expect(config.HEALTH_LOW_ALGO).toBe(0);
+    expect(config.HEALTH_LOW_USDC).toBe(0);
   });
 
   it("does not require an OpenAI API key when using zs-proxy defaults", () => {

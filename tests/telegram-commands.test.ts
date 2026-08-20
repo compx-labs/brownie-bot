@@ -173,6 +173,48 @@ describe("createOperatorCommandHandlers", () => {
     ).rejects.toThrow(/already in progress/i);
   });
 
+  it("includes cheap Algod wallet warnings on /status", async () => {
+    const probeWalletBalances = vi.fn().mockResolvedValue({
+      ok: true,
+      latencyMs: 12,
+      algoSpendable: "0.2",
+      usdc: "0.4",
+      usdcOptedIn: true,
+      usdcFrozen: false,
+      floors: { algo: "1", usdc: "1" },
+    });
+    const handlers = createOperatorCommandHandlers(
+      baseHandlerDeps({
+        getHealthInput: () => ({
+          signingEnabled: false,
+          paused: false,
+          telegramConfigured: true,
+          accountingStorage: "local",
+          folksEscrowStorage: "local",
+          busy: false,
+          latestReview: {
+            id: "review-1",
+            startedAt: "2026-07-24T10:00:00.000Z",
+            completedAt: "2026-07-24T10:00:01.000Z",
+            status: "no-op",
+            mode: "autonomous",
+            signingEnabled: false,
+            opportunities: [],
+          },
+        }),
+        probeWalletBalances,
+      }),
+    );
+
+    const status = await handlers.status!(
+      commandCtx({ command: { name: "status", args: "", raw: "/status" } }),
+    );
+    expect(probeWalletBalances).toHaveBeenCalledOnce();
+    expect(status).toContain("Wallet: 0.2 ALGO spendable, 0.4 USDC");
+    expect(status).toContain("Low ALGO: 0.2 spendable (floor 1)");
+    expect(status).toContain("Low USDC: 0.4 (floor 1)");
+  });
+
   it("lists recent review summaries on /history", async () => {
     const list = vi.fn().mockResolvedValue([
       {
@@ -739,6 +781,40 @@ describe("formatStatusReply", () => {
       "Canix x402 today (UTC): $0.12 used, $4.88 remaining",
     );
     expect(text).toContain("ZS today (UTC): $0.0042 used, $4.9958 remaining");
+  });
+
+  it("includes live wallet balances and low-balance warnings", () => {
+    const report: HealthReport = {
+      status: "degraded",
+      mode: "autonomous",
+      signingEnabled: false,
+      paused: false,
+      walletConfigured: true,
+      telegramConfigured: true,
+      accountingEnabled: true,
+      accountingStorage: "local",
+      folksEscrowStorage: "local",
+      busy: false,
+      latestReview: null,
+      latestAccounting: null,
+      warnings: [
+        "Low ALGO: 0.25 spendable (floor 1)",
+        "Low USDC: 0.1 (floor 1)",
+      ],
+      wallet: {
+        ok: true,
+        latencyMs: 22,
+        algoSpendable: "0.25",
+        usdc: "0.1",
+        usdcOptedIn: true,
+        usdcFrozen: false,
+        floors: { algo: "1", usdc: "1" },
+      },
+    };
+    const text = formatStatusReply(report);
+    expect(text).toContain("Wallet: 0.25 ALGO spendable, 0.1 USDC");
+    expect(text).toContain("Low ALGO: 0.25 spendable (floor 1)");
+    expect(text).toContain("Low USDC: 0.1 (floor 1)");
   });
 });
 

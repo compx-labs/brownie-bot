@@ -140,6 +140,16 @@ const optionalEnvSchema = z.object({
    * `0` = show "uncapped". The bot does not enforce this cap.
    */
   MAX_DAILY_ZS_USDC: z.coerce.number().nonnegative().default(5),
+  /**
+   * Advisory `/health?deps=1` (and Telegram `/status`) spendable ALGO floor
+   * in token units. `0` disables the ALGO check. Does not pause trading.
+   */
+  HEALTH_LOW_ALGO: z.coerce.number().nonnegative().default(1),
+  /**
+   * Advisory `/health?deps=1` (and Telegram `/status`) USDC floor in token
+   * units (ASA `31566704`). `0` disables the USDC check. Does not pause trading.
+   */
+  HEALTH_LOW_USDC: z.coerce.number().nonnegative().default(1),
   MIN_PROJECTED_NET_IMPROVEMENT_USD: z.coerce.number().nonnegative().default(1),
   /**
    * Soft operator steer: comma-separated `assetId:targetPortfolioPct` pairs.

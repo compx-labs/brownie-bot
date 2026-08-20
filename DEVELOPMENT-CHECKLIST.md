@@ -20,11 +20,12 @@ Keep this file updated when priorities change so work does not get lost across c
 - [x] **Spend visibility** — daily/remaining Canix x402 + zs-proxy caps on `/status` and `/health` (UTC day; persisted under `ACCOUNTING_DATA_DIR`)
 - [x] **Config empathy** — required vs optional env split, friendlier Zod errors, ops troubleshooting section in docs
 - [x] **Dated review history** — `wallets/<addr>/reviews/<yyyy>/<mm>/<dd>/<runId>.json` plus `latest.json`; 7-day rotate; `GET /runs` and Telegram `/history` summaries
+- [x] **HTTP/Docker force-run docs** — `MANUAL_TRIGGER_TOKEN` (`POST /runs`, Bearer, 404/401/409) and Docker `once` vs long-lived server (stdout mix + `sanitize-zs-logs.mjs`); Telegram `/run` remains the chat-side path
+- [x] **Health low-balance warnings** — `GET /health?deps=1` (and Telegram `/status`) advisory ALGO/USDC floors via `HEALTH_LOW_ALGO` / `HEALTH_LOW_USDC`; does not pause trading
 
 ## Next (recommended order)
 
-1. [ ] **Health low-balance warnings** — optional follow-up when wallet ALGO/USDC checks are cheap enough to add to `?deps=1`.
-2. [ ] **HTTP/Docker force-run docs** — optional follow-up for `MANUAL_TRIGGER_TOKEN` and Docker `once` (Telegram `/run` already covers chat-side force-run).
+Remaining work is in the parking lot (human approval, dashboard, multi-replica lock).
 
 ## Parking lot
 

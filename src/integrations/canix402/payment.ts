@@ -51,6 +51,13 @@ const ENDPOINT_CEILINGS = new Map([
   ["/positions", 5_000n],
   ["/positions/claimable", 5_000n],
   ["/execution/quotes", 100_000n],
+  /** Protocol 1.4.0 swap-aware compose (live 0.10 USDC). */
+  ["/execution/compose", 100_000n],
+  /**
+   * Plans SKU ceiling only — brownie does not call /plans, but a stray paid
+   * tool must not overpay (live 0.25 USDC).
+   */
+  ["/plans", 250_000n],
   ["/swaps/transactions", 5_000n],
 ]);
 

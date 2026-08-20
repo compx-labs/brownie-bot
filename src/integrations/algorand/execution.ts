@@ -32,12 +32,28 @@ import {
 
 export { FOLKS_GENERAL_LOAN_APP_ID } from "./folks-execution.js";
 
+const groupTransactionSignerSchema = z.enum([
+  "user",
+  "haystack",
+  "logicsig",
+  "protocol",
+]);
+
+const groupTransactionSchema = z.object({
+  index: z.number().int().nonnegative(),
+  signer: groupTransactionSignerSchema,
+  encodedTransaction: z.string().min(1),
+  signedTransaction: z.string().min(1).optional(),
+});
+
 const executableQuoteSchema = z.object({
   shapeKey: z.string(),
   expiresAt: z.iso.datetime(),
   encodedTransactions: z.array(z.string().min(1)).min(1),
   warnings: z.array(z.string()).default([]),
   transactions: z.array(z.unknown()).default([]),
+  groupTransactions: z.array(groupTransactionSchema).min(1).optional(),
+  userSignIndexes: z.array(z.number().int().nonnegative()).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -76,7 +92,8 @@ const walletlessTransactionSchema = z.object({
   index: z.number().int().nonnegative(),
   encodedTransaction: z.string().min(1),
   signedTransaction: z.string().min(1).optional(),
-  signer: z.enum(["user", "haystack"]),
+  /** Standalone swaps use "haystack"; compose maps that to "logicsig". */
+  signer: z.enum(["user", "haystack", "logicsig"]),
 });
 
 const walletlessGroupSchema = z.object({
@@ -104,6 +121,51 @@ const optInGroupSchema = z.object({
   }),
   meta: z.object({ executionSubmitted: z.literal(false) }),
 });
+
+const composeStepSchema = z.object({
+  kind: z.enum(["eligibility", "opt-in", "swap", "setup", "enter"]),
+  order: z.number().int().nonnegative(),
+  compileStatus: z.enum(["compiled", "deferred", "blocked", "hint"]),
+  shapeKey: z.string().min(1).optional(),
+  prerequisiteShapeKeys: z.array(z.string().min(1)).optional(),
+  quoteRequest: z
+    .object({
+      shapeKey: z.string().min(1),
+      input: z.record(z.string(), z.unknown()),
+    })
+    .optional(),
+  quote: executableQuoteSchema.optional(),
+  warnings: z.array(z.string()).default([]),
+});
+
+const composeResponseSchema = z.object({
+  data: z.object({
+    opportunityId: z.string().min(1),
+    fromAssetId: z.number().int().nonnegative(),
+    toAssetId: z.number().int().nonnegative(),
+    inputAmount: z.string().regex(/^[0-9]+$/),
+    enterAmount: z.string().regex(/^[0-9]+$/),
+    slippage: z.number(),
+    steps: z.array(composeStepSchema).min(1),
+    quotes: z
+      .array(
+        z.object({
+          shapeKey: z.string().min(1),
+          input: z.record(z.string(), z.unknown()),
+        }),
+      )
+      .default([]),
+    expiresAt: z.iso.datetime(),
+    warnings: z.array(z.string()).default([]),
+  }),
+  meta: z.object({
+    executionSubmitted: z.literal(false),
+    groupsMerged: z.literal(false),
+  }),
+});
+
+export type ExecutableQuote = z.infer<typeof executableQuoteSchema>;
+export type ComposeResponse = z.infer<typeof composeResponseSchema>;
 
 export interface ExecutionPolicy {
   signingEnabled: boolean;
@@ -822,20 +884,14 @@ export class AlgorandExecutionService {
         extraSigners.set(escrowAddress, escrowSecretKey);
       }
 
-      const submit = await this.signAndSubmitEncoded(
-        `${action.id}:${classifyFolksShape(shape)}`,
-        await this.withLeadingAssetOptIns(quote.encodedTransactions, [
-          ...collectPotentialReceiveAssetIds(action, opportunity),
-          ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
-        ]),
+      lastOutcome = await this.submitQuotedTransactions(
+        action,
+        quote,
         extraSigners,
+        collectPotentialReceiveAssetIds(action, opportunity),
+        `${action.id}:${classifyFolksShape(shape)}`,
       );
-      lastOutcome = {
-        ...submit.outcome,
-        actionId: action.id,
-        toolName: "canix_get_execution_quote",
-      };
-      if (submit.outcome.status !== "confirmed") {
+      if (lastOutcome.status !== "confirmed") {
         return { outcome: lastOutcome, payments };
       }
 
@@ -959,6 +1015,10 @@ export class AlgorandExecutionService {
    * unsigned, a prior standalone group when any member is already signed),
    * attach Folks extra-signers, then sign/submit the claim group unmodified
    * when provider-cosigned.
+   *
+   * When `groupTransactions` is present (protocol 1.4+), `encodedTransactions`
+   * may contain only user legs — assemble the full algod group from
+   * `groupTransactions` and never treat user-only arrays as the submit set.
    */
   private async submitQuotedTransactions(
     action: PortfolioAction,
@@ -968,18 +1028,81 @@ export class AlgorandExecutionService {
     stepLabel: string,
   ): Promise<ExecutionOutcome> {
     assertFresh(quote.expiresAt);
+    assertQuoteWarningsAcceptable(quote.warnings);
     const escrowSigners = folksEscrowSignersFromMetadata(quote.metadata);
     for (const [address, secret] of escrowSigners) {
       extraSigners.set(address, secret);
     }
-    const prepared = await this.prepareGroupWithOptIns(
-      stepLabel,
-      quote.encodedTransactions,
-      [
-        ...receiveAssetIds,
-        ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
-      ],
+
+    if (isTinymanAnalyticsClaim(quote.metadata)) {
+      return this.submitTinymanAnalyticsClaim(
+        action,
+        quote,
+        extraSigners,
+        stepLabel,
+      );
+    }
+
+    const hasGroupTransactions = Boolean(quote.groupTransactions?.length);
+    const members = resolveQuoteGroupMembers(quote);
+    const receiveIds = [
+      ...receiveAssetIds,
+      ...collectReceiveAssetIdsFromQuoteMetadata(quote.metadata),
+    ];
+
+    // Legacy quotes: encodedTransactions is the full group (may include
+    // already-signed members). Keep the prior opt-in + signAndSubmitEncoded path.
+    if (!hasGroupTransactions) {
+      const prepared = await this.prepareGroupWithOptIns(
+        stepLabel,
+        quote.encodedTransactions,
+        receiveIds,
+      );
+      if (
+        prepared.optInOutcome &&
+        prepared.optInOutcome.status !== "confirmed"
+      ) {
+        return {
+          ...prepared.optInOutcome,
+          actionId: action.id,
+          toolName: "canix_get_execution_quote",
+        };
+      }
+      const encoded = encodedGroupHasSignedMember(prepared.encoded)
+        ? prepared.encoded
+        : this.maybePatchFolksOracle(action, prepared.encoded);
+      const submit = await this.signAndSubmitEncoded(
+        stepLabel,
+        encoded,
+        extraSigners,
+      );
+      if (submit.outcome.status === "confirmed") {
+        await this.persistFolksEscrowFromQuoteMetadata(action, quote.metadata);
+      }
+      return {
+        ...submit.outcome,
+        actionId: action.id,
+        toolName: "canix_get_execution_quote",
+      };
+    }
+
+    // Protocol 1.4+: assemble from groupTransactions (encodedTransactions may
+    // be user-legs only).
+    const hasProviderCosign = members.some(
+      (member) => member.signer !== "user" || Boolean(member.signed),
     );
+    const encodedForOptIn = members.map((member) => member.encoded);
+    const prepared = hasProviderCosign
+      ? await this.prepareStandaloneOptInsOnly(
+          stepLabel,
+          encodedForOptIn,
+          receiveIds,
+        )
+      : await this.prepareGroupWithOptIns(
+          stepLabel,
+          encodedForOptIn,
+          receiveIds,
+        );
     if (prepared.optInOutcome && prepared.optInOutcome.status !== "confirmed") {
       return {
         ...prepared.optInOutcome,
@@ -987,12 +1110,27 @@ export class AlgorandExecutionService {
         toolName: "canix_get_execution_quote",
       };
     }
-    const encoded = encodedGroupHasSignedMember(prepared.encoded)
-      ? prepared.encoded
-      : this.maybePatchFolksOracle(action, prepared.encoded);
-    const submit = await this.signAndSubmitEncoded(
+
+    if (!hasProviderCosign) {
+      const encoded = this.maybePatchFolksOracle(action, prepared.encoded);
+      const submit = await this.signAndSubmitEncoded(
+        stepLabel,
+        encoded,
+        extraSigners,
+      );
+      if (submit.outcome.status === "confirmed") {
+        await this.persistFolksEscrowFromQuoteMetadata(action, quote.metadata);
+      }
+      return {
+        ...submit.outcome,
+        actionId: action.id,
+        toolName: "canix_get_execution_quote",
+      };
+    }
+
+    const submit = await this.signAndSubmitGroupMembers(
       stepLabel,
-      encoded,
+      members,
       extraSigners,
     );
     if (submit.outcome.status === "confirmed") {
@@ -1002,6 +1140,88 @@ export class AlgorandExecutionService {
       ...submit.outcome,
       actionId: action.id,
       toolName: "canix_get_execution_quote",
+    };
+  }
+
+  private async submitTinymanAnalyticsClaim(
+    action: PortfolioAction,
+    quote: z.infer<typeof executableQuoteSchema>,
+    extraSigners: Map<string, Uint8Array>,
+    stepLabel: string,
+  ): Promise<ExecutionOutcome> {
+    const metadata = quote.metadata ?? {};
+    const claimUrl =
+      typeof metadata.claimUrl === "string" ? metadata.claimUrl : undefined;
+    const unsignedProtocol = metadata.unsignedProtocolTransactions;
+    if (!claimUrl || !Array.isArray(unsignedProtocol)) {
+      throw new Error(
+        `Tinyman analytics claim for ${stepLabel} is missing claimUrl or unsignedProtocolTransactions`,
+      );
+    }
+    if (!this.policy.signingEnabled) {
+      return { actionId: action.id, status: "validated-dry-run" };
+    }
+    const userLegs = resolveQuoteGroupMembers(quote).filter(
+      (member) => member.signer === "user",
+    );
+    if (userLegs.length === 0) {
+      throw new Error(
+        `Tinyman analytics claim for ${stepLabel} has no user legs to sign`,
+      );
+    }
+    const signed_transactions = userLegs.map((member) => {
+      const sender = decodeQuoteGroupMember(member.encoded);
+      if (sender.kind === "signed") {
+        return Buffer.from(sender.bytes).toString("base64");
+      }
+      const address = sender.transaction.sender.toString();
+      if (address === this.managedAddress) {
+        return Buffer.from(
+          signTransaction(sender.transaction, this.wallet.secretKey),
+        ).toString("base64");
+      }
+      const escrowKey = extraSigners.get(address);
+      if (escrowKey) {
+        return Buffer.from(
+          signTransaction(sender.transaction, escrowKey),
+        ).toString("base64");
+      }
+      throw new Error(
+        `No signer available for Tinyman claim sender ${address} in ${stepLabel}`,
+      );
+    });
+    const response = await fetch(claimUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        signed_transactions,
+        transactions: unsignedProtocol,
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `Tinyman analytics claim failed (${response.status}): ${body.slice(0, 400)}`,
+      );
+    }
+    let transactionId: string | undefined;
+    try {
+      const payload = (await response.json()) as {
+        txid?: string;
+        transactionId?: string;
+      };
+      transactionId = payload.txid ?? payload.transactionId;
+    } catch {
+      // Claim endpoints may return empty/non-JSON on success.
+    }
+    return {
+      actionId: action.id,
+      status: "confirmed",
+      toolName: "canix_get_execution_quote",
+      transactionId,
     };
   }
 
@@ -1023,25 +1243,50 @@ export class AlgorandExecutionService {
       return { encoded: encodedTransactions };
     }
     if (encodedGroupHasSignedMember(encodedTransactions)) {
-      const optInEncoded = buildStandaloneAssetOptInTransactions(
+      return this.prepareStandaloneOptInsOnly(
+        actionId,
         encodedTransactions,
-        this.managedAddress,
         missing,
       );
-      console.error(
-        `[execution] Submitting standalone ASA opt-in(s) for asset(s) ${missing.join(", ")} before signed claim group`,
-      );
-      const optInSubmit = await this.signAndSubmitEncoded(
-        `${actionId}:optin`,
-        optInEncoded,
-      );
-      return {
-        encoded: encodedTransactions,
-        optInOutcome: optInSubmit.outcome,
-      };
     }
     return {
       encoded: await this.withLeadingAssetOptIns(encodedTransactions, missing),
+    };
+  }
+
+  /** Opt in via a prior standalone group; never regroup provider-cosigned txs. */
+  private async prepareStandaloneOptInsOnly(
+    actionId: string,
+    encodedTransactions: string[],
+    assetIds: number[],
+  ): Promise<{ encoded: string[]; optInOutcome?: ExecutionOutcome }> {
+    const missing: number[] = [];
+    for (const assetId of assetIds) {
+      if (assetId <= 0) {
+        continue;
+      }
+      if (!(await this.isAssetOptedIn(this.managedAddress, assetId))) {
+        missing.push(assetId);
+      }
+    }
+    if (missing.length === 0) {
+      return { encoded: encodedTransactions };
+    }
+    const optInEncoded = buildStandaloneAssetOptInTransactions(
+      encodedTransactions,
+      this.managedAddress,
+      missing,
+    );
+    console.error(
+      `[execution] Submitting standalone ASA opt-in(s) for asset(s) ${missing.join(", ")} before signed/provider group`,
+    );
+    const optInSubmit = await this.signAndSubmitEncoded(
+      `${actionId}:optin`,
+      optInEncoded,
+    );
+    return {
+      encoded: encodedTransactions,
+      optInOutcome: optInSubmit.outcome,
     };
   }
 
@@ -1216,9 +1461,27 @@ export class AlgorandExecutionService {
     actionId: string,
     members: Array<{
       encoded: string;
-      signer: "user" | "haystack";
+      signer: "user" | "haystack" | "logicsig" | "protocol";
       signed?: string;
     }>,
+  ): Promise<{
+    outcome: ExecutionOutcome;
+  }> {
+    return this.signAndSubmitGroupMembers(actionId, members);
+  }
+
+  /**
+   * Sign user legs and assemble the full group in index order. Preserve
+   * pre-signed logicsig/haystack members. Never merge across groups.
+   */
+  private async signAndSubmitGroupMembers(
+    actionId: string,
+    members: Array<{
+      encoded: string;
+      signer: "user" | "haystack" | "logicsig" | "protocol";
+      signed?: string;
+    }>,
+    extraSigners: Map<string, Uint8Array> = new Map(),
   ): Promise<{
     outcome: ExecutionOutcome;
   }> {
@@ -1228,7 +1491,7 @@ export class AlgorandExecutionService {
       };
     }
     // Only rewrite notes when every member is user-signed (e.g. opt-in groups).
-    // Haystack co-signed groups cannot be regrouped without invalidating provider signatures.
+    // Haystack / protocol co-signed groups cannot be regrouped.
     const allUserSigned = members.every((member) => member.signer === "user");
     const uniqueEncoded = allUserSigned
       ? applyUniqueTransactionNotes(
@@ -1238,14 +1501,31 @@ export class AlgorandExecutionService {
       : null;
     const signed = members.map((member, index) => {
       if (member.signer === "user") {
-        return signEncodedTransaction(
-          uniqueEncoded?.[index] ?? member.encoded,
-          this.wallet.secretKey,
+        const encoded = uniqueEncoded?.[index] ?? member.encoded;
+        const decoded = decodeQuoteGroupMember(encoded);
+        if (decoded.kind === "signed") {
+          return decoded.bytes;
+        }
+        const sender = decoded.transaction.sender.toString();
+        if (sender === this.managedAddress) {
+          return signTransaction(decoded.transaction, this.wallet.secretKey);
+        }
+        const escrowKey = extraSigners.get(sender);
+        if (escrowKey) {
+          return signTransaction(decoded.transaction, escrowKey);
+        }
+        throw new Error(
+          `No signer available for transaction sender ${sender} in ${actionId}`,
+        );
+      }
+      if (member.signer === "protocol" && !member.signed) {
+        throw new Error(
+          `Protocol-signed member in ${actionId} is missing signedTransaction; use Tinyman analytics claim submit when submitMode requires it`,
         );
       }
       if (!member.signed) {
         throw new Error(
-          "Haystack transaction is missing its provider signature",
+          `Provider-signed transaction (${member.signer}) is missing its signature in ${actionId}`,
         );
       }
       return new Uint8Array(Buffer.from(member.signed, "base64"));
@@ -1267,6 +1547,288 @@ export class AlgorandExecutionService {
       },
     };
   }
+
+  /**
+   * Protocol 1.4.0: single-opportunity swap-aware compose (opt-in → Haystack
+   * swap → enter) in one review. Callers must pre-check eligibility via
+   * {@link canComposeEnter}.
+   */
+  async executeComposeEnter(
+    enterAction: PortfolioAction,
+    swapAction: PortfolioAction,
+    opportunities: Opportunity[],
+  ): Promise<{
+    outcome: ExecutionOutcome;
+    swapOutcome: ExecutionOutcome;
+    payments: PaymentReceipt[];
+  }> {
+    if (!this.policy.signingEnabled) {
+      return {
+        outcome: { actionId: enterAction.id, status: "validated-dry-run" },
+        swapOutcome: {
+          actionId: swapAction.id,
+          status: "validated-dry-run",
+          toolName: "canix_compose_enter",
+        },
+        payments: [],
+      };
+    }
+    try {
+      return await this.executeComposeEnterInner(
+        enterAction,
+        swapAction,
+        opportunities,
+      );
+    } catch (error) {
+      const message = formatExecutionError(error);
+      return {
+        outcome: {
+          actionId: enterAction.id,
+          status: "failed",
+          toolName: "canix_compose_enter",
+          error: message,
+        },
+        swapOutcome: {
+          actionId: swapAction.id,
+          status: "failed",
+          toolName: "canix_compose_enter",
+          error: message,
+        },
+        payments: [],
+      };
+    }
+  }
+
+  private async executeComposeEnterInner(
+    enterAction: PortfolioAction,
+    swapAction: PortfolioAction,
+    opportunities: Opportunity[],
+  ): Promise<{
+    outcome: ExecutionOutcome;
+    swapOutcome: ExecutionOutcome;
+    payments: PaymentReceipt[];
+  }> {
+    const opportunity = enterAction.opportunityId
+      ? opportunities.find(
+          (candidate) => candidate.opportunityId === enterAction.opportunityId,
+        )
+      : undefined;
+    if (!opportunity || !enterAction.opportunityId) {
+      throw new Error(
+        `Compose enter ${enterAction.id} is missing a known opportunity`,
+      );
+    }
+    if (
+      swapAction.fromAssetId === null ||
+      swapAction.toAssetId === null ||
+      swapAction.amountRaw === null
+    ) {
+      throw new Error(
+        `Compose swap ${swapAction.id} is missing assets or amount`,
+      );
+    }
+
+    await this.assertHaystackPriceImpactAcceptable(
+      swapAction.fromAssetId,
+      swapAction.toAssetId,
+      swapAction.amountRaw,
+    );
+
+    const payments: PaymentReceipt[] = [];
+    let composed = await this.requestComposeEnter({
+      opportunityId: enterAction.opportunityId,
+      fromAssetId: swapAction.fromAssetId,
+      amount: swapAction.amountRaw,
+    });
+    payments.push(...composed.payments);
+
+    const optInStep = composed.response.data.steps.find(
+      (step) => step.kind === "opt-in" && step.compileStatus === "compiled",
+    );
+    if (optInStep?.quote) {
+      const optInOutcome = await this.submitComposeStepQuote(
+        `${enterAction.id}:optin`,
+        optInStep.quote,
+      );
+      if (optInOutcome.status !== "confirmed") {
+        return {
+          outcome: {
+            ...optInOutcome,
+            actionId: enterAction.id,
+            toolName: "canix_compose_enter",
+          },
+          swapOutcome: {
+            actionId: swapAction.id,
+            status: "failed",
+            toolName: "canix_compose_enter",
+            error: "Compose opt-in did not confirm",
+          },
+          payments,
+        };
+      }
+      // Opt-in confirmation ages the Haystack swap quote (~30s TTL).
+      composed = await this.requestComposeEnter({
+        opportunityId: enterAction.opportunityId,
+        fromAssetId: swapAction.fromAssetId,
+        amount: swapAction.amountRaw,
+      });
+      payments.push(...composed.payments);
+    }
+
+    assertComposeExecutable(composed.response);
+
+    let swapConfirmed = false;
+    let lastOutcome: ExecutionOutcome = {
+      actionId: enterAction.id,
+      status: "failed",
+      toolName: "canix_compose_enter",
+      error: "Compose produced no executable enter/swap steps",
+    };
+
+    const ordered = [...composed.response.data.steps].sort(
+      (left, right) => left.order - right.order,
+    );
+    for (const step of ordered) {
+      if (step.kind === "eligibility") {
+        continue;
+      }
+      if (step.compileStatus === "blocked") {
+        throw new Error(
+          `Compose step ${step.kind} is blocked: ${step.warnings.join("; ") || "no details"}`,
+        );
+      }
+      if (step.compileStatus === "deferred") {
+        // Folks-style deferred setup should not reach compose in v1; fail closed.
+        throw new Error(
+          `Compose step ${step.kind} is deferred; use sequential execution quotes instead`,
+        );
+      }
+      if (step.compileStatus !== "compiled" || !step.quote) {
+        continue;
+      }
+      if (step.kind === "opt-in") {
+        // Already submitted (or not required after recompose).
+        continue;
+      }
+      lastOutcome = await this.submitComposeStepQuote(
+        `${enterAction.id}:${step.kind}`,
+        step.quote,
+      );
+      lastOutcome = {
+        ...lastOutcome,
+        actionId: enterAction.id,
+        toolName: "canix_compose_enter",
+      };
+      if (lastOutcome.status !== "confirmed") {
+        return {
+          outcome: lastOutcome,
+          swapOutcome: {
+            actionId: swapAction.id,
+            status: swapConfirmed ? "confirmed" : "failed",
+            toolName: "canix_compose_enter",
+            error: swapConfirmed
+              ? undefined
+              : `Compose ${step.kind} did not confirm`,
+            transactionId: swapConfirmed
+              ? lastOutcome.transactionId
+              : undefined,
+          },
+          payments,
+        };
+      }
+      if (step.kind === "swap") {
+        swapConfirmed = true;
+      }
+    }
+
+    if (!swapConfirmed) {
+      // Budget asset already matched enter asset — compose skipped the swap.
+      swapConfirmed = ordered.every(
+        (step) =>
+          step.kind !== "swap" ||
+          step.compileStatus === "hint" ||
+          !step.quote,
+      );
+    }
+
+    return {
+      outcome: lastOutcome,
+      swapOutcome: {
+        actionId: swapAction.id,
+        status: "confirmed",
+        toolName: "canix_compose_enter",
+        transactionId: lastOutcome.transactionId,
+      },
+      payments,
+    };
+  }
+
+  private async requestComposeEnter(args: {
+    opportunityId: string;
+    fromAssetId: number;
+    amount: string;
+  }): Promise<{
+    response: ComposeResponse;
+    payments: PaymentReceipt[];
+  }> {
+    const result = await this.canix.callManagedTool(
+      "canix_compose_enter",
+      {
+        opportunityId: args.opportunityId,
+        fromAssetId: args.fromAssetId,
+        amount: args.amount,
+        slippage: this.policy.maxSlippageBps / 100,
+      },
+      this.managedAddress,
+    );
+    const response = composeResponseSchema.parse(result.data);
+    assertFresh(response.data.expiresAt);
+    return {
+      response,
+      payments: result.payment ? [result.payment] : [],
+    };
+  }
+
+  private async submitComposeStepQuote(
+    stepLabel: string,
+    quote: ExecutableQuote,
+  ): Promise<ExecutionOutcome> {
+    assertFresh(quote.expiresAt);
+    assertQuoteWarningsAcceptable(quote.warnings);
+    const members = resolveQuoteGroupMembers(quote);
+    const submit = await this.signAndSubmitGroupMembers(stepLabel, members);
+    return submit.outcome;
+  }
+
+  private async assertHaystackPriceImpactAcceptable(
+    fromAssetId: number,
+    toAssetId: number,
+    amount: string,
+  ): Promise<void> {
+    const quoteResult = await this.canix.callManagedTool(
+      "canix_get_quote",
+      {
+        fromAssetId,
+        toAssetId,
+        amount,
+        type: "fixed-input",
+      },
+      this.managedAddress,
+    );
+    const quote = haystackQuoteSchema.parse(quoteResult.data);
+    assertFresh(quote.data.expiresAt);
+    const impactExempt = (
+      this.policy.priceImpactExemptToAssetIds ?? []
+    ).includes(toAssetId);
+    if (
+      !impactExempt &&
+      (quote.data.userPriceImpact ?? 0) > this.policy.maxPriceImpactPct
+    ) {
+      throw new Error(
+        `Haystack price impact exceeds ${this.policy.maxPriceImpactPct}%`,
+      );
+    }
+  }
 }
 
 /**
@@ -1277,6 +1839,197 @@ export function isExitOrRedeemShape(shape: OpportunityExecutionShape): boolean {
   const key =
     `${shape.shapeKey}:${shape.action}:${shape.variant}`.toLowerCase();
   return /unstake|redeem|removeLiquidity|withdraw|burn|claim/.test(key);
+}
+
+/**
+ * When `groupTransactions` is present, assemble the full group from it.
+ * `encodedTransactions` may contain only user legs (protocol 1.4+).
+ * Falls back to treating `encodedTransactions` as a full user-signed group.
+ */
+export function resolveQuoteGroupMembers(quote: {
+  encodedTransactions: string[];
+  groupTransactions?: Array<{
+    index: number;
+    signer: "user" | "haystack" | "logicsig" | "protocol";
+    encodedTransaction: string;
+    signedTransaction?: string;
+  }>;
+  userSignIndexes?: number[];
+}): Array<{
+  encoded: string;
+  signer: "user" | "haystack" | "logicsig" | "protocol";
+  signed?: string;
+}> {
+  if (quote.groupTransactions && quote.groupTransactions.length > 0) {
+    const ordered = [...quote.groupTransactions].sort(
+      (left, right) => left.index - right.index,
+    );
+    return ordered.map((member) => ({
+      encoded: member.encodedTransaction,
+      signer: member.signer,
+      signed: member.signedTransaction,
+    }));
+  }
+  return quote.encodedTransactions.map((encoded) => ({
+    encoded,
+    signer: "user" as const,
+  }));
+}
+
+export function isTinymanAnalyticsClaim(
+  metadata: Record<string, unknown> | undefined,
+): boolean {
+  return metadata?.submitMode === "tinyman-analytics-claim";
+}
+
+/** Fail closed on stale-quote warnings that mean the group must not be signed. */
+export function assertQuoteWarningsAcceptable(warnings: string[]): void {
+  for (const warning of warnings) {
+    if (/stale quote/i.test(warning) && /expired|expiresAt|re-call|recompose/i.test(warning)) {
+      // Soft advisory from compose (submit before expiresAt) — assertFresh covers expiry.
+      continue;
+    }
+    if (/do not sign|must not sign|refusing/i.test(warning)) {
+      throw new Error(`Quote warning blocks signing: ${warning}`);
+    }
+  }
+}
+
+export function assertComposeExecutable(response: ComposeResponse): void {
+  if (response.meta.executionSubmitted !== false) {
+    throw new Error("Compose response claimed execution was submitted");
+  }
+  if (response.meta.groupsMerged !== false) {
+    throw new Error("Compose response merged groups; refusing to sign");
+  }
+  const blocked = response.data.steps.filter(
+    (step) => step.compileStatus === "blocked",
+  );
+  if (blocked.length > 0) {
+    throw new Error(
+      `Compose has blocked steps: ${blocked
+        .map((step) => `${step.kind}: ${step.warnings.join("; ") || "blocked"}`)
+        .join(" | ")}`,
+    );
+  }
+  const hasExecutable = response.data.steps.some(
+    (step) =>
+      step.compileStatus === "compiled" &&
+      step.quote &&
+      (step.kind === "swap" || step.kind === "enter" || step.kind === "setup"),
+  );
+  if (!hasExecutable) {
+    throw new Error("Compose produced no compiled swap/enter groups");
+  }
+}
+
+/**
+ * Unique required asset for a capital-enter shape, or null when two-sided /
+ * ambiguous (compose will not auto-swap).
+ */
+export function uniqueEnterRequiredAssetId(
+  action: PortfolioAction,
+  opportunity: Opportunity | undefined,
+): number | null {
+  if (!opportunity || !action.executionShapeKey) {
+    return null;
+  }
+  const shape = opportunity.executionShapes.find(
+    (candidate) => candidate.shapeKey === action.executionShapeKey,
+  );
+  if (!shape) {
+    return null;
+  }
+  const unique = [...new Set(shape.requiredAssetIds)];
+  return unique.length === 1 ? unique[0]! : null;
+}
+
+/**
+ * Host-side eligibility for protocol 1.4 compose collapse of swap → open/increase.
+ */
+export function canComposeEnter(
+  enterAction: PortfolioAction,
+  swapAction: PortfolioAction,
+  opportunity: Opportunity | undefined,
+): boolean {
+  if (!["open", "increase"].includes(enterAction.type)) {
+    return false;
+  }
+  if (swapAction.type !== "swap") {
+    return false;
+  }
+  if (swapAction.dependencies.length > 0) {
+    return false;
+  }
+  if (!enterAction.dependencies.includes(swapAction.id)) {
+    return false;
+  }
+  if (
+    swapAction.fromAssetId === null ||
+    swapAction.toAssetId === null ||
+    swapAction.amountRaw === null
+  ) {
+    return false;
+  }
+  if (!enterAction.opportunityId || !opportunity) {
+    return false;
+  }
+  if (needsSequentialEscrowExecution(opportunity.executionShapes)) {
+    return false;
+  }
+  if (
+    opportunity.executionShapes.some((shape) =>
+      isPostConfirmPrerequisiteShape(shape),
+    )
+  ) {
+    return false;
+  }
+  const requiredAssetId = uniqueEnterRequiredAssetId(enterAction, opportunity);
+  if (requiredAssetId === null) {
+    return false;
+  }
+  if (swapAction.fromAssetId === requiredAssetId) {
+    return false;
+  }
+  if (swapAction.toAssetId !== requiredAssetId) {
+    return false;
+  }
+  return true;
+}
+
+export function findComposePairs(
+  actions: PortfolioAction[],
+  opportunities: Opportunity[],
+): Array<{ swap: PortfolioAction; enter: PortfolioAction }> {
+  const byId = new Map(actions.map((action) => [action.id, action]));
+  const pairs: Array<{ swap: PortfolioAction; enter: PortfolioAction }> = [];
+  const usedSwapIds = new Set<string>();
+  for (const enter of actions) {
+    if (!["open", "increase"].includes(enter.type)) {
+      continue;
+    }
+    const swapDeps = enter.dependencies
+      .map((id) => byId.get(id))
+      .filter((action): action is PortfolioAction => action?.type === "swap");
+    if (swapDeps.length !== 1) {
+      continue;
+    }
+    const swap = swapDeps[0]!;
+    if (usedSwapIds.has(swap.id)) {
+      continue;
+    }
+    const opportunity = enter.opportunityId
+      ? opportunities.find(
+          (candidate) => candidate.opportunityId === enter.opportunityId,
+        )
+      : undefined;
+    if (!canComposeEnter(enter, swap, opportunity)) {
+      continue;
+    }
+    pairs.push({ swap, enter });
+    usedSwapIds.add(swap.id);
+  }
+  return pairs;
 }
 
 /** Setup / opt-in / escrow-deploy prerequisites that may precede a capital-enter shape. */

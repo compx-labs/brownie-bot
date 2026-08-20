@@ -7,15 +7,18 @@ import {
   applyUniqueTransactionNotes,
   buildQuoteRequests,
   buildStandaloneAssetOptInTransactions,
+  canComposeEnter,
   clampActionAmountToSpendable,
   collectPotentialReceiveAssetIds,
   collectReceiveAssetIdsFromQuoteMetadata,
   encodedGroupHasSignedMember,
+  findComposePairs,
   isFolksEscrowBindingNote,
   isSkippablePrerequisiteQuoteError,
   prependAssetOptInTransactions,
   quotesNeedSequentialConfirm,
   resolveCapitalEnterSpendAssetId,
+  resolveQuoteGroupMembers,
 } from "../src/integrations/algorand/execution.js";
 import { MemoryFolksEscrowStore } from "../src/integrations/algorand/folks-escrow-store.js";
 import type { Canix402Client } from "../src/integrations/canix402/client.js";
@@ -2335,5 +2338,107 @@ describe("applyUniqueTransactionNotes", () => {
       Buffer.from(unique[0]!, "base64"),
     );
     expect(Buffer.from(decoded.note ?? [])).toEqual(Buffer.from(note));
+  });
+});
+
+describe("protocol 1.4.0 compose helpers", () => {
+  it("assembles full groups from groupTransactions (user + logicsig)", () => {
+    const members = resolveQuoteGroupMembers({
+      encodedTransactions: ["USER-ONLY"],
+      userSignIndexes: [0],
+      groupTransactions: [
+        {
+          index: 0,
+          signer: "user",
+          encodedTransaction: "USER-LEG",
+        },
+        {
+          index: 1,
+          signer: "logicsig",
+          encodedTransaction: "LSIG-LEG",
+          signedTransaction: "PRESIGNED",
+        },
+      ],
+    });
+    expect(members).toEqual([
+      { encoded: "USER-LEG", signer: "user", signed: undefined },
+      {
+        encoded: "LSIG-LEG",
+        signer: "logicsig",
+        signed: "PRESIGNED",
+      },
+    ]);
+  });
+
+  it("falls back to user-only encodedTransactions when groupTransactions is absent", () => {
+    expect(
+      resolveQuoteGroupMembers({
+        encodedTransactions: ["A", "B"],
+      }),
+    ).toEqual([
+      { encoded: "A", signer: "user" },
+      { encoded: "B", signer: "user" },
+    ]);
+  });
+
+  it("selects single-asset swap→enter pairs for compose and skips two-sided LP", () => {
+    const swap = {
+      id: "swap-1",
+      type: "swap" as const,
+      protocol: null,
+      opportunityId: null,
+      positionId: null,
+      amountRaw: "1000000",
+      fromAssetId: 31_566_704,
+      toAssetId: 0,
+      targetWeightPct: null,
+      executionShapeKey: null,
+      executionInput: null,
+      authorizedSpends: [{ assetId: 31_566_704, amountRaw: "1000000" }],
+      rationale: "USDC to ALGO",
+      dependencies: [],
+    };
+    const open = {
+      id: "open-1",
+      type: "open" as const,
+      protocol: "reti",
+      opportunityId: "reti:1",
+      positionId: null,
+      amountRaw: "990000",
+      fromAssetId: 0,
+      toAssetId: null,
+      targetWeightPct: 10,
+      executionShapeKey: "mainnet:reti:v1:stake:algo",
+      executionInput: { amount: "990000" },
+      authorizedSpends: [{ assetId: 0, amountRaw: "990000" }],
+      rationale: "Stake ALGO",
+      dependencies: ["swap-1"],
+    };
+    const reti = opportunity({
+      protocol: "reti",
+      opportunityId: "reti:1",
+      assetPair: "ALGO",
+      assetIds: [0],
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:reti:v1:stake:algo",
+          protocol: "reti",
+          action: "stake",
+          variant: "algo",
+          requiredAssetIds: [0],
+          requiredInputs: ["amount"],
+        }),
+      ],
+    });
+    expect(canComposeEnter(open, swap, reti)).toBe(true);
+    expect(findComposePairs([swap, open], [reti])).toEqual([{ swap, enter: open }]);
+
+    const lpOpen = {
+      ...open,
+      opportunityId: "tinyman:pool:1",
+      executionShapeKey: "mainnet:tinyman:v2:addLiquidity:flexible",
+    };
+    const lp = opportunity();
+    expect(canComposeEnter(lpOpen, swap, lp)).toBe(false);
   });
 });
