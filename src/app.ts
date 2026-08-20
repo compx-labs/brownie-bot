@@ -214,6 +214,13 @@ export async function createApp(config: AppConfig): Promise<AppContext> {
       priceImpactExemptToAssetIds: config.preferredHoldAssets.map(
         (asset) => asset.assetId,
       ),
+      planCompile: {
+        maxProtocolPct: config.MAX_PROTOCOL_PCT,
+        minTvlUsd: config.MIN_TVL_USD,
+        maxSourceAgeHours: config.MAX_SOURCE_AGE_HOURS,
+        noNewBorrows: true,
+        executionReadyOnly: true,
+      },
     },
     folksEscrowStore,
   );

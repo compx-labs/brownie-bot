@@ -96,14 +96,24 @@ submission. The host injects `BOT_WALLET`, `inferenceProvider: "zerosignal"`, an
 planning guidance (position / protocol caps, liquid reserve, TVL and freshness
 floors). Concentration and reserve limits are soft notes in the plan report.
 With signing disabled, dry runs always surface the plan and do not call
-execution quote endpoints; incomplete snapshot caveats and structural issues are
+execution quote, plan/compose, swap, or opt-in endpoints; incomplete snapshot caveats and structural issues are
 reported as policy notes. With signing enabled, incomplete portfolio data and
 malformed actions still fail closed. Opportunities include enter
 `executionShapes` (and `requiredAssetIds`); positions include
 `compatibleExitShapeKeys` / `compatibleManageShapeKeys`. The host validates plan
 shape keys against those catalogs and, when signing, calls
 `canix_get_execution_quote` with a `quotes` array (flat ~0.10 USDC per request),
-then signs each returned group in order.
+then signs each returned group in order. **Allocation intents** (open/increase)
+prefer the Canix **compiler SKU** instead: `canix_get_plan` / `POST /plans`
+(~0.25 USDC). When the held budget asset is not the unique enter asset, Canix
+composes unsigned groups **opt-in → Haystack swap → enter**. Brownie does not
+reimplement that sequencing or merge groups; it signs and submits locally,
+preserving Haystack signer indexes / pre-signed members. Stale quotes, missing
+opt-in, or a 402 on `/plans` fail closed — there is no fallback to a locally
+assembled swap+enter group. Two-sided LPs are not auto-composed. Folks escrow
+setup chains still use sequential `canix_get_execution_quote`. Standalone
+Haystack swaps (ops buffer / preferred-hold rotation) still use
+`canix_get_quote` → `canix_optin` → `canix_swap`.
 
 To enable execution, first confirm `BOT_WALLET` is the account derived from
 `WALLET_MNEMONIC`, review the policy variables in `.env.example`, complete
@@ -134,7 +144,8 @@ Mainnet, USDC ASA `31566704`, the Canix402 API origin, and endpoint payment
 ceilings are code-level invariants rather than environment configuration.
 Current ceilings are 5,000 base units for positions, claimable, and swap transaction
 generation, 10,000 for general/search/protocol opportunities, 50,000 for
-personalized opportunities, and 100,000 for execution quotes. A separate daily
+personalized opportunities, 100,000 for execution quotes, and 250,000 for the
+`POST /plans` compiler SKU (`canix_get_plan`). A separate daily
 x402 cap applies (default `MAX_DAILY_X402_BASE_UNITS`, 5 USDC). The bot validates
 every live requirement against these limits before signing. Facilitator
 fee-payer groups are supported.

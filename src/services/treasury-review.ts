@@ -19,12 +19,17 @@ import {
   DEFERRED_DEPENDENT_ACTION_ERROR,
   type PortfolioAgent,
 } from "./portfolio-agent.js";
+import {
+  enterUsesComposeSwapDeps,
+  isFoundationSwapFeedingEnter,
+} from "../integrations/canix402/plan.js";
 import type { CoordinatorMode, RunCoordinator } from "./run-coordinator.js";
 import { RunCoordinatorBusyError } from "./run-coordinator.js";
 import type { RunNotifier } from "./telegram.js";
 
-/** Re-export for callers/tests that import from treasury-review. */
-export { DEFERRED_DEPENDENT_ACTION_ERROR };
+/** Signing runs skip swap legs that Canix POST /plans compose already includes. */
+export const COMPOSE_ABSORBED_SWAP_ERROR =
+  "Absorbed by Canix POST /plans compose (opt-in → swap → enter)";
 
 export class RunInProgressError extends Error {
   constructor(message = "A treasury review is already running") {
@@ -37,10 +42,16 @@ export interface ReviewState {
   latest?: ReviewRun;
 }
 
+export { DEFERRED_DEPENDENT_ACTION_ERROR };
+
 export interface ActionExecutor {
   executeAction(
     action: PortfolioAction,
-    context?: { opportunities?: Opportunity[]; claimable?: WalletClaimable },
+    context?: {
+      opportunities?: Opportunity[];
+      claimable?: WalletClaimable;
+      planActions?: PortfolioAction[];
+    },
   ): Promise<{
     outcome: ExecutionOutcome;
     payments: PaymentReceipt[];
@@ -174,6 +185,7 @@ export class TreasuryReviewService {
           const executionContext = {
             opportunities: agentResult.opportunities,
             claimable: agentResult.snapshot.claimable,
+            planActions: agentResult.plan.actions,
           };
           const batchedOutcomes = new Map<string, ExecutionOutcome>();
           const foundationClaims = ordered.filter(
@@ -207,8 +219,22 @@ export class TreasuryReviewService {
               executions.push(batched);
               continue;
             }
-            // Foundation wave only: dependents replan next review against fresh balances.
-            if (action.dependencies.length > 0) {
+            if (
+              isFoundationSwapFeedingEnter(action, agentResult.plan.actions)
+            ) {
+              executions.push({
+                actionId: action.id,
+                status: "skipped",
+                error: COMPOSE_ABSORBED_SWAP_ERROR,
+              });
+              continue;
+            }
+            // Foundation wave only, except open/increase whose only deps are
+            // foundation swaps absorbed by Canix compose.
+            if (
+              action.dependencies.length > 0 &&
+              !enterUsesComposeSwapDeps(action, agentResult.plan.actions)
+            ) {
               executions.push({
                 actionId: action.id,
                 status: "skipped",
@@ -217,6 +243,7 @@ export class TreasuryReviewService {
               continue;
             }
             if (
+              !enterUsesComposeSwapDeps(action, agentResult.plan.actions) &&
               action.dependencies.some((dependency) => {
                 const outcome = executions.find(
                   (candidate) => candidate.actionId === dependency,
@@ -369,16 +396,20 @@ function determineStatus(
       ? "planned"
       : "validated-dry-run";
   }
-  const confirmed = executions.filter(
+  const tracked = executions.filter(
+    (outcome) => outcome.error !== COMPOSE_ABSORBED_SWAP_ERROR,
+  );
+  const absorbed = executions.length - tracked.length;
+  const confirmed = tracked.filter(
     (outcome) => outcome.status === "confirmed",
   ).length;
-  const failed = executions.some((outcome) =>
+  const failed = tracked.some((outcome) =>
     ["failed", "skipped"].includes(outcome.status),
   );
   if (confirmed > 0 && failed) {
     return "partially-executed";
   }
-  return confirmed === actionCount ? "confirmed" : "failed";
+  return confirmed === actionCount - absorbed ? "confirmed" : "failed";
 }
 
 export function rankOpportunities(opportunities: Opportunity[]): Opportunity[] {

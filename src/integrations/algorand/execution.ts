@@ -13,6 +13,14 @@ import type {
 } from "../../domain.js";
 import type { Canix402Client } from "../canix402/client.js";
 import type { TreasuryWallet } from "../canix402/wallet.js";
+import {
+  assertComposablePlan,
+  buildPlanRequest,
+  planResponseSchema,
+  resolvePlanBudget,
+  uniqueEnterAssetId,
+  type PlanCompilePolicy,
+} from "../canix402/plan.js";
 import type { FolksEscrowStore } from "./folks-escrow-store.js";
 import {
   classifyFolksShape,
@@ -114,11 +122,15 @@ export interface ExecutionPolicy {
    * maxPriceImpactPct (preferred-hold accumulation into thin markets).
    */
   priceImpactExemptToAssetIds?: number[];
+  /** Constraints forwarded to Canix POST /plans (compiler SKU). */
+  planCompile?: PlanCompilePolicy;
 }
 
 export interface ExecuteActionContext {
   opportunities?: Opportunity[];
   claimable?: WalletClaimable;
+  /** Full plan actions so compose can absorb foundation swap legs. */
+  planActions?: PortfolioAction[];
 }
 
 export class AlgorandExecutionService {
@@ -166,6 +178,7 @@ export class AlgorandExecutionService {
             action,
             context.opportunities ?? [],
             context.claimable,
+            context.planActions,
           );
     } catch (error) {
       return {
@@ -327,6 +340,7 @@ export class AlgorandExecutionService {
     action: PortfolioAction,
     opportunities: Opportunity[],
     claimable?: WalletClaimable,
+    planActions?: PortfolioAction[],
   ): Promise<{
     outcome: ExecutionOutcome;
     payments: PaymentReceipt[];
@@ -339,15 +353,177 @@ export class AlgorandExecutionService {
           (candidate) => candidate.opportunityId === action.opportunityId,
         )
       : undefined;
-    const clamped = await this.clampCapitalEnterToSpendable(action);
     if (
       opportunity &&
-      ["open", "increase"].includes(clamped.type) &&
+      ["open", "increase"].includes(action.type) &&
       needsSequentialEscrowExecution(opportunity.executionShapes)
     ) {
+      const clamped = await this.clampCapitalEnterToSpendable(action);
       return this.executeSequentialEscrowShapes(clamped, opportunity);
     }
+    if (
+      opportunity &&
+      ["open", "increase"].includes(action.type) &&
+      action.opportunityId
+    ) {
+      return this.executeCompiledAllocationPlan(
+        action,
+        opportunity,
+        planActions ?? [],
+      );
+    }
+    const clamped = await this.clampCapitalEnterToSpendable(action);
     return this.executeBatchedShapes(clamped, opportunities, claimable);
+  }
+
+  /**
+   * Allocation intents (open/increase) consume Canix POST /plans compose.
+   * Groups stay unsigned and unmerged; Brownie signs/submits locally.
+   * Fail closed on 402, stale quotes, or missing opt-in — no local swap+enter.
+   */
+  private async executeCompiledAllocationPlan(
+    action: PortfolioAction,
+    opportunity: Opportunity,
+    planActions: PortfolioAction[],
+  ): Promise<{
+    outcome: ExecutionOutcome;
+    payments: PaymentReceipt[];
+  }> {
+    const uniqueEnter = uniqueEnterAssetId(opportunity);
+    const budget = resolvePlanBudget(action, planActions);
+    const composingSwap =
+      uniqueEnter !== null && uniqueEnter !== budget.assetId;
+    const prepared = composingSwap
+      ? action
+      : await this.clampCapitalEnterToSpendable(action);
+    const preparedBudget = resolvePlanBudget(prepared, planActions);
+    const spendableRaw = await this.readSpendableAssetRaw(
+      preparedBudget.assetId,
+    );
+    if (spendableRaw === 0n) {
+      throw new Error(
+        `Action ${action.id} needs budget asset ${preparedBudget.assetId} but spendable balance is 0`,
+      );
+    }
+    const plannedAmount = BigInt(preparedBudget.amount);
+    const clampedBudget =
+      plannedAmount > spendableRaw
+        ? {
+            assetId: preparedBudget.assetId,
+            amount: spendableRaw.toString(),
+          }
+        : preparedBudget;
+    if (clampedBudget.amount !== preparedBudget.amount) {
+      console.error(
+        `[execution] Clamped ${action.id} plan budget asset ${preparedBudget.assetId} ${preparedBudget.amount} → ${clampedBudget.amount} (spendable)`,
+      );
+    }
+
+    const request = buildPlanRequest({
+      address: this.managedAddress,
+      action: prepared,
+      planActions,
+      policy: this.planCompilePolicy(),
+      budgetOverride: clampedBudget,
+    });
+    console.error(
+      `[execution] Compiling Canix plan for ${action.id} (${opportunity.opportunityId}) budget ${clampedBudget.assetId}:${clampedBudget.amount}`,
+    );
+
+    let planPayload: unknown;
+    let payments: PaymentReceipt[] = [];
+    try {
+      const result = await this.canix.callManagedTool(
+        "canix_get_plan",
+        request,
+        this.managedAddress,
+      );
+      planPayload = result.data;
+      if (result.payment) {
+        payments = [result.payment];
+      }
+    } catch (error) {
+      throw new Error(
+        `Canix POST /plans compose failed (${formatExecutionError(error)}); failing closed without assembling swap-then-enter locally`,
+        { cause: error },
+      );
+    }
+
+    const plan = planResponseSchema.parse(planPayload);
+    const groups = assertComposablePlan(plan, {
+      address: this.managedAddress,
+      opportunityId: opportunity.opportunityId,
+    });
+    const extraSigners = await this.folksExitExtraSigners(
+      prepared,
+      opportunity,
+    );
+    const receiveAssetIds = collectPotentialReceiveAssetIds(
+      prepared,
+      opportunity,
+    );
+
+    let lastOutcome: ExecutionOutcome = {
+      actionId: action.id,
+      status: "failed",
+      error: "Canix plan returned no executable groups",
+    };
+    for (const [index, group] of groups.entries()) {
+      const stepLabel =
+        groups.length === 1 ? action.id : `${action.id}:${index}`;
+      if (
+        group.kind === "swap" ||
+        (group.kind === "optin" &&
+          group.members.some((member) => member.signer === "haystack"))
+      ) {
+        assertFresh(group.expiresAt);
+        const submitted = await this.signAndSubmit(
+          stepLabel,
+          group.members.map((member) => ({
+            encoded: member.encoded,
+            signer: member.signer,
+            signed: member.signed,
+          })),
+        );
+        lastOutcome = {
+          ...submitted.outcome,
+          actionId: action.id,
+          toolName: "canix_get_plan",
+        };
+      } else {
+        lastOutcome = await this.submitQuotedTransactions(
+          prepared,
+          {
+            shapeKey: group.shapeKey ?? action.executionShapeKey ?? "",
+            expiresAt: group.expiresAt,
+            encodedTransactions: group.encodedTransactions,
+            warnings: group.warnings,
+            transactions: [],
+            metadata: group.metadata,
+          },
+          extraSigners,
+          receiveAssetIds,
+          stepLabel,
+        );
+        lastOutcome = { ...lastOutcome, toolName: "canix_get_plan" };
+      }
+      if (lastOutcome.status !== "confirmed") {
+        return { outcome: lastOutcome, payments };
+      }
+    }
+    return { outcome: lastOutcome, payments };
+  }
+
+  private planCompilePolicy(): PlanCompilePolicy {
+    return (
+      this.policy.planCompile ?? {
+        maxProtocolPct: 50,
+        minTvlUsd: 6_000,
+        maxSourceAgeHours: 24,
+        noNewBorrows: true,
+        executionReadyOnly: true,
+      }
+    );
   }
 
   /**

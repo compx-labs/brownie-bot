@@ -81,6 +81,9 @@ describe("AlgorandPaymentBuilder guardrails", () => {
     await expect(
       builder().build(paymentRequest("5001", "/positions/claimable")),
     ).rejects.toThrow(/positions\/claimable endpoint ceiling/);
+    await expect(
+      builder().build(paymentRequest("250001", "/plans")),
+    ).rejects.toThrow(/plans endpoint ceiling/);
   });
 
   it("rejects an unexpected resource origin before signing", async () => {
@@ -89,6 +92,14 @@ describe("AlgorandPaymentBuilder guardrails", () => {
     await expect(builder().build(request)).rejects.toThrow(
       /Unexpected x402 resource origin/,
     );
+  });
+
+  it("pays the plans compiler SKU at 0.25 USDC", async () => {
+    const built = await builder({
+      getSuggestedParams: () => Promise.resolve(fixedSuggestedParams),
+    }).build(paymentRequest("250000", "/plans"));
+    expect(built.receipt.amountBaseUnits).toBe("250000");
+    expect(built.receipt.resourcePath).toBe("/plans");
   });
 
   it("pays the claimable path at the live 0.001 USDC price", async () => {

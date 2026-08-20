@@ -534,4 +534,137 @@ describe("Canix402Client", () => {
       required: ["quote"],
     });
   });
+
+  it("pays for canix_get_plan and returns an unsigned compose plan", async () => {
+    const address =
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+    const paymentRequired = {
+      x402Version: 2,
+      resource: {
+        url: "https://canix402-api.compx.io/plans",
+      },
+      accepts: [],
+    };
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const planBody = {
+      data: {
+        allocations: [
+          {
+            opportunityId: "reti-staking-12",
+            protocol: "reti",
+            quotes: [
+              {
+                shapeKey: "mainnet:reti:v1:stake:algo",
+                input: { amount: "1000000" },
+              },
+            ],
+            steps: [
+              {
+                kind: "enter",
+                order: 0,
+                compileStatus: "compiled",
+                shapeKey: "mainnet:reti:v1:stake:algo",
+                warnings: [],
+                quote: {
+                  shapeKey: "mainnet:reti:v1:stake:algo",
+                  expiresAt,
+                  encodedTransactions: ["ENTER"],
+                  warnings: [],
+                  transactions: [],
+                },
+              },
+            ],
+            warnings: [],
+          },
+        ],
+        blocked: [],
+        expectedPositionDelta: { summary: "enter", entries: [] },
+        fees: { x402Usdc: "0.25" },
+        expiresAt,
+        warnings: [],
+      },
+      meta: {
+        address,
+        budget: { assetId: 0, amount: "1000000" },
+        fetchedAt: new Date().toISOString(),
+        paymentRequired: true,
+        executionSubmitted: false,
+        quoteTimeAuthoritative: true,
+        eligibilityEndpoint: "/eligibility",
+      },
+    };
+    const callTool = vi
+      .fn<ToolCaller["callTool"]>()
+      .mockResolvedValueOnce(
+        toolResult({
+          error: "PAYMENT_REQUIRED",
+          mcpPayment: { paymentRequired },
+        }),
+      )
+      .mockResolvedValueOnce(
+        toolResult({
+          ...planBody,
+          mcpPayment: { paymentResponseHeader: "settlement" },
+        }),
+      );
+    const buildPayment = vi.fn().mockResolvedValue({
+      paymentSignature: "signed-plan-payment",
+      receipt: {
+        amountBaseUnits: "250000",
+        assetId: "31566704",
+        network: "algorand:mainnet",
+      },
+    });
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      { build: buildPayment },
+    );
+
+    const result = await client.getPlan({
+      address,
+      budget: { assetId: 0, amount: "1000000" },
+      opportunityIds: ["reti-staking-12"],
+    });
+
+    expect(callTool).toHaveBeenNthCalledWith(1, "canix_get_plan", {
+      address,
+      budget: { assetId: 0, amount: "1000000" },
+      opportunityIds: ["reti-staking-12"],
+    });
+    expect(callTool).toHaveBeenNthCalledWith(2, "canix_get_plan", {
+      address,
+      budget: { assetId: 0, amount: "1000000" },
+      opportunityIds: ["reti-staking-12"],
+      paymentSignature: "signed-plan-payment",
+    });
+    expect(result.plan.meta.executionSubmitted).toBe(false);
+    expect(result.plan.data.allocations[0]?.steps).toHaveLength(1);
+    expect(result.payment?.amountBaseUnits).toBe("250000");
+  });
+
+  it("fails closed when canix_get_plan 402s without a signer", async () => {
+    const address =
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+    const caller: ToolCaller = {
+      callTool: vi.fn().mockResolvedValue(
+        toolResult({
+          error: "PAYMENT_REQUIRED",
+          mcpPayment: {
+            paymentRequired: {
+              resource: { url: "https://canix402-api.compx.io/plans" },
+            },
+          },
+        }),
+      ),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(
+      new Canix402Client(caller, undefined).getPlan({
+        address,
+        budget: { assetId: 0, amount: "1000000" },
+        opportunityIds: ["reti-staking-12"],
+      }),
+    ).rejects.toThrow(/no local payment signer is configured/);
+  });
 });

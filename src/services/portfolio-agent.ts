@@ -61,6 +61,7 @@ export const MAX_OPPORTUNITY_TOOL_LIMIT = 10;
 
 /** Host-only after policy approval. Never expose to the planning agent. */
 const FINAL_EXECUTION_TOOLS = new Set([
+  "canix_get_plan",
   "canix_get_execution_quote",
   "canix_optin",
   "canix_swap",
@@ -262,13 +263,13 @@ Preferred holds (hostGuidance.preferredHoldAssets): soft long-term targets as % 
 
 PLAN ACTIONS
 - Prefer executionReady with non-empty shapeKeys; empty shapeKeys = research-only—never invent keys.
-- open/increase: one capital action per opportunity; executionShapeKey from shapeKeys (deposit/addLiquidity-style); authorizedSpends + amountRaw/fromAssetId; executionInput may be null (host completes). No separate setup/escrow/opt-in plan actions.
+- open/increase: one capital action per opportunity; executionShapeKey from shapeKeys (deposit/addLiquidity-style); authorizedSpends + amountRaw/fromAssetId of the held budget asset (even if the opportunity requires a different ASA). Do not emit a precursor swap to convert that budget — the host compiles opt-in → Haystack swap → enter via Canix POST /plans (compiler SKU, ~0.25 USDC). Two-sided LPs are not auto-composed. executionInput may be null (host completes). No separate setup/escrow/opt-in plan actions.
 - close/reduce/claim: executionShapeKey from position compatibleExitShapeKeys / compatibleManageShapeKeys; size with amountRaw / executionInput; authorizedSpends may be []. Never invent keys; empty catalogs = no supported path.
 - Claim-all manage shapes (claimRewards / claim with no amount input, including Haystack staking rewards): set amountRaw to null — never "0". A zero amount hard-blocks the whole plan. Put reward estimates in rationale only. When the claim desk lists the row, still emit a claim action against the reward position; host uses the desk's ready quote inputs.
 - Tinyman farm rewards: claim against the reward position (positionType reward / opportunityId ending :farm) using that row's compatibleManageShapeKeys (e.g. mainnet:tinyman:staking-v1:farm:claimRewards). Do NOT claim against the farmed LP row — its manage keys are empty by design (exit is removeLiquidity + farm:uncommit only).
-- Swaps: (1) unlock required assets for a following open/increase, (2) consolidate USDC ops buffer, (3) rotate non-preferred idle liquid into deployable capital or preferred holds. Prefer canix_get_quote before sizing. If a quote tool returns an error (timeout, liquidity, impact), retry with a different size/pair or skip that swap and continue the plan—do not stop the whole review.
-- Missing required assets: prior swap action(s), then depend on those action ids only.
-- dependencies: only other action ids in this plan. Host signing runs execute only foundation actions (empty dependencies); dependents are deferred to the next review after balances refresh—so size each action to current spendable balances, not hoped-for proceeds from earlier steps in the same plan.
+- Swaps: (1) consolidate USDC ops buffer, (2) rotate non-preferred idle liquid into deployable capital or preferred holds. Prefer canix_get_quote before sizing. If a quote tool returns an error (timeout, liquidity, impact), retry with a different size/pair or skip that swap and continue the plan—do not stop the whole review. Do not use swaps to unlock a following open/increase in the same plan — that conversion is Canix compose.
+- Missing required assets on a single-asset enter: set fromAssetId/authorizedSpends to a held budget asset; host compose handles conversion. Two-sided LP still needs both assets (or a prior swap that already settled).
+- dependencies: only other action ids in this plan. Host signing runs execute foundation actions plus open/increase whose only deps are foundation swaps (those swaps are absorbed by Canix compose). Other dependents are deferred to the next review after balances refresh—so size each action to current spendable balances, not hoped-for proceeds from earlier steps in the same plan.
 - priorReview (when present): last run continuity — summary, policyApproved/violations/warnings, and actions (status, deferred, dependencies, short rationale, errors). Use it to finish deferred work and avoid blind retries; replan sizes against today's snapshot. Not a mandate to replay the same chain.
 - projectedNetBenefitUsd: honest yield-vs-idle over holdingHorizonDays (often 30–90) minus one-time costs; use base supply/deposit APY, not reward boosts.
 - Re-evaluate every position each run; avoid churn only when net improvement is small vs costs.
@@ -764,7 +765,7 @@ export class OpenAiPortfolioAgent implements PortfolioAgent {
             output: JSON.stringify({
               error: "EXECUTION_HOST_ONLY",
               message:
-                "Final execution tools run only after the plan is approved. Use research and canix_get_quote for planning; do not call canix_get_execution_quote, canix_optin, or canix_swap.",
+                "Final execution tools run only after the plan is approved. Use research and canix_get_quote for planning; do not call canix_get_plan, canix_get_execution_quote, canix_optin, or canix_swap.",
             }),
           });
           continue;
@@ -1505,6 +1506,7 @@ function assertRequiredCapabilities(
     canix_get_quote: ["address", "fromAssetId", "toAssetId", "amount"],
     ...(signingEnabled
       ? {
+          canix_get_plan: ["budget"],
           canix_get_execution_quote: ["quotes"],
           canix_optin: ["address", "quote"],
           canix_swap: ["address", "quote", "slippage"],

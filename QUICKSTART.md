@@ -221,8 +221,11 @@ Only after several clean dry runs:
 2. Review policy knobs in `.env.example`
 3. Set `ENABLE_TRANSACTION_SIGNING=true`
 
-Signing adds execution-quote payments (~0.10 USDC ceiling per quote request)
-plus on-chain ALGO fees for submitted groups.
+Signing adds the Canix **compiler SKU** for allocation intents
+(`canix_get_plan` / `POST /plans`, ~0.25 USDC ceiling) so Brownie does not
+assemble swap-then-enter locally. Same-review Folks escrow setup and
+claim/exit quotes still use execution-quote payments (~0.10 USDC ceiling per
+quote request), plus on-chain ALGO fees for submitted groups.
 
 ## 7. Protocol verify (optional, before going live)
 
@@ -277,16 +280,17 @@ headers are skipped.
 
 ### Canix402 x402 ceilings
 
-| Endpoint / tool                   | Ceiling (base units) | Ceiling (USDC) | Typical use                               |
-| --------------------------------- | -------------------: | -------------: | ----------------------------------------- |
-| Positions (`canix_get_positions`) |                5,000 |          0.005 | Every review + wallet scan                |
-| Claim desk (`canix_list_claimable`) |              5,000 |          0.005 | Every review (live price **0.001** USDC)  |
-| List opportunities                |               10,000 |           0.01 | Research                                  |
-| Search / filter opportunities     |               10,000 |           0.01 | Research (high-TVL discovery)             |
-| Protocol opportunities            |               10,000 |           0.01 | Per protocol query                        |
-| Personalized opportunities        |               50,000 |           0.05 | Every review (usually)                    |
-| Swap transactions                 |                5,000 |          0.005 | **Signing only**                          |
-| Execution quotes                  |              100,000 |           0.10 | **Signing only** (flat per quote request) |
+| Endpoint / tool                                   | Ceiling (base units) | Ceiling (USDC) | Typical use                                                          |
+| ------------------------------------------------- | -------------------: | -------------: | -------------------------------------------------------------------- |
+| Positions (`canix_get_positions`)                 |                5,000 |          0.005 | Every review + wallet scan                                           |
+| Claim desk (`canix_list_claimable`)               |                5,000 |          0.005 | Every review (live price **0.001** USDC)                             |
+| List opportunities                                |               10,000 |           0.01 | Research                                                             |
+| Search / filter opportunities                     |               10,000 |           0.01 | Research (high-TVL discovery)                                        |
+| Protocol opportunities                            |               10,000 |           0.01 | Per protocol query                                                   |
+| Personalized opportunities                        |               50,000 |           0.05 | Every review (usually)                                               |
+| Swap transactions                                 |                5,000 |          0.005 | **Signing only**                                                     |
+| Execution quotes                                  |              100,000 |           0.10 | **Signing only** (flat per quote request)                            |
+| Plans compiler (`canix_get_plan` / `POST /plans`) |              250,000 |           0.25 | **Signing only** — allocation intents; compose opt-in → swap → enter |
 
 Free (no x402 payment path): `canix_health`, `canix_get_token_prices` (used by
 accounting).
@@ -311,11 +315,11 @@ is usually much lower because there is no multi-turn tool loop. Prefer
 
 CLI one-shots (each spends real USDC; no LLM):
 
-| Command                       | Approx. cost            |
-| ----------------------------- | ----------------------- |
+| Command                       | Approx. cost                         |
+| ----------------------------- | ------------------------------------ |
 | `npm run canix:wallet-scan`   | ~0.006 USDC (positions + claim desk) |
-| `npm run canix:opportunities` | ≤ 0.01 USDC             |
-| `npm run canix:personalized`  | ≤ 0.05 USDC             |
+| `npm run canix:opportunities` | ≤ 0.01 USDC                          |
+| `npm run canix:personalized`  | ≤ 0.05 USDC                          |
 
 ### Other costs
 

@@ -5,6 +5,7 @@ import type {
   PortfolioAgentResult,
 } from "../src/services/portfolio-agent.js";
 import {
+  COMPOSE_ABSORBED_SWAP_ERROR,
   DEFERRED_DEPENDENT_ACTION_ERROR,
   rankOpportunities,
   RunInProgressError,
@@ -550,6 +551,95 @@ describe("TreasuryReviewService", () => {
     expect(executeAction).toHaveBeenCalledWith(
       expect.objectContaining({ id: "reduce-1" }),
       expect.anything(),
+    );
+  });
+
+  it("absorbs a foundation swap into Canix compose and executes the enter", async () => {
+    const swap = {
+      id: "swap-1",
+      type: "swap" as const,
+      protocol: null,
+      opportunityId: null,
+      positionId: null,
+      amountRaw: "1000000",
+      fromAssetId: 0,
+      toAssetId: 31_566_704,
+      targetWeightPct: null,
+      executionShapeKey: null,
+      executionInput: null,
+      authorizedSpends: [{ assetId: 0, amountRaw: "1000000" }],
+      rationale: "ALGO to USDC for enter.",
+      dependencies: [],
+    };
+    const open = {
+      id: "open-1",
+      type: "open" as const,
+      protocol: "folks",
+      opportunityId: "folks:1",
+      positionId: null,
+      amountRaw: "900000",
+      fromAssetId: 31_566_704,
+      toAssetId: null,
+      targetWeightPct: null,
+      executionShapeKey: "folks:deposit",
+      executionInput: {},
+      authorizedSpends: [{ assetId: 31_566_704, amountRaw: "900000" }],
+      rationale: "Deposit via compose.",
+      dependencies: ["swap-1"],
+    };
+    const agent: PortfolioAgent = {
+      run: vi.fn().mockResolvedValue({
+        snapshot: portfolioSnapshot(),
+        plan: portfolioPlan({
+          actions: [swap, open],
+          projectedNetBenefitUsd: 5,
+        }),
+        opportunities: [opportunity()],
+        payments: [],
+        toolCalls: [],
+      }),
+    };
+    const executeAction = vi.fn().mockResolvedValue({
+      outcome: {
+        actionId: "open-1",
+        status: "confirmed",
+        transactionId: "TX-OPEN",
+        toolName: "canix_get_plan",
+      },
+      payments: [],
+    });
+    const deps = dependencies(agent);
+    const instance = new TreasuryReviewService(
+      deps.agent,
+      deps.policy,
+      { executeAction },
+      deps.notifier,
+      {},
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+      true,
+    );
+
+    const result = await instance.run();
+    expect(result.status).toBe("confirmed");
+    expect(result.executions).toEqual([
+      {
+        actionId: "swap-1",
+        status: "skipped",
+        error: COMPOSE_ABSORBED_SWAP_ERROR,
+      },
+      {
+        actionId: "open-1",
+        status: "confirmed",
+        transactionId: "TX-OPEN",
+        toolName: "canix_get_plan",
+      },
+    ]);
+    expect(executeAction).toHaveBeenCalledOnce();
+    expect(executeAction).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "open-1" }),
+      expect.objectContaining({
+        planActions: [swap, open],
+      }),
     );
   });
 

@@ -1517,6 +1517,76 @@ describe("syncSwapAuthorizedSpend", () => {
     ).toBe(true);
   });
 
+  it("allows a unique enter asset to be funded from a held compose budget", () => {
+    const candidate = opportunity({
+      protocol: "reti",
+      opportunityId: "reti-staking-12",
+      assetPair: "ALGO",
+      assetIds: [0],
+      sourceTimestamp: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      executionShapes: [
+        enterShape({
+          shapeKey: "mainnet:reti:v1:stake:algo",
+          protocol: "reti",
+          action: "stake",
+          variant: "algo",
+          requiredInputs: ["amount"],
+          requiredAssetIds: [0],
+          inputHints: { assetId: 0 },
+        }),
+      ],
+    });
+    const result = policy.validate(
+      portfolioSnapshot({
+        liquidBalances: [
+          {
+            assetId: 31_566_704,
+            amountRaw: "5000000",
+            spendableAmountRaw: "5000000",
+            decimals: 6,
+          },
+        ],
+      }),
+      portfolioPlan({
+        currentAllocations: [liquid],
+        targetAllocations: [
+          { ...liquid, weightPct: 60 },
+          {
+            key: "opportunity:reti-staking-12",
+            protocol: "reti",
+            opportunityId: candidate.opportunityId,
+            assetIds: [0],
+            weightPct: 40,
+            expectedApyPct: candidate.apy,
+          },
+        ],
+        actions: [
+          openAction({
+            id: "open-reti",
+            protocol: "reti",
+            opportunityId: candidate.opportunityId,
+            amountRaw: "2000000",
+            fromAssetId: 31_566_704,
+            executionShapeKey: "mainnet:reti:v1:stake:algo",
+            executionInput: { amount: "2000000" },
+            authorizedSpends: [{ assetId: 31_566_704, amountRaw: "2000000" }],
+            rationale: "Compose USDC into Réti ALGO enter.",
+          }),
+        ],
+        projectedNetBenefitUsd: 10,
+      }),
+      [candidate],
+    );
+
+    expect(result.approved).toBe(true);
+    expect(
+      result.violations.some((message) =>
+        message.includes("requires asset ID"),
+      ),
+    ).toBe(false);
+  });
+
   it("approves singleAsset open depositing ALGO when the other pool ASA is absent", () => {
     const candidate = opportunity({
       opportunityId: "tinyman:pool:algo-usdc-single",

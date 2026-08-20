@@ -40,6 +40,7 @@ const requiredTools = [
   "canix_get_personalized_opportunities",
   "canix_get_protocol_opportunities",
   "canix_list_execution_shapes",
+  "canix_get_plan",
   "canix_get_execution_quote",
   "canix_get_quote",
   "canix_optin",
@@ -53,6 +54,16 @@ function toolSchema(name: string) {
     canix_get_positions: { address: { type: "string" } },
     canix_get_personalized_opportunities: {
       address: { type: "string" },
+    },
+    canix_get_plan: {
+      address: { type: "string" },
+      budget: {
+        type: "object",
+        properties: {
+          assetId: { type: "integer" },
+          amount: { type: "string" },
+        },
+      },
     },
     canix_get_execution_quote: {
       quotes: {
@@ -211,6 +222,7 @@ describe("OpenAiPortfolioAgent", () => {
     const toolNames = (
       create.mock.calls[0]?.[0] as { tools: Array<{ name: string }> }
     ).tools.map((tool) => tool.name);
+    expect(toolNames).not.toContain("canix_get_plan");
     expect(toolNames).not.toContain("canix_get_execution_quote");
     expect(toolNames).not.toContain("canix_optin");
     expect(toolNames).not.toContain("canix_swap");
@@ -457,6 +469,7 @@ describe("OpenAiPortfolioAgent", () => {
     const toolNames = (
       create.mock.calls[0]?.[0] as { tools: Array<{ name: string }> }
     ).tools.map((tool) => tool.name);
+    expect(toolNames).not.toContain("canix_get_plan");
     expect(toolNames).not.toContain("canix_get_execution_quote");
     expect(toolNames).not.toContain("canix_optin");
     expect(toolNames).not.toContain("canix_swap");
@@ -1561,5 +1574,7 @@ describe("buildPriorReviewContext", () => {
     expect(PORTFOLIO_AGENT_PROMPT_LITE).toContain(
       "replan sizes against today's snapshot",
     );
+    expect(PORTFOLIO_AGENT_PROMPT_LITE).toContain("POST /plans");
+    expect(PORTFOLIO_AGENT_PROMPT_LITE).toContain("compiler SKU");
   });
 });

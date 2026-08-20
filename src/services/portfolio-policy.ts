@@ -716,11 +716,36 @@ function validateRequiredAssets(
     }
     return !coveredBySwaps.has(assetId);
   });
-  if (missing.length > 0) {
-    sink.push(
-      `Action ${action.id} requires asset ID(s) ${missing.join(", ")} (from executionShapes.requiredAssetIds) but liquid balances lack them and no dependency swap produces them`,
-    );
+  if (missing.length === 0) {
+    return;
   }
+  const uniqueRequired =
+    missing.length === required.size && required.size === 1;
+  if (
+    uniqueRequired &&
+    hasHeldComposeBudget(action, availableBalances, missing)
+  ) {
+    return;
+  }
+  sink.push(
+    `Action ${action.id} requires asset ID(s) ${missing.join(", ")} (from executionShapes.requiredAssetIds) but liquid balances lack them and no dependency swap produces them`,
+  );
+}
+
+function hasHeldComposeBudget(
+  action: PortfolioPlan["actions"][number],
+  availableBalances: Map<number, bigint>,
+  missingRequired: number[],
+): boolean {
+  const missing = new Set(missingRequired);
+  const budgetIds = [
+    ...action.authorizedSpends.map((spend) => spend.assetId),
+    ...(action.fromAssetId !== null ? [action.fromAssetId] : []),
+  ];
+  return budgetIds.some(
+    (assetId) =>
+      !missing.has(assetId) && (availableBalances.get(assetId) ?? 0n) > 0n,
+  );
 }
 
 /** Preferred-hold markets skip the global `minTvlUsd` floor while bootstrapping liquidity. */

@@ -12,13 +12,14 @@ Agent plan JSON
   → normalizePortfolioPlan (shape completion, drop redundant setup/opt-in)
   → PortfolioPolicy.validate
   → if approved + signing enabled → AlgorandExecutionService
-       (foundation wave only: actions with empty dependencies;
-        dependents skip as deferred until a later review)
+       (foundation wave: empty-dependency actions, plus open/increase
+        whose only deps are foundation swaps absorbed by Canix POST /plans;
+        other dependents skip as deferred until a later review)
 ```
 
 If schema parse fails, status is `reported` and **policy never runs** (`Policy n/a`). That is not a policy block.
 
-When signing is enabled, the host executes only **no-dependency** actions in the approved plan. Actions that depend on earlier plan steps are marked `skipped` with `Deferred to next review (depends on earlier plan steps)`. The next review sees a fresh snapshot and a richer `priorReview` continuity brief (plan summary, policy outcome, deferred/failed actions — not only execution status rows) and can replan sizes against live balances. Dry-run still validates the full plan without deferred skips.
+When signing is enabled, the host executes foundation actions (empty dependencies) and open/increase allocation intents whose only dependencies are foundation swaps. Those swaps are skipped as absorbed by Canix `POST /plans` compose (`opt-in → Haystack swap → enter`); Brownie does not assemble that sequence locally. Other dependents are marked `skipped` with `Deferred to next review (depends on earlier plan steps)`. The next review sees a fresh snapshot and a richer `priorReview` continuity brief (plan summary, policy outcome, deferred/failed actions — not only execution status rows) and can replan sizes against live balances. Dry-run still validates the full plan without deferred skips.
 
 ## Approval model
 
@@ -205,6 +206,7 @@ Partial Canix protocol messages (e.g. missing debt/health index) currently mark 
 - Gate on `confidence` (schema/reporting field; coerce happens earlier)
 - Re-run MCP research
 - Validate swap/execution quote economics beyond the structural swap rules above (slippage/impact checks happen at **execution**)
+- Assemble swap-then-enter sequences (Canix `POST /plans` / `canix_get_plan` compiler SKU does that; Brownie fails closed rather than merging groups locally)
 
 ---
 

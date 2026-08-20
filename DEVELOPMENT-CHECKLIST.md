@@ -22,6 +22,7 @@ Keep this file updated when priorities change so work does not get lost across c
 - [x] **Dated review history** — `wallets/<addr>/reviews/<yyyy>/<mm>/<dd>/<runId>.json` plus `latest.json`; 7-day rotate; `GET /runs` and Telegram `/history` summaries
 - [x] **HTTP/Docker force-run docs** — `MANUAL_TRIGGER_TOKEN` (`POST /runs`, Bearer, 404/401/409) and Docker `once` vs long-lived server (stdout mix + `sanitize-zs-logs.mjs`); Telegram `/run` remains the chat-side path
 - [x] **Health low-balance warnings** — `GET /health?deps=1` (and Telegram `/status`) advisory ALGO/USDC floors via `HEALTH_LOW_ALGO` / `HEALTH_LOW_USDC`; does not pause trading
+- [x] **Canix POST /plans compose** — allocation intents consume `canix_get_plan` (compiler SKU ~0.25 USDC) instead of Brownie assembling enter+swap quotes; unsigned unmerged groups; fail closed on 402 / stale / missing opt-in
 
 ## Next (recommended order)
 

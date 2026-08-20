@@ -50,6 +50,7 @@ const ENDPOINT_CEILINGS = new Map([
   ["/opportunities/personalized", 50_000n],
   ["/positions", 5_000n],
   ["/positions/claimable", 5_000n],
+  ["/plans", 250_000n],
   ["/execution/quotes", 100_000n],
   ["/swaps/transactions", 5_000n],
 ]);

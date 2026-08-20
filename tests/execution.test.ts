@@ -1084,32 +1084,76 @@ describe("AlgorandExecutionService multi-quote", () => {
     ]);
   });
 
-  it("batches non-escrow multi-step quotes then submits in order", async () => {
+  it("consumes Canix POST /plans for non-escrow enter instead of assembling quotes", async () => {
     const account = algosdk.generateAccount();
     const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
     const managedAddress = account.addr.toString();
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
     const callManagedTool = vi.fn().mockResolvedValue({
       data: {
-        data: [
-          {
-            shapeKey: "mainnet:tinyman:v2:setup:pool",
-            expiresAt: new Date(Date.now() + 60_000).toISOString(),
-            encodedTransactions: ["AAAA"],
-            warnings: [],
-            transactions: [],
-          },
-          {
-            shapeKey: "mainnet:tinyman:v2:addLiquidity:flexible",
-            expiresAt: new Date(Date.now() + 60_000).toISOString(),
-            encodedTransactions: ["BBBB"],
-            warnings: [],
-            transactions: [],
-          },
-        ],
-        meta: { executionSubmitted: false, quoteCount: 2 },
+        data: {
+          allocations: [
+            {
+              opportunityId: "tinyman:pool:1",
+              protocol: "tinyman",
+              quotes: [
+                { shapeKey: "mainnet:tinyman:v2:setup:pool", input: {} },
+                {
+                  shapeKey: "mainnet:tinyman:v2:addLiquidity:flexible",
+                  input: {},
+                },
+              ],
+              steps: [
+                {
+                  kind: "setup",
+                  order: 0,
+                  compileStatus: "compiled",
+                  shapeKey: "mainnet:tinyman:v2:setup:pool",
+                  warnings: [],
+                  quote: {
+                    shapeKey: "mainnet:tinyman:v2:setup:pool",
+                    expiresAt,
+                    encodedTransactions: ["AAAA"],
+                    warnings: [],
+                    transactions: [],
+                  },
+                },
+                {
+                  kind: "enter",
+                  order: 1,
+                  compileStatus: "compiled",
+                  shapeKey: "mainnet:tinyman:v2:addLiquidity:flexible",
+                  warnings: [],
+                  quote: {
+                    shapeKey: "mainnet:tinyman:v2:addLiquidity:flexible",
+                    expiresAt,
+                    encodedTransactions: ["BBBB"],
+                    warnings: [],
+                    transactions: [],
+                  },
+                },
+              ],
+              warnings: [],
+            },
+          ],
+          blocked: [],
+          expectedPositionDelta: { summary: "enter", entries: [] },
+          fees: { x402Usdc: "0.25" },
+          expiresAt,
+          warnings: [],
+        },
+        meta: {
+          address: managedAddress,
+          budget: { assetId: 0, amount: "1000" },
+          fetchedAt: new Date().toISOString(),
+          paymentRequired: true,
+          executionSubmitted: false,
+          quoteTimeAuthoritative: true,
+          eligibilityEndpoint: "/eligibility",
+        },
       },
       payment: {
-        amountBaseUnits: "100000",
+        amountBaseUnits: "250000",
         assetId: "31566704",
         network: "algorand:mainnet",
       },
@@ -1179,23 +1223,24 @@ describe("AlgorandExecutionService multi-quote", () => {
     });
 
     expect(callManagedTool).toHaveBeenCalledWith(
-      "canix_get_execution_quote",
-      {
-        quotes: [
-          expect.objectContaining({
-            shapeKey: "mainnet:tinyman:v2:setup:pool",
-          }),
-          expect.objectContaining({
-            shapeKey: "mainnet:tinyman:v2:addLiquidity:flexible",
-          }),
-        ],
-      },
+      "canix_get_plan",
+      expect.objectContaining({
+        address: managedAddress,
+        opportunityIds: ["tinyman:pool:1"],
+        budget: { assetId: 0, amount: "1000" },
+      }),
       managedAddress,
+    );
+    expect(callManagedTool).not.toHaveBeenCalledWith(
+      "canix_get_execution_quote",
+      expect.anything(),
+      expect.anything(),
     );
     expect(signAndSubmitEncoded).toHaveBeenCalledTimes(2);
     expect(signAndSubmitEncoded.mock.calls[0]?.[0]).toBe("open-1:0");
     expect(signAndSubmitEncoded.mock.calls[1]?.[0]).toBe("open-1:1");
     expect(result.outcome.status).toBe("confirmed");
+    expect(result.outcome.toolName).toBe("canix_get_plan");
     expect(result.payments).toHaveLength(1);
   });
 
@@ -1621,21 +1666,57 @@ describe("clampActionAmountToSpendable", () => {
     const planned = "3849222168";
     const spendable = 3_846_637_084n;
 
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
     const callManagedTool = vi.fn().mockResolvedValue({
       data: {
-        data: [
-          {
-            shapeKey: "mainnet:haystack:v1:stake:hay",
-            expiresAt: new Date(Date.now() + 60_000).toISOString(),
-            encodedTransactions: ["STAKE"],
-            warnings: [],
-            transactions: [],
-          },
-        ],
-        meta: { executionSubmitted: false, quoteCount: 1 },
+        data: {
+          allocations: [
+            {
+              opportunityId: "haystack-staking-hay",
+              protocol: "haystack",
+              quotes: [
+                {
+                  shapeKey: "mainnet:haystack:v1:stake:hay",
+                  input: { amount: spendable.toString() },
+                },
+              ],
+              steps: [
+                {
+                  kind: "enter",
+                  order: 0,
+                  compileStatus: "compiled",
+                  shapeKey: "mainnet:haystack:v1:stake:hay",
+                  warnings: [],
+                  quote: {
+                    shapeKey: "mainnet:haystack:v1:stake:hay",
+                    expiresAt,
+                    encodedTransactions: ["STAKE"],
+                    warnings: [],
+                    transactions: [],
+                  },
+                },
+              ],
+              warnings: [],
+            },
+          ],
+          blocked: [],
+          expectedPositionDelta: { summary: "stake", entries: [] },
+          fees: { x402Usdc: "0.25" },
+          expiresAt,
+          warnings: [],
+        },
+        meta: {
+          address: managedAddress,
+          budget: { assetId: hayAssetId, amount: spendable.toString() },
+          fetchedAt: new Date().toISOString(),
+          paymentRequired: true,
+          executionSubmitted: false,
+          quoteTimeAuthoritative: true,
+          eligibilityEndpoint: "/eligibility",
+        },
       },
       payment: {
-        amountBaseUnits: "100000",
+        amountBaseUnits: "250000",
         assetId: "31566704",
         network: "algorand:mainnet",
       },
@@ -1713,20 +1794,140 @@ describe("clampActionAmountToSpendable", () => {
     );
 
     expect(callManagedTool).toHaveBeenCalledWith(
-      "canix_get_execution_quote",
-      {
-        quotes: [
-          {
-            shapeKey: "mainnet:haystack:v1:stake:hay",
-            input: {
-              assetId: hayAssetId,
-              amount: spendable.toString(),
-              maxSlippageBps: 100,
-            },
-          },
-        ],
-      },
+      "canix_get_plan",
+      expect.objectContaining({
+        opportunityIds: ["haystack-staking-hay"],
+        budget: {
+          assetId: hayAssetId,
+          amount: spendable.toString(),
+        },
+      }),
       managedAddress,
+    );
+    expect(callManagedTool).not.toHaveBeenCalledWith(
+      "canix_get_execution_quote",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("fails closed on a 402 from POST /plans without assembling swap-then-enter", async () => {
+    const account = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const callManagedTool = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Canix402 PAYMENT_REQUIRED: no local payment signer is configured",
+        ),
+      );
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
+    );
+    mockAbundantSpendable(executor);
+
+    const result = await executor.executeAction(action(), {
+      opportunities: [opportunity()],
+    });
+
+    expect(result.outcome.status).toBe("failed");
+    expect(result.outcome.error).toMatch(/POST \/plans compose failed/);
+    expect(result.outcome.error).toMatch(/without assembling swap-then-enter/);
+    expect(callManagedTool.mock.calls.map((call) => String(call[0]))).toEqual([
+      "canix_get_plan",
+    ]);
+  });
+
+  it("fails closed on stale compose opt-in without falling back to quotes", async () => {
+    const account = algosdk.generateAccount();
+    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
+    const managedAddress = account.addr.toString();
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const callManagedTool = vi.fn().mockResolvedValue({
+      data: {
+        data: {
+          allocations: [
+            {
+              opportunityId: "tinyman:pool:1",
+              protocol: "tinyman",
+              quotes: [
+                {
+                  shapeKey: "mainnet:tinyman:v2:addLiquidity:flexible",
+                  input: {},
+                },
+              ],
+              steps: [
+                {
+                  kind: "enter",
+                  order: 0,
+                  compileStatus: "compiled",
+                  warnings: ["missing opt-in for output ASA"],
+                  quote: {
+                    shapeKey: "mainnet:tinyman:v2:addLiquidity:flexible",
+                    expiresAt,
+                    encodedTransactions: ["ENTER"],
+                    warnings: [],
+                    transactions: [],
+                  },
+                },
+              ],
+              warnings: [],
+            },
+          ],
+          blocked: [],
+          expectedPositionDelta: { summary: "enter", entries: [] },
+          fees: { x402Usdc: "0.25" },
+          expiresAt,
+          warnings: [],
+        },
+        meta: {
+          address: managedAddress,
+          budget: { assetId: 0, amount: "1000" },
+          fetchedAt: new Date().toISOString(),
+          paymentRequired: true,
+          executionSubmitted: false,
+          quoteTimeAuthoritative: true,
+          eligibilityEndpoint: "/eligibility",
+        },
+      },
+    });
+    const executor = new AlgorandExecutionService(
+      { callManagedTool } as unknown as Canix402Client,
+      wallet,
+      managedAddress,
+      "https://mainnet-api.algonode.cloud",
+      {
+        signingEnabled: true,
+        maxSlippageBps: 100,
+        maxPriceImpactPct: 3,
+      },
+    );
+    mockAbundantSpendable(executor);
+
+    const result = await executor.executeAction(action(), {
+      opportunities: [opportunity()],
+    });
+
+    expect(result.outcome.status).toBe("failed");
+    expect(result.outcome.error).toMatch(/missing opt-in/i);
+    expect(callManagedTool).not.toHaveBeenCalledWith(
+      "canix_get_execution_quote",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(callManagedTool).not.toHaveBeenCalledWith(
+      "canix_swap",
+      expect.anything(),
+      expect.anything(),
     );
   });
 });

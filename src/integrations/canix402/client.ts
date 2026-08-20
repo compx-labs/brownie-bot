@@ -15,6 +15,12 @@ import { normalizeWalletClaimable } from "../../services/claim-desk.js";
 import { formatMoney, moneyOrNull } from "../../services/money.js";
 import { sanitizeErrorText } from "../../util/errors.js";
 import type { PaymentBuilder } from "./payment.js";
+import {
+  planRequestSchema,
+  planResponseSchema,
+  type PlanRequest,
+  type PlanResponse,
+} from "./plan.js";
 
 export interface McpToolDefinition {
   name: string;
@@ -105,6 +111,7 @@ const TOOL_RESOURCE_PATHS: Record<string, string> = {
   canix_get_positions: "/positions",
   canix_list_claimable: "/positions/claimable",
   canix_get_execution_quote: "/execution/quotes",
+  canix_get_plan: "/plans",
   canix_swap: "/swaps/transactions",
 };
 
@@ -347,6 +354,26 @@ export class Canix402Client {
       await this.caller.callTool("canix_health", {}),
       "canix_health",
     );
+  }
+
+  async getPlan(request: PlanRequest): Promise<{
+    plan: PlanResponse;
+    payment?: PaymentReceipt;
+  }> {
+    const parsedRequest = planRequestSchema.parse(request);
+    const result = await this.callManagedTool(
+      "canix_get_plan",
+      parsedRequest,
+      parsedRequest.address,
+    );
+    const plan = planResponseSchema.parse(result.data);
+    if (plan.meta.address !== parsedRequest.address) {
+      throw new Error("Canix402 plan response address does not match request");
+    }
+    if (plan.meta.executionSubmitted !== false) {
+      throw new Error("Canix402 plan meta.executionSubmitted must be false");
+    }
+    return { plan, payment: result.payment };
   }
 
   async getTokenPrices(assetIds: number[]): Promise<AssetPrice[]> {
@@ -686,6 +713,7 @@ function injectManagedWallet(
     "canix_get_positions",
     "canix_list_claimable",
     "canix_get_quote",
+    "canix_get_plan",
     "canix_optin",
     "canix_swap",
   ]);
