@@ -25,7 +25,7 @@ submits the returned execution groups.
 Brownie keeps its LLM `portfolio_plan` + host `PortfolioPolicy`. Do **not** call
 `canix_get_plan` from the agent loop. For a single-asset swap-then-enter after
 policy approval, the **host** calls `canix_compose_enter` (~0.10 USDC) so opt-in
-→ Haystack swap → enter can finish in one review before the ~30s quote expires.
+→ winning swap → enter can finish in one review before the ~30s quote expires.
 Two-sided LP and Folks/Pact escrow setup stay on dependency waves /
 `canix_get_execution_quote`.
 
@@ -34,8 +34,10 @@ Two-sided LP and Folks/Pact escrow setup stay on dependency waves /
 1. Eligible when a foundation `swap` feeds a dependent `open`/`increase` with a
    unique `requiredAssetIds` length of 1, and the opportunity is not Folks
    sequential escrow / Pact `deployEscrow`.
-2. Gate Haystack price impact with `canix_get_quote` first (preferred-hold
-   exemptions still apply).
+2. Gate reported swap price impact with `canix_get_quote` first (preferred-hold
+   exemptions still apply). Omit `router` so Canix compares enabled adapters
+   and returns a MetaSwap quote (`router`, `score`, `alternatives`, `legs`,
+   opaque `payload`). Pass `slippage` as percent (`maxSlippageBps / 100`).
 3. Call `canix_compose_enter` with
    `{ address, opportunityId, fromAssetId, amount, slippage? }` (paid ~0.10 USDC).
 4. Require `meta.executionSubmitted === false` and `meta.groupsMerged === false`.
@@ -43,9 +45,22 @@ Two-sided LP and Folks/Pact escrow setup stay on dependency waves /
 6. If an opt-in step is compiled: submit that group, then **re-compose** (opt-in
    confirmation ages the swap quote).
 7. Submit swap then enter groups in `order`. Never merge groups. Sign only
-   `signer: "user"` legs; preserve `logicsig` / `haystack` `signedTransaction`.
+   `signer: "user"` legs; preserve `logicsig` / `haystack` / `protocol`
+   `signedTransaction`. Do not regroup quoted swap groups.
 8. Deferred setup/enter → fall back to sequential `canix_get_execution_quote`
    (do not route Folks through compose in v1).
+
+## Standalone swap loop (`canix_get_quote` / `canix_optin` / `canix_swap`)
+
+1. `canix_get_quote` with `address`, `fromAssetId`, `toAssetId`, `amount`,
+   `type: "fixed-input"`, and `slippage` (percent). Omit `router` unless pinning
+   one adapter. Read `data.router` and `data.alternatives`. Pass `data`
+   unchanged into opt-in and swap — do not edit `payload`.
+2. `canix_optin` with the quote. If `required`, submit the opt-in group, then
+   **re-quote** before swap (~30s TTL).
+3. `canix_swap` (paid ~0.005 USDC) with the fresh quote and the same `slippage`.
+   Sign only `userSignIndexes` / `signer: "user"`. Preserve pre-signed members.
+   Submit the full group before `quoteExpiresAt`. Never merge groups.
 
 ## Signing an execution quote
 

@@ -65,44 +65,77 @@ const executionQuoteBatchSchema = z.object({
   }),
 });
 
-const haystackQuoteSchema = z.object({
-  data: z
-    .object({
-      address: z.string(),
-      fromAssetId: z.string(),
-      toAssetId: z.string(),
-      amount: z.string(),
-      type: z.enum(["fixed-input", "fixed-output"]),
-      quotedAmount: z.string(),
-      createdAt: z.iso.datetime(),
-      expiresAt: z.iso.datetime(),
-      requiredAppOptIns: z.array(z.string()),
-      txnPayload: z.unknown(),
-      userPriceImpact: z.number().optional(),
-      marketPriceImpact: z.number().optional(),
-      route: z.array(z.unknown()),
-      quotes: z.array(z.unknown()),
-      protocolFees: z.record(z.string(), z.number()),
-    })
-    .passthrough(),
+const metaSwapRouterIdSchema = z.enum([
+  "haystack",
+  "hogswap",
+  "tinyman",
+  "pact-smart-router",
+  "folks-router",
+  "asastats",
+]);
+
+const metaSwapQuoteDataSchema = z
+  .object({
+    router: metaSwapRouterIdSchema,
+    address: z.string(),
+    fromAssetId: z.string(),
+    toAssetId: z.string(),
+    amount: z.string(),
+    type: z.enum(["fixed-input", "fixed-output"]),
+    quotedAmount: z.string(),
+    minOut: z.string(),
+    networkFeeMicroAlgos: z.string(),
+    slippageBps: z.number().int().min(0).max(10_000),
+    createdAt: z.iso.datetime(),
+    expiresAt: z.iso.datetime(),
+    score: z.object({
+      expectedNetOut: z.string(),
+      minOut: z.string(),
+      expectedIn: z.string(),
+      maxIn: z.string().optional(),
+      networkFeeMicroAlgos: z.string(),
+      feeAlreadyNetted: z.boolean(),
+    }),
+    alternatives: z.array(
+      z.object({
+        router: metaSwapRouterIdSchema,
+        status: z.enum(["quoted", "error", "skipped", "timeout"]),
+        expectedNetOut: z.string().optional(),
+        minOut: z.string().optional(),
+        networkFeeMicroAlgos: z.string().optional(),
+        reason: z.string().optional(),
+      }),
+    ),
+    legs: z.array(z.unknown()),
+    payload: z.unknown(),
+  })
+  .passthrough();
+
+const metaSwapQuoteSchema = z.object({
+  data: metaSwapQuoteDataSchema,
   meta: z.object({ executionSubmitted: z.literal(false) }),
 });
+
+type MetaSwapQuoteData = z.infer<typeof metaSwapQuoteDataSchema>;
 
 const walletlessTransactionSchema = z.object({
   index: z.number().int().nonnegative(),
   encodedTransaction: z.string().min(1),
   signedTransaction: z.string().min(1).optional(),
-  /** Standalone swaps use "haystack"; compose maps that to "logicsig". */
-  signer: z.enum(["user", "haystack", "logicsig"]),
+  /** Haystack winners use "haystack"; other routers may use "protocol". */
+  signer: z.enum(["user", "haystack", "logicsig", "protocol"]),
 });
 
 const walletlessGroupSchema = z.object({
-  data: z.object({
-    transactions: z.array(walletlessTransactionSchema).min(1),
-    userSignIndexes: z.array(z.number().int().nonnegative()),
-    createdAt: z.iso.datetime(),
-    quoteExpiresAt: z.iso.datetime(),
-  }),
+  data: z
+    .object({
+      router: metaSwapRouterIdSchema,
+      transactions: z.array(walletlessTransactionSchema).min(1),
+      userSignIndexes: z.array(z.number().int().nonnegative()),
+      createdAt: z.iso.datetime(),
+      quoteExpiresAt: z.iso.datetime(),
+    })
+    .passthrough(),
   meta: z.object({ executionSubmitted: z.literal(false) }),
 });
 
@@ -172,7 +205,7 @@ export interface ExecutionPolicy {
   maxSlippageBps: number;
   maxPriceImpactPct: number;
   /**
-   * Destination ASAs for which Haystack userPriceImpact may exceed
+   * Destination ASAs for which reported swap price impact may exceed
    * maxPriceImpactPct (preferred-hold accumulation into thin markets).
    */
   priceImpactExemptToAssetIds?: number[];
@@ -1303,27 +1336,17 @@ export class AlgorandExecutionService {
     }
     let quoteResult = await this.canix.callManagedTool(
       "canix_get_quote",
-      {
-        fromAssetId: action.fromAssetId,
-        toAssetId: action.toAssetId,
-        amount: action.amountRaw,
-        type: "fixed-input",
-      },
+      this.metaSwapQuoteRequest(
+        action.fromAssetId,
+        action.toAssetId,
+        action.amountRaw,
+      ),
       this.managedAddress,
     );
-    let quote = haystackQuoteSchema.parse(quoteResult.data);
+    let quote = metaSwapQuoteSchema.parse(quoteResult.data);
     assertFresh(quote.data.expiresAt);
-    const impactExempt = (
-      this.policy.priceImpactExemptToAssetIds ?? []
-    ).includes(action.toAssetId);
-    if (
-      !impactExempt &&
-      (quote.data.userPriceImpact ?? 0) > this.policy.maxPriceImpactPct
-    ) {
-      throw new Error(
-        `Haystack price impact exceeds ${this.policy.maxPriceImpactPct}%`,
-      );
-    }
+    this.logMetaSwapQuote(action.id, quote.data);
+    this.assertQuotedPriceImpactAcceptable(quote.data, action.toAssetId);
 
     const optInResult = await this.canix.callManagedTool(
       "canix_optin",
@@ -1355,28 +1378,32 @@ export class AlgorandExecutionService {
       }
       quoteResult = await this.canix.callManagedTool(
         "canix_get_quote",
-        {
-          fromAssetId: action.fromAssetId,
-          toAssetId: action.toAssetId,
-          amount: action.amountRaw,
-          type: "fixed-input",
-        },
+        this.metaSwapQuoteRequest(
+          action.fromAssetId,
+          action.toAssetId,
+          action.amountRaw,
+        ),
         this.managedAddress,
       );
-      quote = haystackQuoteSchema.parse(quoteResult.data);
+      quote = metaSwapQuoteSchema.parse(quoteResult.data);
       assertFresh(quote.data.expiresAt);
+      this.logMetaSwapQuote(`${action.id}:requote`, quote.data);
+      this.assertQuotedPriceImpactAcceptable(quote.data, action.toAssetId);
     }
 
     const swapResult = await this.canix.callManagedTool(
       "canix_swap",
       {
         quote: quote.data,
-        slippage: this.policy.maxSlippageBps / 100,
+        slippage: this.slippagePercent(),
       },
       this.managedAddress,
     );
     const group = walletlessGroupSchema.parse(swapResult.data);
     assertFresh(group.data.quoteExpiresAt);
+    console.error(
+      `[execution] Swap group ${action.id} router=${group.data.router}`,
+    );
     const outcome = await this.signAndSubmit(
       action.id,
       group.data.transactions.map((transaction) => ({
@@ -1384,6 +1411,7 @@ export class AlgorandExecutionService {
         signer: transaction.signer,
         signed: transaction.signedTransaction,
       })),
+      { skipUniqueNotes: true },
     );
     return {
       outcome: { ...outcome.outcome, toolName: "canix_swap" },
@@ -1464,15 +1492,21 @@ export class AlgorandExecutionService {
       signer: "user" | "haystack" | "logicsig" | "protocol";
       signed?: string;
     }>,
+    options?: { skipUniqueNotes?: boolean },
   ): Promise<{
     outcome: ExecutionOutcome;
   }> {
-    return this.signAndSubmitGroupMembers(actionId, members);
+    return this.signAndSubmitGroupMembers(
+      actionId,
+      members,
+      new Map(),
+      options,
+    );
   }
 
   /**
    * Sign user legs and assemble the full group in index order. Preserve
-   * pre-signed logicsig/haystack members. Never merge across groups.
+   * pre-signed logicsig/haystack/protocol members. Never merge across groups.
    */
   private async signAndSubmitGroupMembers(
     actionId: string,
@@ -1482,6 +1516,7 @@ export class AlgorandExecutionService {
       signed?: string;
     }>,
     extraSigners: Map<string, Uint8Array> = new Map(),
+    options?: { skipUniqueNotes?: boolean },
   ): Promise<{
     outcome: ExecutionOutcome;
   }> {
@@ -1491,14 +1526,15 @@ export class AlgorandExecutionService {
       };
     }
     // Only rewrite notes when every member is user-signed (e.g. opt-in groups).
-    // Haystack / protocol co-signed groups cannot be regrouped.
+    // Quoted swap groups (any router) and provider-cosigned groups cannot be regrouped.
     const allUserSigned = members.every((member) => member.signer === "user");
-    const uniqueEncoded = allUserSigned
-      ? applyUniqueTransactionNotes(
-          members.map((member) => member.encoded),
-          actionId,
-        )
-      : null;
+    const uniqueEncoded =
+      !options?.skipUniqueNotes && allUserSigned
+        ? applyUniqueTransactionNotes(
+            members.map((member) => member.encoded),
+            actionId,
+          )
+        : null;
     const signed = members.map((member, index) => {
       if (member.signer === "user") {
         const encoded = uniqueEncoded?.[index] ?? member.encoded;
@@ -1549,8 +1585,8 @@ export class AlgorandExecutionService {
   }
 
   /**
-   * Protocol 1.4.0: single-opportunity swap-aware compose (opt-in → Haystack
-   * swap → enter) in one review. Callers must pre-check eligibility via
+   * Protocol 1.4.0: single-opportunity swap-aware compose (opt-in → winning
+   * swap router → enter) in one review. Callers must pre-check eligibility via
    * {@link canComposeEnter}.
    */
   async executeComposeEnter(
@@ -1628,7 +1664,7 @@ export class AlgorandExecutionService {
       );
     }
 
-    await this.assertHaystackPriceImpactAcceptable(
+    await this.assertSwapPriceImpactAcceptable(
       swapAction.fromAssetId,
       swapAction.toAssetId,
       swapAction.amountRaw,
@@ -1666,7 +1702,7 @@ export class AlgorandExecutionService {
           payments,
         };
       }
-      // Opt-in confirmation ages the Haystack swap quote (~30s TTL).
+      // Opt-in confirmation ages the swap quote (~30s TTL).
       composed = await this.requestComposeEnter({
         opportunityId: enterAction.opportunityId,
         fromAssetId: swapAction.fromAssetId,
@@ -1745,9 +1781,7 @@ export class AlgorandExecutionService {
       // Budget asset already matched enter asset — compose skipped the swap.
       swapConfirmed = ordered.every(
         (step) =>
-          step.kind !== "swap" ||
-          step.compileStatus === "hint" ||
-          !step.quote,
+          step.kind !== "swap" || step.compileStatus === "hint" || !step.quote,
       );
     }
 
@@ -1777,7 +1811,7 @@ export class AlgorandExecutionService {
         opportunityId: args.opportunityId,
         fromAssetId: args.fromAssetId,
         amount: args.amount,
-        slippage: this.policy.maxSlippageBps / 100,
+        slippage: this.slippagePercent(),
       },
       this.managedAddress,
     );
@@ -1796,39 +1830,116 @@ export class AlgorandExecutionService {
     assertFresh(quote.expiresAt);
     assertQuoteWarningsAcceptable(quote.warnings);
     const members = resolveQuoteGroupMembers(quote);
-    const submit = await this.signAndSubmitGroupMembers(stepLabel, members);
+    const submit = await this.signAndSubmitGroupMembers(
+      stepLabel,
+      members,
+      new Map(),
+      { skipUniqueNotes: stepLabel.endsWith(":swap") },
+    );
     return submit.outcome;
   }
 
-  private async assertHaystackPriceImpactAcceptable(
+  private slippagePercent(): number {
+    return this.policy.maxSlippageBps / 100;
+  }
+
+  private metaSwapQuoteRequest(
+    fromAssetId: number,
+    toAssetId: number,
+    amount: string,
+  ): Record<string, unknown> {
+    return {
+      fromAssetId,
+      toAssetId,
+      amount,
+      type: "fixed-input",
+      slippage: this.slippagePercent(),
+    };
+  }
+
+  private logMetaSwapQuote(label: string, quote: MetaSwapQuoteData): void {
+    console.error(`[execution] ${label} ${formatMetaSwapQuoteLog(quote)}`);
+  }
+
+  private async assertSwapPriceImpactAcceptable(
     fromAssetId: number,
     toAssetId: number,
     amount: string,
   ): Promise<void> {
     const quoteResult = await this.canix.callManagedTool(
       "canix_get_quote",
-      {
-        fromAssetId,
-        toAssetId,
-        amount,
-        type: "fixed-input",
-      },
+      this.metaSwapQuoteRequest(fromAssetId, toAssetId, amount),
       this.managedAddress,
     );
-    const quote = haystackQuoteSchema.parse(quoteResult.data);
+    const quote = metaSwapQuoteSchema.parse(quoteResult.data);
     assertFresh(quote.data.expiresAt);
+    this.logMetaSwapQuote("compose-impact", quote.data);
+    this.assertQuotedPriceImpactAcceptable(quote.data, toAssetId);
+  }
+
+  private assertQuotedPriceImpactAcceptable(
+    quote: MetaSwapQuoteData,
+    toAssetId: number,
+  ): void {
     const impactExempt = (
       this.policy.priceImpactExemptToAssetIds ?? []
     ).includes(toAssetId);
-    if (
-      !impactExempt &&
-      (quote.data.userPriceImpact ?? 0) > this.policy.maxPriceImpactPct
-    ) {
+    if (impactExempt) {
+      return;
+    }
+    const impact = readReportedPriceImpactPct(quote.payload);
+    if (impact === undefined) {
+      return;
+    }
+    if (impact > this.policy.maxPriceImpactPct) {
       throw new Error(
-        `Haystack price impact exceeds ${this.policy.maxPriceImpactPct}%`,
+        `Swap price impact exceeds ${this.policy.maxPriceImpactPct}% (${quote.router} reported ${impact}%)`,
       );
     }
   }
+}
+
+export function readReportedPriceImpactPct(
+  payload: unknown,
+): number | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return undefined;
+  }
+  const record = payload as Record<string, unknown>;
+  if (
+    typeof record.userPriceImpact === "number" &&
+    Number.isFinite(record.userPriceImpact)
+  ) {
+    return record.userPriceImpact;
+  }
+  if (
+    typeof record.priceImpactPct === "number" &&
+    Number.isFinite(record.priceImpactPct)
+  ) {
+    return record.priceImpactPct;
+  }
+  if (
+    typeof record.priceImpact === "number" &&
+    Number.isFinite(record.priceImpact)
+  ) {
+    return record.priceImpact >= 0 && record.priceImpact <= 1
+      ? record.priceImpact * 100
+      : record.priceImpact;
+  }
+  return undefined;
+}
+
+function formatMetaSwapQuoteLog(quote: MetaSwapQuoteData): string {
+  const alternatives = quote.alternatives
+    .map((alternative) => {
+      const net = alternative.expectedNetOut
+        ? ` net=${alternative.expectedNetOut}`
+        : "";
+      const reason = alternative.reason ? ` (${alternative.reason})` : "";
+      return `${alternative.router}:${alternative.status}${net}${reason}`;
+    })
+    .join(", ");
+  return `router=${quote.router} quotedAmount=${quote.quotedAmount} minOut=${quote.minOut} alternatives=[${alternatives}]`;
 }
 
 /**
@@ -1885,7 +1996,10 @@ export function isTinymanAnalyticsClaim(
 /** Fail closed on stale-quote warnings that mean the group must not be signed. */
 export function assertQuoteWarningsAcceptable(warnings: string[]): void {
   for (const warning of warnings) {
-    if (/stale quote/i.test(warning) && /expired|expiresAt|re-call|recompose/i.test(warning)) {
+    if (
+      /stale quote/i.test(warning) &&
+      /expired|expiresAt|re-call|recompose/i.test(warning)
+    ) {
       // Soft advisory from compose (submit before expiresAt) — assertFresh covers expiry.
       continue;
     }

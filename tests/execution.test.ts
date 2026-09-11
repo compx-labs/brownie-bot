@@ -17,6 +17,7 @@ import {
   isSkippablePrerequisiteQuoteError,
   prependAssetOptInTransactions,
   quotesNeedSequentialConfirm,
+  readReportedPriceImpactPct,
   resolveCapitalEnterSpendAssetId,
   resolveQuoteGroupMembers,
 } from "../src/integrations/algorand/execution.js";
@@ -1734,7 +1735,7 @@ describe("clampActionAmountToSpendable", () => {
   });
 });
 
-describe("Haystack swap price impact", () => {
+describe("Meta-swap quotes", () => {
   const usdcAssetId = 31_566_704;
   const compxAssetId = 1_732_165_149;
 
@@ -1757,77 +1758,128 @@ describe("Haystack swap price impact", () => {
     };
   }
 
-  function quotePayload(userPriceImpact: number) {
+  function metaQuote(
+    options: {
+      router?: "haystack" | "hogswap";
+      payload?: unknown;
+    } = {},
+  ) {
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const router = options.router ?? "haystack";
     return {
       data: {
         data: {
+          router,
           address: "TEST",
           fromAssetId: String(usdcAssetId),
           toAssetId: String(compxAssetId),
           amount: "65000000",
           type: "fixed-input" as const,
           quotedAmount: "1000000",
+          minOut: "990000",
+          networkFeeMicroAlgos: "0",
+          slippageBps: 100,
           createdAt: new Date().toISOString(),
           expiresAt,
-          requiredAppOptIns: [],
-          txnPayload: {},
-          userPriceImpact,
-          marketPriceImpact: userPriceImpact,
-          route: [],
-          quotes: [],
-          protocolFees: {},
+          score: {
+            expectedNetOut: "1000000",
+            minOut: "990000",
+            expectedIn: "65000000",
+            networkFeeMicroAlgos: "0",
+            feeAlreadyNetted: true,
+          },
+          alternatives: [
+            {
+              router,
+              status: "quoted" as const,
+              expectedNetOut: "1000000",
+            },
+          ],
+          legs: [],
+          payload: options.payload ?? {},
         },
         meta: { executionSubmitted: false as const },
       },
     };
   }
 
-  function swapMocks(
-    callManagedTool: ReturnType<typeof vi.fn>,
-    impact: number,
+  function swapGroup(
+    options: {
+      router?: "haystack" | "hogswap";
+      signer?: "user" | "haystack" | "protocol";
+      signedTransaction?: string;
+    } = {},
   ) {
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
-    callManagedTool
-      .mockResolvedValueOnce(quotePayload(impact))
-      .mockResolvedValueOnce({
+    const signer = options.signer ?? "haystack";
+    return {
+      data: {
         data: {
-          data: {
-            required: false,
-            transactions: [],
-            userSignIndexes: [],
-            expiresAt,
-          },
-          meta: { executionSubmitted: false },
+          router: options.router ?? "haystack",
+          transactions: [
+            {
+              index: 0,
+              encodedTransaction: "SWAPTX",
+              ...(options.signedTransaction === undefined
+                ? signer === "user"
+                  ? {}
+                  : { signedTransaction: "SIGNED" }
+                : { signedTransaction: options.signedTransaction }),
+              signer,
+            },
+          ],
+          userSignIndexes: signer === "user" ? [0] : [],
+          createdAt: new Date().toISOString(),
+          quoteExpiresAt: expiresAt,
         },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          data: {
-            transactions: [
-              {
-                index: 0,
-                encodedTransaction: "SWAPTX",
-                signedTransaction: "SIGNED",
-                signer: "haystack",
-              },
-            ],
-            userSignIndexes: [],
-            createdAt: new Date().toISOString(),
-            quoteExpiresAt: expiresAt,
-          },
-          meta: { executionSubmitted: false },
-        },
-      });
+        meta: { executionSubmitted: false },
+      },
+    };
   }
 
-  it("fails when price impact exceeds the cap", async () => {
+  function optInNotRequired() {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    return {
+      data: {
+        data: {
+          required: false,
+          transactions: [],
+          userSignIndexes: [],
+          expiresAt,
+        },
+        meta: { executionSubmitted: false },
+      },
+    };
+  }
+
+  function swapMocks(
+    callManagedTool: ReturnType<typeof vi.fn>,
+    options: {
+      payload?: unknown;
+      router?: "haystack" | "hogswap";
+      signer?: "user" | "haystack" | "protocol";
+    } = {},
+  ) {
+    callManagedTool
+      .mockResolvedValueOnce(
+        metaQuote({ router: options.router, payload: options.payload }),
+      )
+      .mockResolvedValueOnce(optInNotRequired())
+      .mockResolvedValueOnce(
+        swapGroup({
+          router: options.router,
+          signer: options.signer,
+        }),
+      );
+  }
+
+  function signingExecutor(
+    callManagedTool: ReturnType<typeof vi.fn>,
+    extras: { priceImpactExemptToAssetIds?: number[] } = {},
+  ) {
     const account = algosdk.generateAccount();
     const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
     const managedAddress = account.addr.toString();
-    const callManagedTool = vi.fn();
-    swapMocks(callManagedTool, 8.5);
-
     const executor = new AlgorandExecutionService(
       { callManagedTool } as unknown as Canix402Client,
       wallet,
@@ -1837,53 +1889,63 @@ describe("Haystack swap price impact", () => {
         signingEnabled: true,
         maxSlippageBps: 100,
         maxPriceImpactPct: 3,
+        ...extras,
       },
     );
+    return { executor, managedAddress };
+  }
+
+  function mockSignAndSubmit(executor: AlgorandExecutionService) {
+    return vi
+      .spyOn(
+        executor as unknown as {
+          signAndSubmit: (
+            actionId: string,
+            members: unknown[],
+            options?: { skipUniqueNotes?: boolean },
+          ) => Promise<{ outcome: ExecutionOutcome }>;
+        },
+        "signAndSubmit",
+      )
+      .mockResolvedValue({
+        outcome: {
+          actionId: "swap-compx",
+          status: "confirmed",
+          transactionId: "TX-COMPX",
+        },
+      });
+  }
+
+  it("reads Haystack userPriceImpact as percent and Folks/Tinyman fractions as percent", () => {
+    expect(readReportedPriceImpactPct({ userPriceImpact: 8.5 })).toBe(8.5);
+    expect(readReportedPriceImpactPct({ priceImpactPct: 4 })).toBe(4);
+    expect(readReportedPriceImpactPct({ priceImpact: 0.03 })).toBe(3);
+    expect(readReportedPriceImpactPct({ priceImpact: 8.5 })).toBe(8.5);
+    expect(readReportedPriceImpactPct({})).toBeUndefined();
+  });
+
+  it("fails when payload price impact exceeds the cap", async () => {
+    const callManagedTool = vi.fn();
+    swapMocks(callManagedTool, { payload: { userPriceImpact: 8.5 } });
+    const { executor } = signingExecutor(callManagedTool);
 
     await expect(executor.executeAction(swapAction())).resolves.toMatchObject({
       outcome: {
         actionId: "swap-compx",
         status: "failed",
-        error: "Haystack price impact exceeds 3%",
+        error: "Swap price impact exceeds 3% (haystack reported 8.5%)",
       },
     });
     expect(callManagedTool).toHaveBeenCalledTimes(1);
   });
 
   it("waives price-impact cap when buying a preferred-hold ASA", async () => {
-    const account = algosdk.generateAccount();
-    const wallet = walletFromMnemonic(algosdk.secretKeyToMnemonic(account.sk));
-    const managedAddress = account.addr.toString();
     const callManagedTool = vi.fn();
-    swapMocks(callManagedTool, 8.5);
-
-    const executor = new AlgorandExecutionService(
-      { callManagedTool } as unknown as Canix402Client,
-      wallet,
-      managedAddress,
-      "https://mainnet-api.algonode.cloud",
-      {
-        signingEnabled: true,
-        maxSlippageBps: 100,
-        maxPriceImpactPct: 3,
-        priceImpactExemptToAssetIds: [compxAssetId],
-      },
-    );
-    vi.spyOn(
-      executor as unknown as {
-        signAndSubmit: (
-          actionId: string,
-          members: unknown[],
-        ) => Promise<{ outcome: ExecutionOutcome }>;
-      },
-      "signAndSubmit",
-    ).mockResolvedValue({
-      outcome: {
-        actionId: "swap-compx",
-        status: "confirmed",
-        transactionId: "TX-COMPX",
-      },
+    swapMocks(callManagedTool, { payload: { userPriceImpact: 8.5 } });
+    const { executor, managedAddress } = signingExecutor(callManagedTool, {
+      priceImpactExemptToAssetIds: [compxAssetId],
     });
+    mockSignAndSubmit(executor);
 
     await expect(executor.executeAction(swapAction())).resolves.toMatchObject({
       outcome: {
@@ -1893,9 +1955,79 @@ describe("Haystack swap price impact", () => {
       },
     });
     expect(callManagedTool).toHaveBeenCalledWith(
+      "canix_get_quote",
+      expect.objectContaining({
+        type: "fixed-input",
+        slippage: 1,
+      }),
+      managedAddress,
+    );
+    expect(callManagedTool).toHaveBeenCalledWith(
       "canix_swap",
       expect.objectContaining({ slippage: 1 }),
       managedAddress,
+    );
+  });
+
+  it("proceeds when the winning router omits price impact", async () => {
+    const callManagedTool = vi.fn();
+    swapMocks(callManagedTool, {
+      router: "hogswap",
+      signer: "user",
+      payload: { quoteId: "opaque" },
+    });
+    const { executor, managedAddress } = signingExecutor(callManagedTool);
+    mockSignAndSubmit(executor);
+
+    await expect(executor.executeAction(swapAction())).resolves.toMatchObject({
+      outcome: {
+        actionId: "swap-compx",
+        status: "confirmed",
+        toolName: "canix_swap",
+      },
+    });
+    expect(callManagedTool).toHaveBeenCalledWith(
+      "canix_get_quote",
+      expect.objectContaining({ slippage: 1 }),
+      managedAddress,
+    );
+    const swapCall = callManagedTool.mock.calls.find(
+      (call) => call[0] === "canix_swap",
+    );
+    expect(swapCall?.[1]).toMatchObject({
+      slippage: 1,
+      quote: { router: "hogswap", payload: { quoteId: "opaque" } },
+    });
+    expect(swapCall?.[2]).toBe(managedAddress);
+  });
+
+  it("accepts protocol-signed swap group members without regrouping", async () => {
+    const callManagedTool = vi.fn();
+    swapMocks(callManagedTool, {
+      router: "hogswap",
+      signer: "protocol",
+      payload: {},
+    });
+    const { executor } = signingExecutor(callManagedTool);
+    const signAndSubmit = mockSignAndSubmit(executor);
+
+    await expect(executor.executeAction(swapAction())).resolves.toMatchObject({
+      outcome: {
+        actionId: "swap-compx",
+        status: "confirmed",
+        toolName: "canix_swap",
+      },
+    });
+    expect(signAndSubmit).toHaveBeenCalledWith(
+      "swap-compx",
+      [
+        expect.objectContaining({
+          encoded: "SWAPTX",
+          signer: "protocol",
+          signed: "SIGNED",
+        }),
+      ],
+      { skipUniqueNotes: true },
     );
   });
 });
@@ -2431,7 +2563,9 @@ describe("protocol 1.4.0 compose helpers", () => {
       ],
     });
     expect(canComposeEnter(open, swap, reti)).toBe(true);
-    expect(findComposePairs([swap, open], [reti])).toEqual([{ swap, enter: open }]);
+    expect(findComposePairs([swap, open], [reti])).toEqual([
+      { swap, enter: open },
+    ]);
 
     const lpOpen = {
       ...open,
