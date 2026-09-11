@@ -18,7 +18,7 @@ Agent plan JSON
 
 If schema parse fails, status is `reported` and **policy never runs** (`Policy n/a`). That is not a policy block.
 
-When signing is enabled, the host executes only **no-dependency** actions in the approved plan. Actions that depend on earlier plan steps are marked `skipped` with `Deferred to next review (depends on earlier plan steps)`. **Exception (protocol 1.4.0):** a foundation `swap` paired with a dependent single-asset `open`/`increase` may collapse into one `canix_compose_enter` call so opt-in → Haystack swap → enter run in the **same** review (Haystack quotes expire in ~30s). Two-sided LP and Folks/Pact escrow setup still use the deferred wave. The next review sees a fresh snapshot and a richer `priorReview` continuity brief (plan summary, policy outcome, deferred/failed actions — not only execution status rows) and can replan sizes against live balances. Dry-run still validates the full plan without deferred skips.
+When signing is enabled, the host executes only **no-dependency** actions in the approved plan. Actions that depend on earlier plan steps are marked `skipped` with `Deferred to next review (depends on earlier plan steps)`. **Exception (protocol 1.4.0):** a foundation `swap` paired with a dependent single-asset `open`/`increase` may collapse into one `canix_compose_enter` call so opt-in → winning swap → enter run in the **same** review (swap quotes expire in ~30s). Two-sided LP and Folks/Pact escrow setup still use the deferred wave. The next review sees a fresh snapshot and a richer `priorReview` continuity brief (plan summary, policy outcome, deferred/failed actions — not only execution status rows) and can replan sizes against live balances. Dry-run still validates the full plan without deferred skips.
 
 ## Approval model
 
@@ -50,14 +50,14 @@ Returned fields:
 | `MAX_SOURCE_AGE_HOURS` | `24` | Soft: opportunity `sourceTimestamp` age on open/increase; also used for soft position freshness caveats (does not mark the snapshot incomplete) |
 | `MIN_PROJECTED_NET_IMPROVEMENT_USD` | `1` | Soft: when any non-`hold` action exists |
 | `ENABLE_TRANSACTION_SIGNING` | required | Switches hard vs soft treatment (see above) |
-| `PREFERRED_HOLD_ASSETS` | empty | Soft agent steer; waives Haystack price-impact on buys into listed ASAs; waives `MIN_TVL_USD` on open/increase into opportunities that include those ASAs |
+| `PREFERRED_HOLD_ASSETS` | empty | Soft agent steer; waives reported swap price-impact on buys into listed ASAs; waives `MIN_TVL_USD` on open/increase into opportunities that include those ASAs |
 
 Execution-time (not `PortfolioPolicy`, but related operator limits):
 
 | Env | Default | Role |
 | --- | --- | --- |
 | `MAX_SLIPPAGE_BPS` | `100` | Passed into quote inputs / swap paths |
-| `MAX_PRICE_IMPACT_PCT` | `3` | Hard fail at execution for Haystack quotes above impact (waived when swap `toAssetId` is in `PREFERRED_HOLD_ASSETS`) |
+| `MAX_PRICE_IMPACT_PCT` | `3` | Hard fail at execution when the winning swap quote reports impact above this % (Haystack `userPriceImpact`, Folks/Tinyman `priceImpact`, ASA Stats `priceImpactPct`). Routers that omit impact (e.g. Hogswap) rely on quote-time `slippage` / `minOut`. Waived when swap `toAssetId` is in `PREFERRED_HOLD_ASSETS` |
 | `MAX_DAILY_X402_BASE_UNITS` | `5000000` | x402 spend budget (payments), not portfolio concentration |
 | `MAX_DAILY_ZS_USDC` | `5` | Display-only zs-proxy daily cap on `/status` and `/health` (match `daily_cap_usdc`; `0` = uncapped). Not enforced by the bot. |
 
@@ -201,7 +201,7 @@ Partial Canix protocol messages (e.g. missing debt/health index) currently mark 
 ## What policy does **not** do
 
 - Parse or judge Telegram message formatting
-- Enforce preferred-hold target % (agent guidance for economic exposure incl. LP/lend; execution waives Haystack price-impact on buys into listed ASAs; policy waives `MIN_TVL_USD` for open/increase into opportunities that include those ASAs)
+- Enforce preferred-hold target % (agent guidance for economic exposure incl. LP/lend; execution waives reported swap price-impact on buys into listed ASAs; policy waives `MIN_TVL_USD` for open/increase into opportunities that include those ASAs)
 - Gate on `confidence` (schema/reporting field; coerce happens earlier)
 - Re-run MCP research
 - Validate swap/execution quote economics beyond the structural swap rules above (slippage/impact checks happen at **execution**)

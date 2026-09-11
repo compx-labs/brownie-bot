@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import algosdk from "algosdk";
 
 import {
   Canix402Client,
@@ -55,9 +56,42 @@ liveIt(
           }),
         ]),
       );
+
+      const address = algosdk.generateAccount().addr.toString();
+      const quote = await client.callManagedTool(
+        "canix_get_quote",
+        {
+          fromAssetId: 0,
+          toAssetId: 31_566_704,
+          amount: "100000",
+          type: "fixed-input",
+          slippage: 1,
+        },
+        address,
+      );
+      expect(quote.data && typeof quote.data === "object").toBe(true);
+      const envelope = quote.data as Record<string, unknown>;
+      expect(envelope.data && typeof envelope.data === "object").toBe(true);
+      const quoteData = envelope.data as Record<string, unknown>;
+      expect([
+        "haystack",
+        "hogswap",
+        "tinyman",
+        "pact-smart-router",
+        "folks-router",
+        "asastats",
+      ]).toContain(quoteData.router);
+      expect(typeof quoteData.quotedAmount).toBe("string");
+      expect(typeof quoteData.minOut).toBe("string");
+      expect(quoteData.score && typeof quoteData.score === "object").toBe(true);
+      expect(Array.isArray(quoteData.alternatives)).toBe(true);
+      expect(quoteData).toHaveProperty("payload");
+      expect(envelope.meta).toMatchObject({ executionSubmitted: false });
+      expect(quoteData).not.toHaveProperty("txnPayload");
+      expect(quoteData).not.toHaveProperty("requiredAppOptIns");
     } finally {
       await client.close();
     }
   },
-  15_000,
+  30_000,
 );

@@ -105,9 +105,9 @@ shape keys against those catalogs and, when signing, calls
 `canix_get_execution_quote` with a `quotes` array (flat ~0.10 USDC per request),
 then signs each returned group in order. When a plan pairs a foundation swap with
 a single-asset enter, the host may instead call `canix_compose_enter` (~0.10 USDC)
-so opt-in → swap → enter complete in one review before the Haystack ~30s quote
+so opt-in → swap → enter complete in one review before the ~30s quote
 expires. Groups are never merged; sign only `user` legs and preserve
-`logicsig`/`haystack` pre-signed members. Brownie keeps its own LLM
+`logicsig`/`haystack`/`protocol` pre-signed members. Brownie keeps its own LLM
 `portfolio_plan` planner and does **not** call `canix_get_plan`.
 
 To enable execution, first confirm `BOT_WALLET` is the account derived from
@@ -121,7 +121,7 @@ ENABLE_TRANSACTION_SIGNING=true
 Optional soft steer for preferred-asset exposure (not hard policy). Target % is
 economic exposure (liquid + LP/farm/lend), not bag-only. When below target, the
 agent should accumulate even if secondary liquidity is thin (builds that
-market); buys into these ASAs waive the Haystack price-impact cap:
+market); buys into these ASAs waive the reported swap price-impact cap:
 
 ```dotenv
 # assetId:targetPortfolioPct pairs — e.g. hold ~15% GOLD$
