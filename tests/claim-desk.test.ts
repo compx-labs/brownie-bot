@@ -70,6 +70,42 @@ describe("claim desk", () => {
     });
   });
 
+  it("accepts claimAllQuotes wrapped as { quotes }", () => {
+    const claimable = normalizeWalletClaimable({
+      data: [
+        {
+          claimKey: "tinyman-farm",
+          positionId: "tinyman:reward:1",
+          protocol: "tinyman",
+          shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+          usdValue: 0.02,
+          worthClaiming: true,
+          quote: {
+            shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+            input: { programId: 262 },
+          },
+        },
+      ],
+      claimAllQuotes: {
+        quotes: [
+          {
+            shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+            input: { programId: 262 },
+          },
+        ],
+      },
+      totals: { claimableUsd: 0.02, worthClaimingUsd: 0.02 },
+    });
+
+    expect(claimable.claimAllQuotes).toEqual([
+      {
+        shapeKey: "mainnet:tinyman:staking-v1:farm:claimRewards",
+        input: { programId: 262 },
+      },
+    ]);
+    expect(claimable.rows).toHaveLength(1);
+  });
+
   it("selects per-row desk quotes for planned claims", () => {
     const claimable = normalizeWalletClaimable({
       data: [
