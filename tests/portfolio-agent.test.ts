@@ -927,6 +927,63 @@ describe("OpenAiPortfolioAgent", () => {
     errorSpy.mockRestore();
   });
 
+  it("returns canix_get_quote MCP request timeouts to the model and continues", async () => {
+    const finalPlan = portfolioPlan();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { agent, create, callManagedTool } = setup([
+      {
+        id: "response-1",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-list",
+            name: "canix_list_opportunities",
+            arguments: JSON.stringify({ limit: MAX_OPPORTUNITY_TOOL_LIMIT }),
+          },
+        ],
+      },
+      {
+        id: "response-2",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-quote",
+            name: "canix_get_quote",
+            arguments: JSON.stringify({
+              fromAssetId: 246_516_580,
+              toAssetId: 760_037_151,
+              amount: "1000000",
+            }),
+          },
+        ],
+      },
+      {
+        id: "response-3",
+        output: [],
+        output_text: JSON.stringify(finalPlan),
+      },
+    ]);
+    callManagedTool
+      .mockResolvedValueOnce({ data: { data: [opportunity()] } })
+      .mockRejectedValueOnce(new Error("MCP error -32001: Request timed out"));
+
+    const result = await agent.run();
+
+    expect(result.plan).toEqual(finalPlan);
+    const followUpInput = (
+      create.mock.calls[2]?.[0] as {
+        input: Array<{ type?: string; call_id?: string; output?: string }>;
+      }
+    ).input;
+    const quoteError = followUpInput.find(
+      (item) =>
+        item.type === "function_call_output" && item.call_id === "call-quote",
+    );
+    expect(quoteError?.output).toContain("GATEWAY_TIMEOUT");
+    expect(quoteError?.output).toContain("Request timed out");
+    errorSpy.mockRestore();
+  });
+
   it("rejects malformed tool arguments", async () => {
     const { agent, callManagedTool } = setup([
       {

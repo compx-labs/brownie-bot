@@ -14,7 +14,11 @@ import type {
   Canix402Client,
   McpToolDefinition,
 } from "../integrations/canix402/client.js";
-import { prepareAgentTools } from "../integrations/canix402/client.js";
+import {
+  isMcpRequestTimeout,
+  isRetryableGatewayTimeout,
+  prepareAgentTools,
+} from "../integrations/canix402/client.js";
 import type { PortfolioReader } from "../integrations/algorand/portfolio.js";
 import {
   prefetchHostResearch,
@@ -2042,16 +2046,9 @@ export function sanitizeToolArgsForLog(
   return next;
 }
 
-/** Match Canix CDN/edge 504 timeouts already retried by the client. */
+/** Match Canix CDN/edge 504 and MCP request timeouts already retried by the client. */
 function isGatewayTimeoutToolError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  const message = error.message;
-  return (
-    message.includes("GATEWAY_CLIENT_ERROR") &&
-    (/\bstatus=504\b/.test(message) || /\bgot 504\b/.test(message))
-  );
+  return isRetryableGatewayTimeout(error) || isMcpRequestTimeout(error);
 }
 
 function allocationJsonSchema() {
