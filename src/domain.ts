@@ -176,12 +176,26 @@ export const claimableRowSchema = z
 
 export type ClaimableRow = z.infer<typeof claimableRowSchema>;
 
+/**
+ * Canix has shipped both shapes:
+ * - legacy array of quote requests
+ * - wrapper `{ quotes: [...] }` (live `canix_list_claimable`)
+ */
+export const claimAllQuotesSchema = z.union([
+  z.array(executionQuoteRequestSchema),
+  z
+    .object({
+      quotes: z.array(executionQuoteRequestSchema),
+    })
+    .passthrough(),
+]);
+
 export const walletClaimableResponseSchema = z
   .object({
     data: z.array(claimableRowSchema).optional(),
     claims: z.array(claimableRowSchema).optional(),
     claimable: z.array(claimableRowSchema).optional(),
-    claimAllQuotes: z.array(executionQuoteRequestSchema).optional(),
+    claimAllQuotes: claimAllQuotesSchema.optional(),
     totals: z
       .object({
         claimableUsd: z.number().nullable().optional(),

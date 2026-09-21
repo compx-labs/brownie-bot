@@ -11,10 +11,9 @@ export function normalizeWalletClaimable(raw: unknown): WalletClaimable {
   const parsed = walletClaimableResponseSchema.parse(raw);
   const rows = parsed.data ?? parsed.claims ?? parsed.claimable ?? [];
   const fromRows = rows.flatMap((row) => quoteRequestsFromRow(row));
+  const listed = flattenClaimAllQuotes(parsed.claimAllQuotes);
   const claimAllQuotes =
-    parsed.claimAllQuotes && parsed.claimAllQuotes.length > 0
-      ? parsed.claimAllQuotes.map(normalizeQuoteRequest)
-      : fromRows;
+    listed.length > 0 ? listed.map(normalizeQuoteRequest) : fromRows;
   return {
     rows,
     claimAllQuotes,
@@ -321,6 +320,16 @@ export function compactClaimableForModel(
       estimatedNetworkFeeUsd: row.estimatedNetworkFeeUsd ?? null,
     })),
   };
+}
+
+function flattenClaimAllQuotes(
+  value:
+    ExecutionQuoteRequest[] | { quotes: ExecutionQuoteRequest[] } | undefined,
+): ExecutionQuoteRequest[] {
+  if (!value) {
+    return [];
+  }
+  return Array.isArray(value) ? value : value.quotes;
 }
 
 function quoteFingerprint(quote: ExecutionQuoteRequest): string {
