@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   Canix402Client,
+  isMcpRequestTimeout,
+  isRetryableMcpTransportError,
   type ToolCaller,
 } from "../src/integrations/canix402/client.js";
 import type { PaymentBuilder } from "../src/integrations/canix402/payment.js";
@@ -466,6 +468,66 @@ describe("Canix402Client", () => {
     expect(callTool).toHaveBeenCalledTimes(1);
   });
 
+  it("retries MCP request timeouts once then succeeds", async () => {
+    const address =
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+    const callTool = vi
+      .fn<ToolCaller["callTool"]>()
+      .mockRejectedValueOnce(new Error("MCP error -32001: Request timed out"))
+      .mockResolvedValueOnce(
+        toolResult({
+          quote: { amountOut: "1000000", fromAssetId: 0, toAssetId: 31566704 },
+        }),
+      );
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+    );
+
+    const result = await client.callManagedTool(
+      "canix_get_quote",
+      { fromAssetId: 0, toAssetId: 31566704, amount: "1000000" },
+      address,
+    );
+
+    expect(callTool).toHaveBeenCalledTimes(2);
+    expect(result.data).toEqual({
+      quote: { amountOut: "1000000", fromAssetId: 0, toAssetId: 31566704 },
+    });
+  });
+
+  it("retries token-price MCP timeouts once", async () => {
+    const callTool = vi
+      .fn<ToolCaller["callTool"]>()
+      .mockRejectedValueOnce(new Error("MCP error -32001: Request timed out"))
+      .mockResolvedValueOnce(
+        toolResult({
+          data: {
+            prices: [{ assetId: "0", priceUsd: 0.2 }],
+            source: "compx",
+            fetchedAt: "2026-07-16T10:08:49.782Z",
+          },
+          meta: { paymentRequired: false, executionSubmitted: false },
+        }),
+      );
+    const client = new Canix402Client(
+      { callTool, close: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+    );
+
+    const prices = await client.getTokenPrices([0]);
+    expect(callTool).toHaveBeenCalledTimes(2);
+    expect(prices).toEqual([
+      {
+        assetId: 0,
+        priceUsd: "0.2",
+        source: "compx",
+        fetchedAt: "2026-07-16T10:08:49.782Z",
+        stale: false,
+      },
+    ]);
+  });
+
   it("retries GATEWAY_CLIENT_ERROR 504 only once", async () => {
     const address =
       "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
@@ -533,5 +595,26 @@ describe("Canix402Client", () => {
       },
       required: ["quote"],
     });
+  });
+});
+
+describe("MCP timeout classifiers", () => {
+  it("recognizes SDK request timeouts and connection-closed codes", () => {
+    expect(
+      isMcpRequestTimeout(new Error("MCP error -32001: Request timed out")),
+    ).toBe(true);
+    expect(
+      isRetryableMcpTransportError(
+        Object.assign(new Error("Request timed out"), { code: -32001 }),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableMcpTransportError(
+        Object.assign(new Error("Connection closed"), { code: -32000 }),
+      ),
+    ).toBe(true);
+    expect(
+      isMcpRequestTimeout(new Error("Canix402 GATEWAY_CLIENT_ERROR")),
+    ).toBe(false);
   });
 });

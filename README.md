@@ -735,6 +735,11 @@ account lacks USDC ASA `31566704` / ALGO fees.
 - **5xx / 504:** Canix or an edge gateway timed out. The client retries **once**
   on 504. `?deps=1` probes free `canix_health`. Persistent 5xx is upstream;
   wait and retry. HTML 502/504 bodies are sanitized in Telegram and logs.
+- **MCP error -32001 Request timed out:** the MCP SDK default is 60s. Brownie
+  waits 120s, serializes overlapping MCP calls, and retries **once** on a
+  fresh session. Daily accounting (`canix_get_positions` at 08:00 UTC) and
+  the review snapshot (09:00 UTC) are the usual victims. Persistent timeouts
+  are upstream Canix MCP.
 - **Daily cap:** `x402 daily spend would exceed …` — wait for the next UTC
   day or raise `MAX_DAILY_X402_BASE_UNITS` (default 5 USDC). Visibility is on
   `/status` and `/health` (`spend`).

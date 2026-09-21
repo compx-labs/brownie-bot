@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import {
@@ -28,42 +29,97 @@ export interface ToolCaller {
   close(): Promise<void>;
 }
 
-export class McpSdkToolCaller implements ToolCaller {
-  private readonly client = new Client({
-    name: "brownie-bot",
-    version: "0.1.0",
-  });
-  private connected = false;
+const MCP_CLIENT_INFO = { name: "brownie-bot", version: "0.1.0" } as const;
 
-  constructor(private readonly endpoint: URL) {}
+/**
+ * MCP SDK default is 60s (`ErrorCode.RequestTimeout` / -32001). Canix
+ * `canix_get_positions` / claimable aggregation regularly exceeds that.
+ */
+export const MCP_REQUEST_TIMEOUT_MS = 120_000;
+
+export class McpSdkToolCaller implements ToolCaller {
+  private client = new Client(MCP_CLIENT_INFO);
+  private connected = false;
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly endpoint: URL,
+    private readonly timeoutMs: number = MCP_REQUEST_TIMEOUT_MS,
+  ) {}
 
   async callTool(
     name: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    if (!this.connected) {
-      const transport = new StreamableHTTPClientTransport(this.endpoint);
-      await this.client.connect(transport);
-      this.connected = true;
-    }
-    return this.client.callTool({ name, arguments: args });
+    return this.enqueue(() =>
+      this.withReconnectRetry(name, () => this.invokeCallTool(name, args)),
+    );
   }
 
   async listTools(): Promise<McpToolDefinition[]> {
-    await this.ensureConnected();
-    const result = await this.client.listTools();
-    return result.tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-    }));
+    return this.enqueue(async () => {
+      const result = await this.withReconnectRetry("listTools", async () => {
+        await this.ensureConnected();
+        return this.client.listTools(undefined, this.requestOptions());
+      });
+      return result.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      }));
+    });
   }
 
   async close(): Promise<void> {
-    if (this.connected) {
-      await this.client.close();
-      this.connected = false;
+    await this.enqueue(async () => {
+      await this.resetConnection();
+    });
+  }
+
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(work, work);
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async withReconnectRetry<T>(
+    label: string,
+    op: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await op();
+    } catch (error) {
+      if (!isRetryableMcpTransportError(error)) {
+        throw error;
+      }
+      console.error(
+        `[canix402] Retrying ${label} once after MCP timeout/disconnect`,
+      );
+      await this.resetConnection();
+      return await op();
     }
+  }
+
+  private async invokeCallTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    await this.ensureConnected();
+    return this.client.callTool(
+      { name, arguments: args },
+      undefined,
+      this.requestOptions(),
+    );
+  }
+
+  private requestOptions(): { timeout: number; resetTimeoutOnProgress: true } {
+    return {
+      timeout: this.timeoutMs,
+      resetTimeoutOnProgress: true,
+    };
   }
 
   private async ensureConnected(): Promise<void> {
@@ -72,6 +128,16 @@ export class McpSdkToolCaller implements ToolCaller {
       await this.client.connect(transport);
       this.connected = true;
     }
+  }
+
+  private async resetConnection(): Promise<void> {
+    this.connected = false;
+    try {
+      await this.client.close();
+    } catch {
+      // Dead Streamable HTTP sessions throw on close; start a fresh client.
+    }
+    this.client = new Client(MCP_CLIENT_INFO);
   }
 }
 
@@ -135,11 +201,11 @@ export class Canix402Client {
     try {
       return await this.callManagedToolOnce(name, args, walletAddress);
     } catch (error) {
-      if (!isRetryableGatewayTimeout(error)) {
+      if (!isRetryableCanixTransient(error)) {
         throw error;
       }
       console.error(
-        `[canix402] Retrying ${name} once after gateway timeout (504)`,
+        `[canix402] Retrying ${name} once after ${describeCanixTransient(error)}`,
       );
       return await this.callManagedToolOnce(name, args, walletAddress);
     }
@@ -299,7 +365,7 @@ export class Canix402Client {
     validatePaymentResource: (paymentRequired: unknown) => void,
   ): Promise<OpportunityResult> {
     const preflight = parseToolPayload(
-      await this.caller.callTool(toolName, args),
+      await this.callToolWithRetry(toolName, args),
       toolName,
     );
 
@@ -323,7 +389,7 @@ export class Canix402Client {
       parsedPreflight.data.mcpPayment.paymentRequired,
     );
     const paidPayload = parseToolPayload(
-      await this.caller.callTool(toolName, {
+      await this.callToolWithRetry(toolName, {
         ...args,
         paymentSignature: builtPayment.paymentSignature,
       }),
@@ -359,7 +425,7 @@ export class Canix402Client {
     for (let offset = 0; offset < uniqueOrdered.length; offset += 100) {
       const batch = uniqueOrdered.slice(offset, offset + 100);
       const payload = parseToolPayload(
-        await this.caller.callTool("canix_get_token_prices", {
+        await this.callToolWithRetry("canix_get_token_prices", {
           assetIds: batch,
         }),
         "canix_get_token_prices",
@@ -374,6 +440,23 @@ export class Canix402Client {
 
   close(): Promise<void> {
     return this.caller.close();
+  }
+
+  private async callToolWithRetry(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    try {
+      return await this.caller.callTool(name, args);
+    } catch (error) {
+      if (!isRetryableCanixTransient(error)) {
+        throw error;
+      }
+      console.error(
+        `[canix402] Retrying ${name} once after ${describeCanixTransient(error)}`,
+      );
+      return await this.caller.callTool(name, args);
+    }
   }
 }
 
@@ -517,6 +600,53 @@ export function isRetryableGatewayTimeout(error: unknown): boolean {
   return (
     message.includes("GATEWAY_CLIENT_ERROR") &&
     (/\bstatus=504\b/.test(message) || /\bgot 504\b/.test(message))
+  );
+}
+
+/** MCP SDK JSON-RPC request timeout (`ErrorCode.RequestTimeout` / -32001). */
+export function isMcpRequestTimeout(error: unknown): boolean {
+  if (typeof error === "string") {
+    return isMcpTimeoutMessage(error);
+  }
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const record = error as { code?: unknown; message?: unknown };
+  if (
+    record.code === ErrorCode.RequestTimeout ||
+    record.code === ErrorCode.ConnectionClosed
+  ) {
+    return true;
+  }
+  return typeof record.message === "string"
+    ? isMcpTimeoutMessage(record.message)
+    : false;
+}
+
+/** Stale Streamable HTTP session or SDK request timeout — reconnect then retry. */
+export function isRetryableMcpTransportError(error: unknown): boolean {
+  return isMcpRequestTimeout(error);
+}
+
+function isRetryableCanixTransient(error: unknown): boolean {
+  return (
+    isRetryableGatewayTimeout(error) || isRetryableMcpTransportError(error)
+  );
+}
+
+function describeCanixTransient(error: unknown): string {
+  if (isRetryableGatewayTimeout(error)) {
+    return "gateway timeout (504)";
+  }
+  return "MCP timeout/disconnect";
+}
+
+function isMcpTimeoutMessage(message: string): boolean {
+  return (
+    message.includes("MCP error -32001") ||
+    message.includes("MCP error -32000") ||
+    /Request timed out/i.test(message) ||
+    /Connection closed/i.test(message)
   );
 }
 
